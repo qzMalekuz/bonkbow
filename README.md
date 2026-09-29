@@ -1,4 +1,6 @@
-# Monolith — Stickman Archery for the Solana dApp Store
+# Stickchers — Stickman Archery for the Solana dApp Store
+
+Repo: https://github.com/qzMalekuz/stickchers
 
 Turn-based stickman archery (Stickman Archer style) built with Expo / React
 Native for the **CLOCK IN Solana Mobile hackathon**. Two modes — **vs AI** and
@@ -82,7 +84,7 @@ supabase/
   functions/delete-account     account deletion
 docs/ASSETS.md                 free art/audio research (Unity Asset Store + CC0 sources)
 .eas/workflows/                build the dApp Store APK on push to main
-.github/workflows/             PR preview QR (EAS Update) + Claude PR review
+.github/workflows/             PR preview QR (EAS Update) + automated PR review
 ```
 
 ## How the pieces work
@@ -175,11 +177,11 @@ https://docs.solanamobile.com/dapp-store/build-and-sign-an-apk
 | Sentry | `EXPO_PUBLIC_SENTRY_DSN`; `eas secret:create --name SENTRY_AUTH_TOKEN`; org/project in app.json (`bitwise` / `monolith`). |
 | PostHog | `EXPO_PUBLIC_POSTHOG_KEY`. Events: `game_started`, `game_over`, `skin_equipped`, `purchase_*`. |
 | EAS | `eas init`; set every `EXPO_PUBLIC_*` as an EAS env var (cloud builds don't read `.env.local`); `eas update:configure` for OTA. |
-| GitHub Actions | repo secrets `EXPO_TOKEN`, `ANTHROPIC_API_KEY`. |
+| GitHub Actions | repo secret `EXPO_TOKEN`, plus the API key read by the PR review workflow (see `.github/workflows/`). |
 
 ## Next steps toward submission
 
-- [ ] **Commit and push** — the repo has no commits yet and judges grade commit history
+- [x] Initial commit pushed to GitHub — keep committing in small, descriptive steps; judges grade commit history
 - [ ] `eas init` + `eas update:configure` (adds `updates.url` / `extra.eas.projectId` to app.json — without them OTA and the CI `eas update` jobs are inert), first dev build, test MWA on a real device (Seeker if you have one)
 - [ ] Supabase project + schema + Web3 provider + anonymous sign-in, then test SIWS, rooms, a devnet SOL and SKR purchase end to end
 - [ ] Real icon, splash; host `favicon.ico` + privacy/terms at `monolith.bitwise.app`
