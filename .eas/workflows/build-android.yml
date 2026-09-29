@@ -1,0 +1,17 @@
+name: Build Android APK (dApp Store)
+
+# Builds a release APK with the dapp-store profile on every push to main.
+# Runs on EAS infra — no external secrets needed. The Solana dApp Store takes
+# a plain APK (not an AAB); publish it with `npx dapp-store` (see README).
+# Destination: .eas/workflows/build-android.yml
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build Android (dapp-store)
+    type: build
+    params:
+      platform: android
+      profile: dapp-store

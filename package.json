@@ -1,0 +1,93 @@
+{
+  "name": "monolith",
+  "main": "./index.js",
+  "version": "1.0.0",
+  "dependencies": {
+    "@expo/ui": "~57.0.20",
+    "@expo/vector-icons": "^15.0.2",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@sentry/react-native": "~7.11.0",
+    "@shopify/react-native-skia": "2.6.2",
+    "@solana-program/memo": "^0.15.0",
+    "@solana-program/system": "^0.15.0",
+    "@solana-program/token": "^0.17.0",
+    "@solana/kit": "^8.4.0",
+    "@supabase/supabase-js": "^2.109.0",
+    "@wallet-ui/react-native-kit": "^4.3.0",
+    "aes-js": "^3.1.2",
+    "expo": "~57.0.25",
+    "expo-application": "~57.0.3",
+    "expo-asset": "~57.0.18",
+    "expo-audio": "~57.0.5",
+    "expo-build-properties": "~57.0.22",
+    "expo-constants": "~57.0.19",
+    "expo-crypto": "~57.0.3",
+    "expo-dev-client": "~57.0.19",
+    "expo-device": "~57.0.2",
+    "expo-font": "~57.0.4",
+    "expo-glass-effect": "~57.0.4",
+    "expo-haptics": "~57.0.3",
+    "expo-image": "~57.0.5",
+    "expo-keep-awake": "~57.0.2",
+    "expo-linking": "~57.0.11",
+    "expo-localization": "~57.0.2",
+    "expo-router": "~57.0.23",
+    "expo-secure-store": "~57.0.4",
+    "expo-splash-screen": "~57.0.9",
+    "expo-status-bar": "~57.0.1",
+    "expo-symbols": "~57.0.3",
+    "expo-system-ui": "~57.0.4",
+    "expo-updates": "~57.0.23",
+    "expo-web-browser": "~57.0.3",
+    "matter-js": "^0.20.0",
+    "posthog-react-native": "^4.78.0",
+    "posthog-react-native-session-replay": "^1.6.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-gesture-handler": "~2.32.0",
+    "react-native-nitro-modules": "^0.37.1",
+    "react-native-quick-base64": "^3.0.1",
+    "react-native-quick-crypto": "^1.1.7",
+    "react-native-reanimated": "4.5.1",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "~4.26.0",
+    "react-native-web": "~0.21.0",
+    "react-native-worklets": "0.10.1",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@solana-mobile/dapp-store-cli": "^1.0.1",
+    "@types/aes-js": "^3.1.4",
+    "@types/matter-js": "^0.20.2",
+    "@types/react": "~19.2.2",
+    "eslint": "^9.39.5",
+    "eslint-config-expo": "^57.0.2",
+    "typescript": "~6.0.3"
+  },
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "android:device": "expo run:android --device",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
+    "lint": "expo lint src index.js polyfill.js",
+    "typecheck": "tsc --noEmit",
+    "doctor": "expo-doctor",
+    "build:dev": "eas build -p android --profile development",
+    "build:apk": "eas build -p android --profile dapp-store",
+    "publish:dapp-store": "dapp-store"
+  },
+  "private": true,
+  "expo": {
+    "doctor": {
+      "reactNativeDirectoryCheck": {
+        "exclude": [
+          "posthog-react-native-session-replay",
+          "@solana-mobile/mobile-wallet-adapter-protocol"
+        ],
+        "listUnknownPackages": false
+      }
+    }
+  }
+}

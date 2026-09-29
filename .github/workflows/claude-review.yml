@@ -1,0 +1,36 @@
+name: Claude Review
+
+# Automated code review on every PR via the official code-review plugin.
+# Requires: the Claude GitHub App installed (github.com/apps/claude) and an
+# ANTHROPIC_API_KEY repository secret (console.anthropic.com -> API keys) —
+# see reference/setup-checklist.md.
+# Official shape: code.claude.com/docs/en/github-actions.md ("Using skills").
+# Checkout is required: the review pipeline diffs against origin/main. --comment is
+# required or the plugin posts nothing. Draft PRs are auto-skipped by the
+# plugin's triage step and reviewed once marked ready (ready_for_review).
+# Destination: .github/workflows/claude-review.yml
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          plugin_marketplaces: "https://github.com/anthropics/claude-code.git"
+          plugins: "code-review@claude-code-plugins"
+          prompt: "/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }} --comment"
+          # Deep-review headroom: the default --max-turns 10 can truncate the
+          # plugin's triage -> 4 review agents -> per-issue verification run.
+          claude_args: "--max-turns 25"

@@ -1,0 +1,116 @@
+name: EAS Update
+
+# Two jobs, both JS-only (like OTA — native/dependency changes still need a
+# new build):
+# - preview: on every pull request, publish the PR's JS as an EAS Update and
+#   comment a QR code on the PR. Reviewers scan it to load the change in their
+#   installed development build — no local checkout.
+# - update: on every push to main, publish to the production channel (reaches
+#   store builds with a matching runtime on next foreground) and post a QR
+#   code on the merge commit so the exact update can be run in a dev build.
+#
+# Runs on GitHub Actions (unlike publish-ios.yml, which runs on EAS infra),
+# so it needs an EXPO_TOKEN repo secret — see reference/setup-checklist.md.
+# Destination: .github/workflows/preview.yml
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  preview:
+    name: EAS Update preview
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # the preview action comments the QR on the PR
+    steps:
+      - name: Check for EXPO_TOKEN
+        run: |
+          if [ -z "${{ secrets.EXPO_TOKEN }}" ]; then
+            echo "Missing EXPO_TOKEN. Create one at https://expo.dev/settings/access-tokens and add it as an Actions secret."
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      # --environment production pulls the EXPO_PUBLIC_* vars stored on EAS
+      # into the bundle — the runner has no .env.local. Without them the
+      # bundle still runs but Supabase/shop/multiplayer features are disabled.
+      - name: Publish preview and comment QR on the PR
+        uses: expo/expo-github-action/preview@v8
+        with:
+          command: eas update --auto --environment production
+
+  update:
+    name: Production OTA
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # commit comment with the QR code
+    steps:
+      - name: Check for EXPO_TOKEN
+        run: |
+          if [ -z "${{ secrets.EXPO_TOKEN }}" ]; then
+            echo "Missing EXPO_TOKEN. Create one at https://expo.dev/settings/access-tokens and add it as an Actions secret."
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Publish production update
+        uses: expo/expo-github-action/preview@v8
+        id: update
+        with:
+          comment: false # PR comments only work on pull_request events
+          qr-target: dev-client
+          command: eas update --channel production --environment production --message "${{ github.event.head_commit.message }}" --non-interactive
+
+      # The QR encodes the dev-client deep link, so it scans from inside the
+      # dev build (system cameras reject custom-scheme QRs — route through an
+      # https redirect page on your website if you want camera scanning).
+      - name: Post QR code on the merge commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BODY: |
+            ### 📱 Scan to run this update in the development build
+
+            ![QR code](${{ steps.update.outputs.qr }})
+
+            Runtime `${{ steps.update.outputs.runtimeVersion }}` · [update on EAS](${{ steps.update.outputs.link }})
+        run: |
+          gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" -f body="$BODY"
+          echo "$BODY" >> "$GITHUB_STEP_SUMMARY"
