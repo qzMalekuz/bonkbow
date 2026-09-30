@@ -1,6 +1,16 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
+import Animated, {
+  FadeIn,
+  FadeOut,
+  ZoomIn,
+  useAnimatedStyle,
+  useSharedValue,
+  withSequence,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useKeepAwake } from 'expo-keep-awake';
 import { Ionicons } from '@expo/vector-icons';
@@ -11,6 +21,8 @@ import { haptic } from '@/game/haptics';
 import { accuracyOf, useGameStore } from '@/game/store';
 import { DEFAULT_SKIN_ID, getSkin, type Skin } from '@/game/skins';
 import { HapticTouchable } from '@/components/haptic-touchable';
+import { useScreenMusic } from '@/audio/useScreenMusic';
+import { duckMusic, playSfx } from '@/audio/sound';
 import { submitScore } from '@/utils/scores';
 import { supabase } from '@/utils/supabase';
 import { useRoomChannel, type Role } from '@/multiplayer/useRoom';
@@ -34,6 +46,7 @@ const AI_SKIN: Skin = {
 // belong on JS (haptics, persistence, analytics, the multiplayer channel).
 // Routes: /game?mode=ai   |   /game?mode=online&code=ABC123&role=host&seed=123
 export default function GameScreen() {
+  useScreenMusic('battle');
   useKeepAwake();
   const params = useLocalSearchParams<{ mode?: string; code?: string; role?: string; seed?: string }>();
   const mode: GameMode = params.mode === 'online' ? 'online' : 'ai';
@@ -61,6 +74,25 @@ export default function GameScreen() {
   // Per-run shot log for the coach tip + adaptive AI. Refs: no re-render per arrow.
   const runStats = useRef({ shots: 0, hits: 0, long: 0, short: 0 });
   const [coachTip, setCoachTip] = useState<string | null>(null);
+  // Floating callout over the arena ("HEADSHOT!", "-50"). `id` re-keys the
+  // animated view so back-to-back hits each get a fresh entrance.
+  const [popup, setPopup] = useState<{ id: number; text: string; color: string } | null>(null);
+  const popupId = useRef(0);
+  const showPopup = useCallback((text: string, color: string) => {
+    popupId.current += 1;
+    const id = popupId.current;
+    setPopup({ id, text, color });
+    setTimeout(() => setPopup((p) => (p?.id === id ? null : p)), 900);
+  }, []);
+  // Red edge flash when you take damage.
+  const damage = useSharedValue(0);
+  const damageStyle = useAnimatedStyle(() => ({ opacity: damage.value }));
+  const flashDamage = useCallback(() => {
+    damage.set(withSequence(withTiming(0.55, { duration: 70 }), withTiming(0, { duration: 420 })));
+  }, [damage]);
+  // Score pop.
+  const scorePop = useSharedValue(1);
+  const scoreStyle = useAnimatedStyle(() => ({ transform: [{ scale: scorePop.value }] }));
 
   // ---- multiplayer channel -------------------------------------------------------
   const room = useRoomChannel(code, online ? role : undefined, {
@@ -90,13 +122,27 @@ export default function GameScreen() {
       switch (e.type) {
         case 'aimStart':
           haptic.aimStart();
+          playSfx('draw_start');
           break;
         case 'drawTick':
           haptic.drawTick();
+          playSfx('draw_tick');
           break;
         case 'release':
           haptic.release();
+          playSfx('bow_release');
+          playSfx('arrow_whoosh');
           setTurn('enemy');
+          break;
+        case 'enemyDraw':
+          playSfx('draw_start', 0.6);
+          break;
+        case 'enemyFired':
+          playSfx('bow_release', 0.7);
+          playSfx('arrow_whoosh', 0.7);
+          break;
+        case 'impact':
+          playSfx(e.surface === 'pillar' ? 'hit_wood' : 'hit_ground');
           break;
         case 'shotFired':
           runStats.current.shots += 1;
@@ -108,12 +154,18 @@ export default function GameScreen() {
           break;
         case 'enemyHit':
           setEnemyHp(e.hp);
+          playSfx(e.zone === 'head' ? 'hit_head' : 'hit_body');
+          showPopup(e.zone === 'head' ? 'HEADSHOT!' : `-${HP.body}`, e.zone === 'head' ? '#FFD166' : '#FFFFFF');
           if (e.hp <= 0) {
             haptic.kill();
-            setScore((s) => s + 1);
+            setTimeout(() => playSfx('body_drop'), 420);
             if (online) {
               setOutcome('win');
               setTurn('over');
+            } else {
+              playSfx('jingle_kill');
+              setScore((s) => s + 1);
+              scorePop.set(withSequence(withTiming(1.35, { duration: 110 }), withSpring(1, { damping: 8 })));
             }
           } else {
             haptic.bodyHit();
@@ -133,8 +185,11 @@ export default function GameScreen() {
           break;
         case 'playerHit':
           setPlayerHp(e.hp);
+          playSfx(e.zone === 'head' ? 'hit_head' : 'hit_body');
+          flashDamage();
           if (e.hp <= 0) {
             haptic.death();
+            setTimeout(() => playSfx('body_drop'), 450);
             setOutcome('lose');
             setTurn('over');
           } else {
@@ -144,12 +199,14 @@ export default function GameScreen() {
           break;
       }
     },
-    [online, room],
+    [online, room, showPopup, flashDamage, scorePop],
   );
 
   // Persist + report once, when the run ends.
   useEffect(() => {
     if (turn !== 'over') return;
+    duckMusic(true);
+    setTimeout(() => playSfx(outcome === 'lose' ? 'jingle_lose' : 'jingle_win'), 500);
     const st = runStats.current;
     posthog.capture('game_over', { mode, score, outcome, shots: st.shots, hits: st.hits });
     if (!online) {
@@ -163,6 +220,7 @@ export default function GameScreen() {
 
   const restart = () => {
     haptic.release();
+    duckMusic(false);
     setScore(0);
     setPlayerHp(HP.max);
     setEnemyHp(HP.max);
@@ -176,6 +234,7 @@ export default function GameScreen() {
   const quit = () => {
     haptic.tap();
     haptic.cancelVibration();
+    duckMusic(false);
     router.back();
   };
 
@@ -199,16 +258,31 @@ export default function GameScreen() {
         onEvent={onEvent}
       />
 
+      <Animated.View pointerEvents="none" style={[styles.damage, damageStyle]} />
+
+      {popup && (
+        <View pointerEvents="none" style={styles.popupWrap}>
+          <Animated.Text
+            key={popup.id}
+            entering={ZoomIn.springify().damping(9)}
+            exiting={FadeOut.duration(250)}
+            style={[styles.popup, { color: popup.color }]}
+          >
+            {popup.text}
+          </Animated.Text>
+        </View>
+      )}
+
       <SafeAreaView style={styles.hud} pointerEvents="box-none">
         <View style={styles.hudRow} pointerEvents="box-none">
-          <HapticTouchable onPress={quit} hitSlop={12} style={styles.iconButton}>
+          <HapticTouchable onPress={quit} hitSlop={12} style={styles.iconButton} sound="ui_back">
             <Ionicons name="close" size={24} color="#FFFFFF" />
           </HapticTouchable>
           {online ? (
             <Text style={styles.roomCode}>{code}</Text>
           ) : (
             <View style={{ alignItems: 'center' }}>
-              <Text style={styles.score}>{score}</Text>
+              <Animated.Text style={[styles.score, scoreStyle]}>{score}</Animated.Text>
               <Text style={styles.aiChip}>ADAPTIVE AI · {Math.round(skill * 100)}%</Text>
             </View>
           )}
@@ -233,8 +307,8 @@ export default function GameScreen() {
       </SafeAreaView>
 
       {turn === 'over' && (
-        <View style={styles.overlay}>
-          <View style={styles.sheet}>
+        <Animated.View entering={FadeIn.duration(250)} style={styles.overlay}>
+          <Animated.View entering={ZoomIn.delay(350).springify().damping(14)} style={styles.sheet}>
             <Text style={styles.overTitle}>
               {outcome === 'win' ? 'You win' : outcome === 'left' ? 'Opponent left' : 'You got shot'}
             </Text>
@@ -261,8 +335,8 @@ export default function GameScreen() {
             <HapticTouchable style={online ? styles.primary : styles.secondary} onPress={quit}>
               <Text style={online ? styles.primaryText : styles.secondaryText}>{online ? 'Back to lobby' : 'Home'}</Text>
             </HapticTouchable>
-          </View>
-        </View>
+          </Animated.View>
+        </Animated.View>
       )}
     </View>
   );
@@ -281,11 +355,21 @@ function coachTipFor(st: { shots: number; hits: number; long: number; short: num
   return `${Math.round(acc * 100)}% accuracy. Headshots end it in one; go for the top of the arc.`;
 }
 
+// Smoothly drains; a pale "recent damage" ghost lags behind the real bar.
 function HpBar({ hp, color }: { hp: number; color: string }) {
   const pct = Math.max(0, Math.min(1, hp / HP.max));
+  const fill = useSharedValue(pct);
+  const ghost = useSharedValue(pct);
+  useEffect(() => {
+    fill.value = withTiming(pct, { duration: 260 });
+    ghost.value = pct >= ghost.value ? pct : withSequence(withTiming(ghost.value, { duration: 350 }), withTiming(pct, { duration: 450 }));
+  }, [pct, fill, ghost]);
+  const fillStyle = useAnimatedStyle(() => ({ width: `${fill.value * 100}%` }));
+  const ghostStyle = useAnimatedStyle(() => ({ width: `${ghost.value * 100}%` }));
   return (
     <View style={styles.hpTrack}>
-      <View style={[styles.hpFill, { width: `${pct * 100}%`, backgroundColor: pct > 0.5 ? color : COLORS.hpBad }]} />
+      <Animated.View style={[styles.hpGhost, ghostStyle]} />
+      <Animated.View style={[styles.hpFill, fillStyle, { backgroundColor: pct > 0.5 ? color : COLORS.hpBad }]} />
     </View>
   );
 }
@@ -311,7 +395,22 @@ const styles = StyleSheet.create({
   roomCode: { color: '#FFFFFF', fontSize: 22, fontWeight: '800', letterSpacing: 4 },
   hpRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 20, paddingTop: 6 },
   hpTrack: { flex: 1, height: 8, borderRadius: 4, backgroundColor: COLORS.hpTrack, overflow: 'hidden' },
-  hpFill: { height: '100%', borderRadius: 4 },
+  hpFill: { position: 'absolute', left: 0, top: 0, height: '100%', borderRadius: 4 },
+  hpGhost: { position: 'absolute', left: 0, top: 0, height: '100%', borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.55)' },
+  damage: {
+    ...StyleSheet.absoluteFill,
+    borderWidth: 28,
+    borderColor: 'rgba(193,18,31,0.9)',
+  },
+  popupWrap: { position: 'absolute', top: '32%', left: 0, right: 0, alignItems: 'center' },
+  popup: {
+    fontSize: 34,
+    fontWeight: '900',
+    letterSpacing: 2,
+    textShadowColor: 'rgba(0,0,0,0.6)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 6,
+  },
   turnText: { color: 'rgba(255,255,255,0.7)', fontSize: 11, fontWeight: '700', letterSpacing: 1.5, minWidth: 90, textAlign: 'center' },
   waiting: { color: 'rgba(255,255,255,0.6)', fontSize: 13, textAlign: 'center', marginTop: 10 },
   overlay: {

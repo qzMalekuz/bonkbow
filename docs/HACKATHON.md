@@ -129,7 +129,7 @@ Technical rules:
 - Wallets: https://solanamobile.com/wallets (Phantom, Solflare), faucet https://faucet.solana.com
 - Expo env setup is linked from the site's "Get started" guide, so Expo/RN is an expected path.
 
-## Implications for Monolith
+## Implications for Stickchers
 
 - Deadline is **Oct 8, 11:59pm PT** (Oct 9 06:59 UTC). Plan to finalize on Align a few hours earlier.
 - Must ship: APK, public/accessible GitHub repo with a real commit history, ~3 min on-device demo video with captions, pitch deck.

@@ -9,6 +9,10 @@ import { MobileWalletProvider } from '@wallet-ui/react-native-kit';
 import { APP_IDENTITY, CLUSTER } from '@/solana/config';
 import { ensureSession } from '@/utils/supabase';
 import { useOTAUpdates } from '@/hooks/useOTAUpdates';
+import { initAudio } from '@/audio/sound';
+
+// Preload every sound effect and set the audio session before any screen mounts.
+initAudio();
 
 // Records expo-router screen changes as breadcrumbs on Sentry events.
 const navigationIntegration = Sentry.reactNavigationIntegration({

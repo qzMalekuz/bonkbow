@@ -10,6 +10,7 @@ import { HapticTouchable } from '@/components/haptic-touchable';
 import { checkForUpdateAndReload } from '@/hooks/useOTAUpdates';
 import { useGameStore } from '@/game/store';
 import { haptic } from '@/game/haptics';
+import { playSfx } from '@/audio/sound';
 import { COLORS } from '@/game/constants';
 import { CLUSTER, shortAddress } from '@/solana/config';
 import { LEGAL_URLS, SUPPORT_EMAIL } from '@/utils/legal';
@@ -22,6 +23,10 @@ export default function SettingsScreen() {
   const vibrationEnabled = useGameStore((s) => s.vibrationEnabled);
   const setHaptics = useGameStore((s) => s.setHaptics);
   const setVibration = useGameStore((s) => s.setVibration);
+  const soundEnabled = useGameStore((s) => s.soundEnabled);
+  const musicEnabled = useGameStore((s) => s.musicEnabled);
+  const setSound = useGameStore((s) => s.setSound);
+  const setMusic = useGameStore((s) => s.setMusic);
   const [hasSession, setHasSession] = useState(false);
 
   useEffect(() => {
@@ -41,11 +46,21 @@ export default function SettingsScreen() {
 
   const toggleHaptics = (on: boolean) => {
     setHaptics(on);
+    playSfx('ui_toggle');
     if (on) haptic.release(); // demo the setting as it turns on
   };
   const toggleVibration = (on: boolean) => {
     setVibration(on);
+    playSfx('ui_toggle');
     if (on) haptic.takeHit();
+  };
+  const toggleSound = (on: boolean) => {
+    setSound(on);
+    if (on) playSfx('ui_toggle'); // store is updated first, so this is audible
+  };
+  const toggleMusic = (on: boolean) => {
+    setMusic(on);
+    playSfx('ui_toggle');
   };
 
   const handleDeleteAccount = () => {
@@ -85,13 +100,20 @@ export default function SettingsScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <HapticTouchable onPress={() => router.back()} style={styles.backButton} hitSlop={12}>
+        <HapticTouchable onPress={() => router.back()} style={styles.backButton} hitSlop={12} sound="ui_back">
           <Ionicons name="chevron-back" size={26} color="#FFFFFF" />
         </HapticTouchable>
         <Text style={styles.title}>Settings</Text>
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll}>
+        <Text style={styles.section}>Audio</Text>
+        <View style={styles.group}>
+          <ToggleRow label="Sound effects" hint="Bow, hits, button clicks" value={soundEnabled} onChange={toggleSound} />
+          <Divider />
+          <ToggleRow label="Music" hint="Menu, battle and shop tracks" value={musicEnabled} onChange={toggleMusic} />
+        </View>
+
         <Text style={styles.section}>Feedback</Text>
         <View style={styles.group}>
           <ToggleRow label="Haptics" hint="Bow draw ticks, release, hits" value={hapticsEnabled} onChange={toggleHaptics} />

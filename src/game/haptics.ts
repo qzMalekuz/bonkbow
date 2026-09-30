@@ -1,6 +1,7 @@
 import * as Haptics from 'expo-haptics';
 import { Vibration } from 'react-native';
 import { useGameStore } from '@/game/store';
+import { playSfx } from '@/audio/sound';
 
 // Two layers of feedback, both user-toggleable in Settings:
 // - expo-haptics: short, precise taps (Android uses the haptic-feedback
@@ -60,10 +61,13 @@ export const haptic = {
   miss: () => {
     if (hapticsOn()) safe(Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft));
   },
+  // UI outcomes also play their sound, so every call site gets both.
   success: () => {
+    playSfx('ui_confirm');
     if (hapticsOn()) safe(Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success));
   },
   warning: () => {
+    playSfx('ui_error');
     if (hapticsOn()) safe(Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning));
   },
   cancelVibration: () => Vibration.cancel(),

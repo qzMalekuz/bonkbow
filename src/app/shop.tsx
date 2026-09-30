@@ -7,10 +7,12 @@ import { Canvas, Path } from '@shopify/react-native-skia';
 import { useMobileWallet } from '@wallet-ui/react-native-kit';
 import { usePostHog } from 'posthog-react-native';
 import { HapticTouchable } from '@/components/haptic-touchable';
+import { useScreenMusic } from '@/audio/useScreenMusic';
+import { playSfx } from '@/audio/sound';
 import { COLORS, STICKMAN } from '@/game/constants';
 import { haptic } from '@/game/haptics';
 import { SKINS, formatSol, isFreeSkin, type Currency, type Skin } from '@/game/skins';
-import { bowPath, hatPath, stickmanPath } from '@/game/stickman';
+import { bowPath, bowStringPath, hatPath, stickmanPath } from '@/game/stickman';
 import { useGameStore } from '@/game/store';
 import { sessionWalletAddress, useWalletAuth } from '@/solana/auth';
 import { CLUSTER, SHOP_ENABLED, SKR_ENABLED } from '@/solana/config';
@@ -22,6 +24,7 @@ import { isSupabaseConfigured } from '@/utils/supabase';
 // (MWA signs and sends a transfer to the treasury); ownership is granted
 // server-side after on-chain verification. Prices are placeholders — skins.ts.
 export default function ShopScreen() {
+  useScreenMusic('shop');
   const wallet = useMobileWallet();
   const { session, signIn, signingIn, refreshOwnedSkins } = useWalletAuth();
   const posthog = usePostHog();
@@ -98,6 +101,7 @@ export default function ShopScreen() {
         addOwnedSkin(skin.id);
         equipSkin(skin.id);
         haptic.kill();
+        playSfx('coins');
         posthog.capture('purchase_completed', { skin: skin.id, currency: cur, signature: result.signature });
         if (cur === 'SKR') skrBalance.refresh();
         Alert.alert('Yours!', `${skin.name} unlocked and equipped.`);
@@ -160,7 +164,7 @@ export default function ShopScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <HapticTouchable onPress={() => router.back()} hitSlop={12}>
+        <HapticTouchable onPress={() => router.back()} hitSlop={12} sound="ui_back">
           <Ionicons name="chevron-back" size={26} color="#FFFFFF" />
         </HapticTouchable>
         <Text style={styles.title}>Shop</Text>
@@ -265,15 +269,17 @@ export default function ShopScreen() {
 function SkinPreview({ skin }: { skin: Skin }) {
   const size = 120;
   const pose = useMemo(
-    () => ({ x: size / 2, y: size - 14, facing: 1 as const, armAngle: -0.5, fall: 0, hat: skin.hat }),
+    () => ({ x: size / 2, y: size - 14, facing: 1 as const, armAngle: -0.5, fall: 0, hat: skin.hat, draw: 0.6, breathe: 0 }),
     [skin.hat],
   );
   const body = useMemo(() => stickmanPath(pose), [pose]);
   const hat = useMemo(() => hatPath(pose), [pose]);
   const bow = useMemo(() => bowPath(pose), [pose]);
+  const string = useMemo(() => bowStringPath(pose), [pose]);
   return (
     <Canvas style={{ width: size, height: size, alignSelf: 'center' }}>
       <Path path={bow} color={skin.bow} style="stroke" strokeWidth={3} strokeCap="round" />
+      <Path path={string} color="rgba(255,255,255,0.75)" style="stroke" strokeWidth={1} />
       <Path path={body} color={skin.body} style="stroke" strokeWidth={STICKMAN.lineWidth} strokeCap="round" strokeJoin="round" />
       <Path path={hat} color={skin.accent} style="stroke" strokeWidth={3} strokeCap="round" strokeJoin="round" />
     </Canvas>

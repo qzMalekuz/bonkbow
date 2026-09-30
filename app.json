@@ -1,20 +1,20 @@
 {
   "expo": {
-    "name": "Monolith",
-    "slug": "monolith",
+    "name": "Stickchers",
+    "slug": "stickchers",
     "version": "1.0.0",
     "runtimeVersion": {
       "policy": "appVersion"
     },
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "monolith",
+    "scheme": "stickchers",
     "userInterfaceStyle": "automatic",
     "updates": {
       "fallbackToCacheTimeout": 0
     },
     "android": {
-      "package": "com.bitwise.monolith",
+      "package": "com.bitwise.stickchers",
       "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#0B0B0F",
@@ -33,7 +33,7 @@
       ]
     },
     "ios": {
-      "bundleIdentifier": "com.bitwise.monolith",
+      "bundleIdentifier": "com.bitwise.stickchers",
       "supportsTablet": false
     },
     "web": {
@@ -56,7 +56,7 @@
         {
           "url": "https://sentry.io/",
           "organization": "bitwise",
-          "project": "monolith"
+          "project": "stickchers"
         }
       ],
       "expo-updates",

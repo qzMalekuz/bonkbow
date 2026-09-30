@@ -1,5 +1,5 @@
 import { Skia, type SkPath } from '@shopify/react-native-skia';
-import { STICKMAN } from '@/game/constants';
+import { ARROW, EFFECTS, STICKMAN } from '@/game/constants';
 import type { Hat } from '@/game/skins';
 
 // Procedural stickman — a circle head plus line segments. Drawn on the UI
@@ -17,6 +17,8 @@ export type Pose = {
   armAngle: number; // radians, bow arm direction in screen space (y down)
   fall: number; // 0 = standing, 1 = fully fallen (death animation progress)
   hat: Hat;
+  draw: number; // 0..1 bowstring pull (aim power while dragging)
+  breathe: number; // px, idle chest bob (upper body only)
 };
 
 export const bodyHeight = () => {
@@ -28,7 +30,7 @@ export const bodyHeight = () => {
 const joints = (p: Pose) => {
   'worklet';
   const hipY = p.y - STICKMAN.legLen;
-  const shoulderY = hipY - STICKMAN.torso;
+  const shoulderY = hipY - STICKMAN.torso + p.breathe;
   const headCY = shoulderY - STICKMAN.neck - STICKMAN.headR;
   return { hipY, shoulderY, headCY };
 };
@@ -67,7 +69,16 @@ export const stickmanPath = (p: Pose): SkPath => {
   const hx = p.x + Math.cos(p.armAngle) * STICKMAN.armLen;
   const hy = shoulderY + Math.sin(p.armAngle) * STICKMAN.armLen;
   seg(p.x, shoulderY, hx, hy);
-  seg(p.x, shoulderY, p.x - f * 10, shoulderY + 12);
+  if (p.draw > 0 && p.fall === 0) {
+    // Drawing: the string hand holds the nock, pulled back along the aim.
+    const n = nockPoint(p);
+    const mx = (p.x + n.x) / 2 - f * 4;
+    const my = (shoulderY + n.y) / 2 + 5;
+    seg(p.x, shoulderY, mx, my); // upper arm
+    seg(mx, my, n.x, n.y); // forearm
+  } else {
+    seg(p.x, shoulderY, p.x - f * 10, shoulderY + 12);
+  }
 
   // Head as a full circle
   const h = tip(p.x, headCY, p);
@@ -177,10 +188,75 @@ export const bowPath = (p: Pose): SkPath => {
   const cy = hy + Math.sin(p.armAngle) * 14;
   path.moveTo(ax, ay);
   path.quadTo(cx, cy, bx, by);
-  // String
+  return path;
+};
+
+// Bowstring: straight between the tips at rest, a V to the nock when drawn.
+export const bowStringPath = (p: Pose): SkPath => {
+  'worklet';
+  const path = Skia.Path.Make();
+  if (p.fall > 0) return path;
+  const { hx, hy, perp } = bowFrame(p);
+  const r = 20;
+  const ax = hx + Math.cos(perp) * r;
+  const ay = hy + Math.sin(perp) * r;
+  const bx = hx - Math.cos(perp) * r;
+  const by = hy - Math.sin(perp) * r;
   path.moveTo(ax, ay);
+  if (p.draw > 0) {
+    const n = nockPoint(p);
+    path.lineTo(n.x, n.y);
+  }
   path.lineTo(bx, by);
   return path;
+};
+
+const bowFrame = (p: Pose) => {
+  'worklet';
+  const { shoulderY } = joints(p);
+  return {
+    hx: p.x + Math.cos(p.armAngle) * STICKMAN.armLen,
+    hy: shoulderY + Math.sin(p.armAngle) * STICKMAN.armLen,
+    perp: p.armAngle + Math.PI / 2,
+  };
+};
+
+// Where the string hand holds the arrow's nock at the current draw.
+export const nockPoint = (p: Pose) => {
+  'worklet';
+  const { hx, hy } = bowFrame(p);
+  const back = 2 + p.draw * EFFECTS.bowDrawPx;
+  return { x: hx - Math.cos(p.armAngle) * back, y: hy - Math.sin(p.armAngle) * back };
+};
+
+// Appends a full arrow whose TIP is at (x, y) pointing along `ang`: shaft
+// into `shaft`, triangular head into `head`, two fletching vanes into `fletch`.
+export const addArrow = (shaft: SkPath, head: SkPath, fletch: SkPath, x: number, y: number, ang: number) => {
+  'worklet';
+  const c = Math.cos(ang);
+  const s = Math.sin(ang);
+  const tailX = x - c * ARROW.length;
+  const tailY = y - s * ARROW.length;
+  const baseX = x - c * ARROW.headLen;
+  const baseY = y - s * ARROW.headLen;
+  shaft.moveTo(tailX, tailY);
+  shaft.lineTo(baseX, baseY);
+  head.moveTo(x, y);
+  head.lineTo(baseX - s * ARROW.headHalf, baseY + c * ARROW.headHalf);
+  head.lineTo(baseX + s * ARROW.headHalf, baseY - c * ARROW.headHalf);
+  head.close();
+  const fx = tailX + c * ARROW.fletchLen;
+  const fy = tailY + s * ARROW.fletchLen;
+  fletch.moveTo(fx, fy);
+  fletch.lineTo(tailX - s * 4, tailY + c * 4);
+  fletch.moveTo(fx, fy);
+  fletch.lineTo(tailX + s * 4, tailY - c * 4);
+};
+
+// Rotates a point stuck to a figure so it follows the death tip-over.
+export const followFall = (p: Pose, px: number, py: number) => {
+  'worklet';
+  return tip(px, py, p);
 };
 
 // Where a fired arrow starts: the bow hand.

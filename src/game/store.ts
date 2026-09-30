@@ -16,6 +16,8 @@ export type PendingPurchase = { signature: string; skinId: string; currency: Cur
 type GameSettings = {
   hapticsEnabled: boolean;
   vibrationEnabled: boolean;
+  soundEnabled: boolean;
+  musicEnabled: boolean;
   highScore: number;
   gamesPlayed: number;
   // Adaptive AI input: lifetime shots + hits (decayed so recent form matters).
@@ -30,6 +32,8 @@ type GameSettings = {
   pendingPurchase: PendingPurchase | null;
   setHaptics: (on: boolean) => void;
   setVibration: (on: boolean) => void;
+  setSound: (on: boolean) => void;
+  setMusic: (on: boolean) => void;
   recordGame: (score: number, shots: number, hits: number) => void;
   equipSkin: (id: string) => void;
   setOwnedSkins: (ids: string[]) => void;
@@ -57,6 +61,8 @@ export const useGameStore = create<GameSettings>()(
     (set) => ({
       hapticsEnabled: true,
       vibrationEnabled: true,
+      soundEnabled: true,
+      musicEnabled: true,
       highScore: 0,
       gamesPlayed: 0,
       shots: 0,
@@ -69,6 +75,8 @@ export const useGameStore = create<GameSettings>()(
       pendingPurchase: null,
       setHaptics: (hapticsEnabled) => set({ hapticsEnabled }),
       setVibration: (vibrationEnabled) => set({ vibrationEnabled }),
+      setSound: (soundEnabled) => set({ soundEnabled }),
+      setMusic: (musicEnabled) => set({ musicEnabled }),
       recordGame: (score, shots, hits) =>
         set((s) => ({
           gamesPlayed: s.gamesPlayed + 1,
@@ -94,10 +102,11 @@ export const useGameStore = create<GameSettings>()(
       setPendingPurchase: (pendingPurchase) => set({ pendingPurchase }),
     }),
     {
-      name: 'monolith.game',
-      version: 2,
+      name: 'monolith.game', // storage key kept so existing installs keep their progress
+      version: 3,
       storage: createJSONStorage(() => AsyncStorage),
-      // v1 → v2 added streak/accuracy/currency fields; defaults fill the gaps.
+      // v1 → v2 added streak/accuracy/currency; v3 added sound/music toggles.
+      // persist's shallow merge fills new fields from the defaults above.
       migrate: (persisted) => persisted as GameSettings,
     },
   ),

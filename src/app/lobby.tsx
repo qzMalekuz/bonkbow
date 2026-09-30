@@ -4,6 +4,7 @@ import { ActivityIndicator, Alert, Share, StyleSheet, Text, TextInput, View } fr
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { HapticTouchable } from '@/components/haptic-touchable';
+import { useScreenMusic } from '@/audio/useScreenMusic';
 import { COLORS } from '@/game/constants';
 import { haptic } from '@/game/haptics';
 import { useWalletAuth } from '@/solana/auth';
@@ -13,6 +14,7 @@ import { isSupabaseConfigured } from '@/utils/supabase';
 // Multiplayer lobby: create a room (get a 6-letter code to share) or join one.
 // Requires a wallet session — rooms are tied to the signed-in user.
 export default function LobbyScreen() {
+  useScreenMusic('menu');
   const { session, signIn, signingIn } = useWalletAuth();
   const [hosting, setHosting] = useState<Room | null>(null);
   const [joinCode, setJoinCode] = useState('');
@@ -71,13 +73,13 @@ export default function LobbyScreen() {
   const share = () => {
     if (!hosting) return;
     haptic.tap();
-    Share.share({ message: `Duel me in Monolith — room code ${hosting.code}` }).catch(() => {});
+    Share.share({ message: `Duel me in Stickchers — room code ${hosting.code}` }).catch(() => {});
   };
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <HapticTouchable onPress={() => router.back()} hitSlop={12}>
+        <HapticTouchable onPress={() => router.back()} hitSlop={12} sound="ui_back">
           <Ionicons name="chevron-back" size={26} color="#FFFFFF" />
         </HapticTouchable>
         <Text style={styles.title}>Multiplayer</Text>

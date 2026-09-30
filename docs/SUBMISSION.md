@@ -1,4 +1,4 @@
-# CLOCK IN submission checklist — Monolith
+# CLOCK IN submission checklist — Stickchers
 
 Deadline: **Oct 8 2026, 11:59 pm PT** (Oct 9 06:59 UTC). Finalize on Align a few
 hours early; the lead's final submission locks the team and the entry. Facts
@@ -49,7 +49,7 @@ behind every item: [HACKATHON.md](./HACKATHON.md).
       on, `verify-purchase` + `delete-account` deployed, secrets
       `SOLANA_RPC_URL`, `TREASURY_ADDRESS`, `SKR_MINT` set.
 - [ ] Real prices in `src/game/skins.ts` **and** `verify-purchase/index.ts`.
-- [ ] Privacy + terms pages live at `https://monolith.bitwise.app/{privacy,terms}`
+- [ ] Privacy + terms pages live at `https://stickchers.bitwise.app/{privacy,terms}`
       (or change `src/utils/legal.ts` and `APP_IDENTITY.uri`).
 - [ ] `npm run typecheck && npm run lint && npm run doctor` clean.
 
@@ -67,7 +67,7 @@ the skin unlocks — the client never grants itself anything.
 
 ## Demo video script (≈3 min, narrate everything)
 
-1. **0:00–0:20 Hook.** Seeker in hand. "Monolith is stickman archery for the
+1. **0:00–0:20 Hook.** Seeker in hand. "Stickchers is stickman archery for the
    Solana dApp Store. Your wallet is your account." Show the home screen.
 2. **0:20–1:00 Core loop.** Play vs AI: draw, dotted arc, release, headshot,
    haptics callout. Point at the "ADAPTIVE AI · 62%" chip: "the AI aims as well

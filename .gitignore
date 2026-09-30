@@ -46,3 +46,6 @@ example
 /dapp-store/*.json
 /dapp-store/*.keystore
 /dapp-store/*.jks
+
+# Unity Asset Store files: allowed in the APK, not in a public repo
+assets/licensed/

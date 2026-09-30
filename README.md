@@ -67,7 +67,9 @@ src/app/
   leaderboard.tsx              global best runs by wallet, your best + day streak
   settings.tsx                 haptics + vibration toggles, sign out, legal, updates, delete account
 src/game/
-  GameCanvas.tsx               Skia scene, fixed-step (120 Hz) physics, pan gesture, AI + remote shots
+  GameCanvas.tsx               Skia scene, fixed-step (120 Hz) physics, pan gesture, AI + remote shots,
+                               particles, screen shake, hit flashes, arrow trail, stuck arrows
+  scenery.tsx / menu-backdrop  painted dusk backdrop (sky, sun, clouds, mountains, trees); animated menu scene
   stickman.ts / skins.ts       procedural stickman, hats, skin catalog with SOL + SKR prices (placeholders)
   aim.ts / rng.ts / constants  ballistics solver, adaptive AI noise, seeded layouts, tuning
   haptics.ts / store.ts        expo-haptics + Vibration; zustand persisted settings, streak, accuracy, owned skins
@@ -77,12 +79,17 @@ src/solana/
   skr.ts                       useSkrBalance (token account via kit RPC), SKR TransferChecked builder
   payments.ts                  buySkin (SOL or SKR) via MWA → verify-purchase; pending-purchase restore
   WalletButton.tsx             sign in / sign out
+src/audio/
+  sound.ts                     preloaded SFX pools, per-screen music crossfade, ducking, Settings toggles
+  useScreenMusic.ts            plays a screen's track on focus
 src/multiplayer/useRoom.ts     rooms table + Realtime channel (presence, shot/result/skin broadcasts)
 supabase/
   schema.sql                   profiles, scores, leaderboard, purchases, rooms + join_room()
   functions/verify-purchase    checks the transfer on-chain, grants the skin (service role)
   functions/delete-account     account deletion
-docs/ASSETS.md                 free art/audio research (Unity Asset Store + CC0 sources)
+assets/audio/                  CC0 music + SFX (credits in CREDITS.md)
+scripts/extract-unitypackage.sh  pull PNG/WAV out of a Unity .unitypackage into gitignored assets/licensed/
+docs/ASSETS.md                 asset sources, licensing, and the Unity Asset Store workflow
 .eas/workflows/                build the dApp Store APK on push to main
 .github/workflows/             PR preview QR (EAS Update) + automated PR review
 ```
@@ -94,6 +101,11 @@ previews the shot; release fires. Headshot = 100, body = 50, both archers have
 100 HP. All simulation runs on the UI thread in shared values with a fixed
 1/120 s step; only discrete events cross to JS for haptics, HUD and the
 multiplayer channel. `matter-js` is installed for a future ragdoll death.
+
+**Audio** (Settings → Audio): menu, battle and shop music crossfade as you
+navigate and duck under the win/lose jingle. Bow creak and ratchet ticks
+while drawing, twang + whoosh on release, distinct body, headshot, wood and
+ground impacts, body drop on a kill, and a subtle click on every button.
 
 **Haptics** (Settings → Feedback): ratchet ticks while drawing, medium impact
 on release, heavy on body hit, success + vibration pattern on kill, rigid +
@@ -151,7 +163,7 @@ loses; a disconnect forfeits.
    can never update):
    ```bash
    mkdir -p dapp-store && keytool -genkey -v -keystore dapp-store/release.keystore \
-     -alias monolith -keyalg RSA -keysize 2048 -validity 10000
+     -alias stickchers -keyalg RSA -keysize 2048 -validity 10000
    ```
    Upload it to EAS (`eas credentials -p android`) so the `dapp-store` profile
    signs with it. `dapp-store/*.keystore` and `*.json` are gitignored.
@@ -174,7 +186,7 @@ https://docs.solanamobile.com/dapp-store/build-and-sign-an-apk
 |---|---|
 | Supabase | Create project → `EXPO_PUBLIC_SUPABASE_URL/KEY`. Run `supabase/schema.sql`. **Auth → Providers → enable Web3 Wallet**; add the app identity URL to allowed URLs. `supabase functions deploy verify-purchase delete-account`. `supabase secrets set SOLANA_RPC_URL=… TREASURY_ADDRESS=…`. |
 | Solana | `EXPO_PUBLIC_SOLANA_CLUSTER`, `EXPO_PUBLIC_SOLANA_RPC_URL` (dedicated RPC for mainnet), `EXPO_PUBLIC_TREASURY_ADDRESS`, `EXPO_PUBLIC_SKR_MINT` (devnet test mint; blank on mainnet). Edge function secrets: `SOLANA_RPC_URL`, `TREASURY_ADDRESS`, `SKR_MINT`. |
-| Sentry | `EXPO_PUBLIC_SENTRY_DSN`; `eas secret:create --name SENTRY_AUTH_TOKEN`; org/project in app.json (`bitwise` / `monolith`). |
+| Sentry | `EXPO_PUBLIC_SENTRY_DSN`; `eas secret:create --name SENTRY_AUTH_TOKEN`; org/project in app.json (`bitwise` / `stickchers`). |
 | PostHog | `EXPO_PUBLIC_POSTHOG_KEY`. Events: `game_started`, `game_over`, `skin_equipped`, `purchase_*`. |
 | EAS | `eas init`; set every `EXPO_PUBLIC_*` as an EAS env var (cloud builds don't read `.env.local`); `eas update:configure` for OTA. |
 | GitHub Actions | repo secret `EXPO_TOKEN`, plus the API key read by the PR review workflow (see `.github/workflows/`). |
@@ -184,7 +196,9 @@ https://docs.solanamobile.com/dapp-store/build-and-sign-an-apk
 - [x] Initial commit pushed to GitHub — keep committing in small, descriptive steps; judges grade commit history
 - [ ] `eas init` + `eas update:configure` (adds `updates.url` / `extra.eas.projectId` to app.json — without them OTA and the CI `eas update` jobs are inert), first dev build, test MWA on a real device (Seeker if you have one)
 - [ ] Supabase project + schema + Web3 provider + anonymous sign-in, then test SIWS, rooms, a devnet SOL and SKR purchase end to end
-- [ ] Real icon, splash; host `favicon.ico` + privacy/terms at `monolith.bitwise.app`
-- [ ] Sounds (see `docs/ASSETS.md`) via `expo-audio`; ragdoll death via `matter-js`
+- [ ] Real icon, splash; host `favicon.ico` + privacy/terms at `stickchers.bitwise.app`
+- [x] Sounds, per-screen music, UI clicks (CC0, `src/audio/`)
+- [x] Scenery, particles, screen shake, bow-draw animation
+- [ ] Ragdoll death via `matter-js`
 - [ ] Rematch in online mode, room timeout handling
 - [ ] Demo video + pitch deck ([docs/SUBMISSION.md](docs/SUBMISSION.md))

@@ -29,9 +29,9 @@ export const CLUSTER = {
 // Shown in the wallet's approval sheet (Seed Vault, Phantom, Solflare). `uri`
 // must be https and `icon` is resolved relative to it — host a real icon at
 // this path before shipping. Also the SIWS domain Supabase validates against.
-export const APP_URI = 'https://monolith.bitwise.app';
+export const APP_URI = 'https://stickchers.bitwise.app';
 export const APP_IDENTITY: AppIdentity = {
-  name: 'Monolith',
+  name: 'Stickchers',
   uri: APP_URI,
   icon: 'favicon.ico',
 };

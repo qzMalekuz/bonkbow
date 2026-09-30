@@ -10,14 +10,28 @@ import {
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
-import { Canvas, Circle, LinearGradient, Path, Rect, RoundedRect, Skia, vec } from '@shopify/react-native-skia';
-import { ARROW, COLORS, ENEMY, HP, PHYSICS, STICKMAN } from '@/game/constants';
-import { bowPath, handPoint, hatPath, headCenter, hitTest, stickmanPath, type Pose } from '@/game/stickman';
+import { BlurMask, Canvas, Group, LinearGradient, Path, Skia, vec } from '@shopify/react-native-skia';
+import { ARROW, COLORS, EFFECTS, ENEMY, HP, PHYSICS, SCENERY, STICKMAN } from '@/game/constants';
+import {
+  addArrow,
+  bowPath,
+  bowStringPath,
+  followFall,
+  handPoint,
+  hatPath,
+  headCenter,
+  hitTest,
+  nockPoint,
+  stickmanPath,
+  type Pose,
+} from '@/game/stickman';
 import { enemyNoise, jitter, solveLaunchAngle } from '@/game/aim';
 import { layoutFor } from '@/game/rng';
+import { Scenery } from '@/game/scenery';
 import type { Skin } from '@/game/skins';
 
 export type Zone = 'head' | 'body' | 'miss';
+export type Surface = 'ground' | 'pillar' | 'none';
 
 export type GameEvent =
   | { type: 'aimStart' }
@@ -32,7 +46,11 @@ export type GameEvent =
   | { type: 'enemyHit'; hp: number; zone: 'head' | 'body' }
   | { type: 'enemyRespawn' }
   | { type: 'enemyMiss' }
-  | { type: 'playerHit'; hp: number; zone: 'head' | 'body' };
+  | { type: 'playerHit'; hp: number; zone: 'head' | 'body' }
+  // Presentation-only events (sound cues).
+  | { type: 'enemyDraw' }
+  | { type: 'enemyFired' }
+  | { type: 'impact'; surface: Surface };
 
 export type GameMode = 'ai' | 'online';
 
@@ -61,13 +79,21 @@ type Props = {
 
 type Shooter = 'player' | 'enemy';
 type Phase = 'player' | 'flight' | 'enemyThink' | 'waitRemote' | 'over';
+// Arrow left in the world. owner: 0 = ground/pillar, 1 = player body, 2 = enemy body.
+type Stuck = { x: number; y: number; a: number; o: 0 | 1 | 2 };
 
 const STEP = 1 / 120; // fixed physics step → identical results on both phones
+const PART_STRIDE = 6; // x, y, vx, vy, life (1 → 0), kind
+const KIND_BLOOD = 0;
+const KIND_SPARK = 1;
+const KIND_DUST = 2;
+const PILLAR_HALF = 24;
 
 // The whole simulation lives in Reanimated shared values and runs on the UI
 // thread (useFrameCallback), so a busy JS thread never stutters the arrow.
-// Only discrete events cross to JS (runOnJS → onEvent) for haptics, HUD and
-// the multiplayer channel.
+// Only discrete events cross to JS (runOnJS → onEvent) for sound, haptics,
+// HUD and the multiplayer channel. Effects (particles, shake, flashes, trail)
+// are purely visual and never feed back into the simulation.
 export const GameCanvas = forwardRef<GameCanvasHandle, Props>(function GameCanvas(props, ref) {
   const [size, setSize] = useState({ w: 0, h: 0 });
   const onLayout = (e: LayoutChangeEvent) => {
@@ -103,6 +129,8 @@ const Scene = forwardRef<GameCanvasHandle, Props & { w: number; h: number }>(fun
   const enemyArm = useSharedValue(Math.PI + 0.6);
   const enemyFall = useSharedValue(0);
   const enemyHp = useSharedValue(HP.max);
+  const enemyDraw = useSharedValue(0);
+  const enemyPlanned = useSharedValue(Math.PI + 0.6);
 
   const phase = useSharedValue<Phase>(myTurnFirst ? 'player' : 'waitRemote');
 
@@ -127,12 +155,16 @@ const Scene = forwardRef<GameCanvasHandle, Props & { w: number; h: number }>(fun
   const pendingRemote = useSharedValue<{ zone: Zone; hp: number } | null>(null);
   const awaitingRemote = useSharedValue(false);
 
-  const stuck = useSharedValue<{ x: number; y: number; angle: number; visible: boolean }>({
-    x: 0,
-    y: 0,
-    angle: 0,
-    visible: false,
-  });
+  const stuck = useSharedValue<Stuck[]>([]);
+
+  // ---- effects (visual only) ----------------------------------------------------
+  const clock = useSharedValue(0);
+  const shake = useSharedValue(0);
+  const playerFlash = useSharedValue(0);
+  const enemyFlash = useSharedValue(0);
+  const parts = useSharedValue<number[]>(new Array(EFFECTS.particles * PART_STRIDE).fill(0));
+  const partsAlive = useSharedValue(false);
+  const trail = useSharedValue<number[]>([]);
 
   const scoreSv = useSharedValue(score);
   const skillSv = useSharedValue(skill);
@@ -151,6 +183,8 @@ const Scene = forwardRef<GameCanvasHandle, Props & { w: number; h: number }>(fun
     armAngle: aiming.value ? aimAngle.value : playerArm.value,
     fall: playerFall.value,
     hat: skin.hat,
+    draw: aiming.value ? aimPower.value : 0,
+    breathe: aiming.value ? 0 : Math.sin(clock.value * 2.1) * EFFECTS.breatheAmp,
   }));
   const enemyPose = useDerivedValue<Pose>(() => ({
     x: enemyX.value,
@@ -159,6 +193,8 @@ const Scene = forwardRef<GameCanvasHandle, Props & { w: number; h: number }>(fun
     armAngle: enemyArm.value,
     fall: enemyFall.value,
     hat: opponentSkin.hat,
+    draw: enemyDraw.value,
+    breathe: enemyDraw.value > 0 ? 0 : Math.sin(clock.value * 2.1 + 1.7) * EFFECTS.breatheAmp,
   }));
 
   const playerPath = useDerivedValue(() => stickmanPath(playerPose.value));
@@ -167,8 +203,22 @@ const Scene = forwardRef<GameCanvasHandle, Props & { w: number; h: number }>(fun
   const enemyHat = useDerivedValue(() => hatPath(enemyPose.value));
   const playerBow = useDerivedValue(() => bowPath(playerPose.value));
   const enemyBow = useDerivedValue(() => bowPath(enemyPose.value));
+  const playerString = useDerivedValue(() => bowStringPath(playerPose.value));
+  const enemyString = useDerivedValue(() => bowStringPath(enemyPose.value));
 
-  // Aim preview: first ~0.5s of the trajectory as fading dots.
+  // Soft contact shadows on the pillar tops (hidden once the figure falls).
+  const shadows = useDerivedValue(() => {
+    const p = Skia.Path.Make();
+    const add = (pose: Pose) => {
+      if (pose.fall > 0.3) return;
+      p.addOval(Skia.XYWHRect(pose.x - 15, pose.y - 3, 30, 6));
+    };
+    add(playerPose.value);
+    add(enemyPose.value);
+    return p;
+  });
+
+  // Aim preview: first ~0.5s of the trajectory as shrinking dots.
   const aimDots = useDerivedValue(() => {
     const p = Skia.Path.Make();
     if (!aiming.value || aimPower.value < PHYSICS.minPower) return p;
@@ -183,34 +233,132 @@ const Scene = forwardRef<GameCanvasHandle, Props & { w: number; h: number }>(fun
       vy += PHYSICS.gravity * dt;
       x += vx * dt;
       y += vy * dt;
-      p.addCircle(x, y, 3 - i * 0.15);
+      p.addCircle(x, y, 3.2 - i * 0.2);
     }
     return p;
   });
 
-  const arrowPath = useDerivedValue(() => {
-    const p = Skia.Path.Make();
-    const draw = (x: number, y: number, ang: number) => {
-      const c = Math.cos(ang);
-      const s = Math.sin(ang);
-      p.moveTo(x - c * ARROW.length, y - s * ARROW.length);
-      p.lineTo(x, y);
+  // Every visible arrow: nocked ones, the one in flight, and the stuck ones.
+  const arrows = useDerivedValue(() => {
+    const shaft = Skia.Path.Make();
+    const head = Skia.Path.Make();
+    const fletch = Skia.Path.Make();
+    const nocked = (pose: Pose, angle: number) => {
+      const n = nockPoint(pose);
+      addArrow(shaft, head, fletch, n.x + Math.cos(angle) * ARROW.length, n.y + Math.sin(angle) * ARROW.length, angle);
     };
-    if (arrowActive.value) draw(ax.value, ay.value, aAngle.value);
-    if (stuck.value.visible) draw(stuck.value.x, stuck.value.y, stuck.value.angle);
+    if (aiming.value && aimPower.value > 0.02) nocked(playerPose.value, aimAngle.value);
+    if (enemyDraw.value > 0.02) nocked(enemyPose.value, enemyArm.value);
+    if (arrowActive.value) addArrow(shaft, head, fletch, ax.value, ay.value, aAngle.value);
+    const list = stuck.value;
+    for (let i = 0; i < list.length; i++) {
+      const s = list[i];
+      if (s.o === 0) {
+        addArrow(shaft, head, fletch, s.x, s.y, s.a);
+      } else {
+        const pose = s.o === 1 ? playerPose.value : enemyPose.value;
+        const q = followFall(pose, s.x, s.y);
+        addArrow(shaft, head, fletch, q.x, q.y, s.a + pose.fall * (Math.PI / 2) * -pose.facing);
+      }
+    }
+    return { shaft, head, fletch };
+  });
+  const arrowShaft = useDerivedValue(() => arrows.value.shaft);
+  const arrowHead = useDerivedValue(() => arrows.value.head);
+  const arrowFletch = useDerivedValue(() => arrows.value.fletch);
+
+  // Motion trail behind the flying arrow: dots that grow toward the arrow.
+  const trailPath = useDerivedValue(() => {
+    const p = Skia.Path.Make();
+    const t = trail.value;
+    const n = t.length / 2;
+    for (let i = 0; i < n; i++) {
+      p.addCircle(t[i * 2], t[i * 2 + 1], 0.6 + (i / n) * 2);
+    }
     return p;
   });
 
-  const enemyPillar = useDerivedValue(() => {
-    const p = Skia.Path.Make();
-    p.addRRect(Skia.RRectXY(Skia.XYWHRect(enemyX.value - 24, enemyPillarTop.value, 48, groundY - enemyPillarTop.value + 4), 4, 4));
-    return p;
+  // Particles split by kind so each draws in one call with its own color.
+  const particlePaths = useDerivedValue(() => {
+    const blood = Skia.Path.Make();
+    const spark = Skia.Path.Make();
+    const dust = Skia.Path.Make();
+    const a = parts.value;
+    for (let i = 0; i < a.length; i += PART_STRIDE) {
+      const life = a[i + 4];
+      if (life <= 0) continue;
+      const kind = a[i + 5];
+      const r = kind === KIND_DUST ? 1.5 + (1 - life) * 4 : 1 + life * 2.4;
+      (kind === KIND_BLOOD ? blood : kind === KIND_SPARK ? spark : dust).addCircle(a[i], a[i + 1], r);
+    }
+    return { blood, spark, dust };
   });
-  const playerPillar = useDerivedValue(() => {
-    const p = Skia.Path.Make();
-    p.addRRect(Skia.RRectXY(Skia.XYWHRect(playerX - 24, playerPillarTop.value, 48, groundY - playerPillarTop.value + 4), 4, 4));
-    return p;
+  const bloodPath = useDerivedValue(() => particlePaths.value.blood);
+  const sparkPath = useDerivedValue(() => particlePaths.value.spark);
+  const dustPath = useDerivedValue(() => particlePaths.value.dust);
+
+  // Stone pillars: body, mortar lines, and a lighter cap slab.
+  const pillarGeo = (x: number, top: number) => {
+    'worklet';
+    const body = Skia.Path.Make();
+    const lines = Skia.Path.Make();
+    const cap = Skia.Path.Make();
+    body.addRRect(Skia.RRectXY(Skia.XYWHRect(x - PILLAR_HALF, top, PILLAR_HALF * 2, groundY - top + 4), 3, 3));
+    cap.addRRect(Skia.RRectXY(Skia.XYWHRect(x - PILLAR_HALF - 3, top - 2, PILLAR_HALF * 2 + 6, 7), 2, 2));
+    let row = 0;
+    for (let y = top + 18; y < groundY; y += 14) {
+      lines.moveTo(x - PILLAR_HALF, y);
+      lines.lineTo(x + PILLAR_HALF, y);
+      const jx = x + (row % 2 === 0 ? -6 : 8);
+      lines.moveTo(jx, y);
+      lines.lineTo(jx, Math.min(y + 14, groundY));
+      row += 1;
+    }
+    return { body, lines, cap };
+  };
+  const playerPillarGeo = useDerivedValue(() => pillarGeo(playerX, playerPillarTop.value));
+  const enemyPillarGeo = useDerivedValue(() => pillarGeo(enemyX.value, enemyPillarTop.value));
+  const playerPillarBody = useDerivedValue(() => playerPillarGeo.value.body);
+  const playerPillarLines = useDerivedValue(() => playerPillarGeo.value.lines);
+  const playerPillarCap = useDerivedValue(() => playerPillarGeo.value.cap);
+  const enemyPillarBody = useDerivedValue(() => enemyPillarGeo.value.body);
+  const enemyPillarLines = useDerivedValue(() => enemyPillarGeo.value.lines);
+  const enemyPillarCap = useDerivedValue(() => enemyPillarGeo.value.cap);
+  const enemyGradStart = useDerivedValue(() => vec(enemyX.value - PILLAR_HALF, 0));
+  const enemyGradEnd = useDerivedValue(() => vec(enemyX.value + PILLAR_HALF, 0));
+
+  const shakeTransform = useDerivedValue(() => {
+    const s = shake.value;
+    const t = clock.value;
+    return [{ translateX: Math.sin(t * 83) * s }, { translateY: Math.cos(t * 97) * s * 0.7 }];
   });
+
+  // ---- effects helpers (UI thread) ------------------------------------------------
+  const burst = (x: number, y: number, count: number, kind: number, dir: number, speed: number, spread: number) => {
+    'worklet';
+    const a = parts.value.slice();
+    let spawned = 0;
+    for (let i = 0; i < a.length && spawned < count; i += PART_STRIDE) {
+      if (a[i + 4] > 0) continue;
+      const ang = dir + (Math.random() - 0.5) * spread;
+      const v = speed * (0.35 + Math.random() * 0.65);
+      a[i] = x;
+      a[i + 1] = y;
+      a[i + 2] = Math.cos(ang) * v;
+      a[i + 3] = Math.sin(ang) * v;
+      a[i + 4] = 1;
+      a[i + 5] = kind;
+      spawned += 1;
+    }
+    parts.value = a;
+    partsAlive.value = true;
+  };
+
+  const addStuck = (s: Stuck) => {
+    'worklet';
+    const next = stuck.value.concat([s]);
+    stuck.value = next.length > ARROW.maxStuck ? next.slice(next.length - ARROW.maxStuck) : next;
+  };
 
   // ---- events → JS --------------------------------------------------------------
   const emit = (e: GameEvent) => onEvent(e);
@@ -228,8 +376,12 @@ const Scene = forwardRef<GameCanvasHandle, Props & { w: number; h: number }>(fun
     acc.value = 0;
     arrowShooter.value = shooter;
     arrowActive.value = true;
-    stuck.value = { ...stuck.value, visible: false };
+    trail.value = [];
     phase.value = 'flight';
+    if (shooter === 'enemy') {
+      enemyDraw.value = 0;
+      runOnJS(emit)({ type: 'enemyFired' });
+    }
   };
 
   // AI mode: next opponent from the seed sequence.
@@ -242,11 +394,15 @@ const Scene = forwardRef<GameCanvasHandle, Props & { w: number; h: number }>(fun
     enemyFall.value = 0;
     enemyHp.value = HP.max;
     enemyArm.value = Math.PI + 0.6;
+    enemyDraw.value = 0;
+    // Arrows in the old enemy's body leave with it.
+    stuck.value = stuck.value.filter((s) => s.o !== 2);
     phase.value = 'player';
     runOnJS(emit)({ type: 'enemyRespawn' });
   };
 
-  const enemyShoot = () => {
+  // AI turn, part 1: pick the shot and visibly raise + draw the bow.
+  const enemyAim = () => {
     'worklet';
     if (phase.value !== 'enemyThink') return;
     const from = handPoint({ ...enemyPose.value, armAngle: Math.PI + 0.6 });
@@ -255,13 +411,25 @@ const Scene = forwardRef<GameCanvasHandle, Props & { w: number; h: number }>(fun
     let angle = solveLaunchAngle(target.x - from.x, target.y - from.y, v);
     if (angle === null) angle = Math.PI + Math.PI / 4;
     angle += jitter(enemyNoise(scoreSv.value, skillSv.value));
-    enemyArm.value = angle;
-    fire('enemy', angle, ENEMY.speedFraction);
+    enemyPlanned.value = angle;
+    const ms = ENEMY.thinkMs * 0.8;
+    enemyArm.value = withTiming(angle, { duration: ms, easing: Easing.out(Easing.cubic) });
+    enemyDraw.value = withTiming(ENEMY.speedFraction, { duration: ms, easing: Easing.inOut(Easing.quad) });
+    runOnJS(emit)({ type: 'enemyDraw' });
+  };
+
+  // AI turn, part 2: release.
+  const enemyShoot = () => {
+    'worklet';
+    if (phase.value !== 'enemyThink') return;
+    enemyArm.value = enemyPlanned.value;
+    fire('enemy', enemyPlanned.value, ENEMY.speedFraction);
   };
 
   // setTimeout lives on JS; hop back to the UI thread to mutate state.
   const scheduleEnemyShot = () => {
-    setTimeout(() => runOnUI(enemyShoot)(), ENEMY.thinkMs);
+    setTimeout(() => runOnUI(enemyAim)(), 180);
+    setTimeout(() => runOnUI(enemyShoot)(), 180 + ENEMY.thinkMs);
   };
   const scheduleRespawn = () => {
     setTimeout(() => runOnUI(spawnEnemy)(), ENEMY.respawnMs);
@@ -321,15 +489,29 @@ const Scene = forwardRef<GameCanvasHandle, Props & { w: number; h: number }>(fun
   );
 
   // ---- resolution -----------------------------------------------------------------
-  const resolve = (result: Zone, tipX: number, tipY: number) => {
+  const resolve = (result: Zone, tipX: number, tipY: number, surface: Surface) => {
     'worklet';
     arrowActive.value = false;
+    trail.value = [];
     const shooter = arrowShooter.value;
+    const ang = aAngle.value;
+
+    // Visuals first: stick the arrow, spray particles, shake, flash.
     if (result !== 'miss') {
-      stuck.value = { x: tipX, y: tipY, angle: aAngle.value, visible: true };
-    } else if (tipY >= groundY) {
-      stuck.value = { x: tipX, y: groundY, angle: aAngle.value, visible: true };
+      const owner = shooter === 'player' ? 2 : 1;
+      addStuck({ x: tipX + Math.cos(ang) * 6, y: tipY + Math.sin(ang) * 6, a: ang, o: owner });
+      const back = ang + Math.PI;
+      burst(tipX, tipY, result === 'head' ? EFFECTS.headSparks : EFFECTS.hitSparks, KIND_BLOOD, ang, 260, 1.4);
+      if (result === 'head') burst(tipX, tipY, 8, KIND_SPARK, back, 320, 2.4);
+      if (owner === 2) enemyFlash.value = 1;
+      else playerFlash.value = 1;
+    } else if (surface !== 'none') {
+      const y = surface === 'ground' ? Math.min(tipY, groundY + 4) : tipY;
+      addStuck({ x: tipX, y, a: ang, o: 0 });
+      burst(tipX, y, EFFECTS.dustPuff, KIND_DUST, -Math.PI / 2, 110, 2.2);
+      runOnJS(emit)({ type: 'impact', surface });
     }
+
     const dmg = result === 'head' ? HP.headshot : HP.body;
 
     if (shooter === 'player') {
@@ -342,6 +524,7 @@ const Scene = forwardRef<GameCanvasHandle, Props & { w: number; h: number }>(fun
         if (!online) runOnJS(scheduleEnemyShot)();
         return;
       }
+      shake.value = enemyHp.value <= 0 ? EFFECTS.shakeKill : EFFECTS.shakeHit;
       runOnJS(emit)({ type: 'enemyHit', hp: enemyHp.value, zone: result });
       if (enemyHp.value <= 0) {
         enemyFall.value = withTiming(1, { duration: 550, easing: Easing.in(Easing.quad) });
@@ -359,6 +542,7 @@ const Scene = forwardRef<GameCanvasHandle, Props & { w: number; h: number }>(fun
     }
 
     // Opponent's arrow landed on our screen.
+    if (result !== 'miss') shake.value = EFFECTS.shakeHit;
     if (online) {
       // Our sim is only visual here; the shooter's result is authoritative.
       if (pendingRemote.value) applyRemote(pendingRemote.value);
@@ -371,6 +555,7 @@ const Scene = forwardRef<GameCanvasHandle, Props & { w: number; h: number }>(fun
       return;
     }
     playerHp.value = Math.max(0, playerHp.value - dmg);
+    if (playerHp.value <= 0) shake.value = EFFECTS.shakeKill;
     runOnJS(emit)({ type: 'playerHit', hp: playerHp.value, zone: result });
     if (playerHp.value <= 0) {
       playerFall.value = withTiming(1, { duration: 650, easing: Easing.in(Easing.quad) });
@@ -380,10 +565,44 @@ const Scene = forwardRef<GameCanvasHandle, Props & { w: number; h: number }>(fun
     }
   };
 
-  // ---- frame loop (fixed step) --------------------------------------------------------
+  // ---- frame loop -------------------------------------------------------------------
   useFrameCallback((frame) => {
+    const dt = Math.min((frame.timeSincePreviousFrame ?? 16) / 1000, PHYSICS.maxDt);
+    clock.value += dt;
+
+    // Effects decay (frame-rate independent).
+    if (shake.value > 0.05) shake.value *= Math.exp(-EFFECTS.shakeDecay * dt);
+    else if (shake.value !== 0) shake.value = 0;
+    if (playerFlash.value > 0) playerFlash.value = Math.max(0, playerFlash.value - dt * 5);
+    if (enemyFlash.value > 0) enemyFlash.value = Math.max(0, enemyFlash.value - dt * 5);
+
+    if (partsAlive.value) {
+      const a = parts.value.slice();
+      let alive = false;
+      for (let i = 0; i < a.length; i += PART_STRIDE) {
+        if (a[i + 4] <= 0) continue;
+        const kind = a[i + 5];
+        const g = kind === KIND_DUST ? EFFECTS.particleGravity * 0.08 : EFFECTS.particleGravity;
+        a[i + 3] += g * dt;
+        a[i] += a[i + 2] * dt;
+        a[i + 1] += a[i + 3] * dt;
+        // Blood and sparks settle on the ground instead of falling through it.
+        if (a[i + 1] > groundY + 2 && kind !== KIND_DUST) {
+          a[i + 1] = groundY + 2;
+          a[i + 2] *= 0.3;
+          a[i + 3] = 0;
+        }
+        a[i + 4] -= dt * (kind === KIND_DUST ? 1.6 : 1.1);
+        if (a[i + 4] > 0) alive = true;
+      }
+      parts.value = a;
+      partsAlive.value = alive;
+    }
+
     if (!arrowActive.value) return;
-    acc.value += Math.min((frame.timeSincePreviousFrame ?? 16) / 1000, PHYSICS.maxDt);
+
+    // Arrow physics: fixed step so both phones compute the same flight.
+    acc.value += dt;
     let steps = 0;
     while (acc.value >= STEP && steps < 8 && arrowActive.value) {
       acc.value -= STEP;
@@ -398,17 +617,28 @@ const Scene = forwardRef<GameCanvasHandle, Props & { w: number; h: number }>(fun
       const target = arrowShooter.value === 'player' ? enemyPose.value : playerPose.value;
       const zone = hitTest(target, tipX, tipY);
       if (zone) {
-        resolve(zone, tipX, tipY);
+        resolve(zone, tipX, tipY, 'none');
         return;
       }
       const pillarX = arrowShooter.value === 'player' ? enemyX.value : playerX;
       const pillarTop = arrowShooter.value === 'player' ? enemyPillarTop.value : playerPillarTop.value;
-      const onPillar = Math.abs(tipX - pillarX) < 26 && tipY >= pillarTop;
-      if (tipY >= groundY || onPillar || tipX < -60 || tipX > w + 60 || tipY > h + 60) {
-        resolve('miss', tipX, tipY);
+      const onPillar = Math.abs(tipX - pillarX) < PILLAR_HALF + 2 && tipY >= pillarTop;
+      if (onPillar) {
+        resolve('miss', tipX, tipY, 'pillar');
+        return;
+      }
+      if (tipY >= groundY) {
+        resolve('miss', tipX, tipY, 'ground');
+        return;
+      }
+      if (tipX < -60 || tipX > w + 60 || tipY > h + 60) {
+        resolve('miss', tipX, tipY, 'none');
         return;
       }
     }
+    // Trail samples once per rendered frame (not per physics step).
+    const t = trail.value.concat([ax.value, ay.value]);
+    trail.value = t.length > ARROW.trailPoints * 2 ? t.slice(t.length - ARROW.trailPoints * 2) : t;
   });
 
   // ---- input --------------------------------------------------------------------
@@ -459,30 +689,64 @@ const Scene = forwardRef<GameCanvasHandle, Props & { w: number; h: number }>(fun
       aimPower.value = 0;
     });
 
+  const figure = (
+    path: typeof playerPath,
+    hat: typeof playerHat,
+    bow: typeof playerBow,
+    string: typeof playerString,
+    flash: typeof playerFlash,
+    s: Skin,
+  ) => (
+    <Group>
+      <Path path={bow} color={s.bow} style="stroke" strokeWidth={3.5} strokeCap="round" />
+      <Path path={string} color="rgba(255,255,255,0.75)" style="stroke" strokeWidth={1} />
+      {/* Dark outline under the limbs gives the flat figure some depth. */}
+      <Path path={path} color="rgba(0,0,0,0.35)" style="stroke" strokeWidth={STICKMAN.lineWidth + 2} strokeCap="round" strokeJoin="round" />
+      <Path path={path} color={s.body} style="stroke" strokeWidth={STICKMAN.lineWidth} strokeCap="round" strokeJoin="round" />
+      <Path path={hat} color={s.accent} style="stroke" strokeWidth={3} strokeCap="round" strokeJoin="round" />
+      {/* Hit flash */}
+      <Path path={path} color="#FFFFFF" opacity={flash} style="stroke" strokeWidth={STICKMAN.lineWidth + 1} strokeCap="round" strokeJoin="round" />
+    </Group>
+  );
+
   return (
     <GestureDetector gesture={pan}>
       <Canvas style={styles.fill}>
-        <Rect x={0} y={0} width={w} height={h}>
-          <LinearGradient start={vec(0, 0)} end={vec(0, h)} colors={[COLORS.skyTop, COLORS.skyBottom]} />
-        </Rect>
-        <Circle cx={w * 0.82} cy={h * 0.16} r={34} color={COLORS.sun} opacity={0.9} />
-        <Rect x={0} y={groundY} width={w} height={h - groundY} color={COLORS.ground} />
-        <RoundedRect x={0} y={groundY} width={w} height={6} r={0} color={COLORS.pillarEdge} />
+        <Group transform={shakeTransform}>
+          <Scenery w={w} h={h} groundY={groundY} seed={seed} clock={clock} />
 
-        <Path path={playerPillar} color={COLORS.pillar} />
-        <Path path={enemyPillar} color={COLORS.pillar} />
+          {/* Pillars */}
+          <Path path={playerPillarBody}>
+            <LinearGradient start={vec(playerX - PILLAR_HALF, 0)} end={vec(playerX + PILLAR_HALF, 0)} colors={[SCENERY.pillarLight, SCENERY.pillarDark]} />
+          </Path>
+          <Path path={playerPillarLines} color={SCENERY.pillarLines} style="stroke" strokeWidth={1} />
+          <Path path={playerPillarCap} color={SCENERY.pillarCap} />
+          <Path path={enemyPillarBody}>
+            <LinearGradient start={enemyGradStart} end={enemyGradEnd} colors={[SCENERY.pillarLight, SCENERY.pillarDark]} />
+          </Path>
+          <Path path={enemyPillarLines} color={SCENERY.pillarLines} style="stroke" strokeWidth={1} />
+          <Path path={enemyPillarCap} color={SCENERY.pillarCap} />
 
-        <Path path={aimDots} color={COLORS.aimDots} />
+          <Path path={shadows} color={SCENERY.shadow}>
+            <BlurMask blur={2} style="normal" />
+          </Path>
 
-        <Path path={playerBow} color={skin.bow} style="stroke" strokeWidth={3} strokeCap="round" />
-        <Path path={playerPath} color={skin.body} style="stroke" strokeWidth={STICKMAN.lineWidth} strokeCap="round" strokeJoin="round" />
-        <Path path={playerHat} color={skin.accent} style="stroke" strokeWidth={3} strokeCap="round" strokeJoin="round" />
+          <Path path={aimDots} color={COLORS.aimDots} />
 
-        <Path path={enemyBow} color={opponentSkin.bow} style="stroke" strokeWidth={3} strokeCap="round" />
-        <Path path={enemyPath} color={opponentSkin.body} style="stroke" strokeWidth={STICKMAN.lineWidth} strokeCap="round" strokeJoin="round" />
-        <Path path={enemyHat} color={opponentSkin.accent} style="stroke" strokeWidth={3} strokeCap="round" strokeJoin="round" />
+          {figure(playerPath, playerHat, playerBow, playerString, playerFlash, skin)}
+          {figure(enemyPath, enemyHat, enemyBow, enemyString, enemyFlash, opponentSkin)}
 
-        <Path path={arrowPath} color={COLORS.arrow} style="stroke" strokeWidth={ARROW.lineWidth} strokeCap="round" />
+          <Path path={trailPath} color="rgba(255,255,255,0.35)" />
+          <Path path={arrowShaft} color={COLORS.arrowShaft} style="stroke" strokeWidth={ARROW.lineWidth} strokeCap="round" />
+          <Path path={arrowFletch} color={COLORS.fletch} style="stroke" strokeWidth={2} strokeCap="round" />
+          <Path path={arrowHead} color={COLORS.arrowHead} />
+
+          <Path path={dustPath} color={SCENERY.dust} opacity={0.7} />
+          <Path path={bloodPath} color={SCENERY.blood} />
+          <Path path={sparkPath} color={SCENERY.spark}>
+            <BlurMask blur={1.5} style="solid" />
+          </Path>
+        </Group>
       </Canvas>
     </GestureDetector>
   );

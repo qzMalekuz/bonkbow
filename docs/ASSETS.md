@@ -1,7 +1,49 @@
 # Free art & audio assets for the stickman archery game
 
 Researched 2026-09-29. Target: 2D stickman archery (Byril "Stickman Archer"
-style) rendered with React Native Skia. Nothing here has been downloaded yet.
+style) rendered with React Native Skia.
+
+## Status (2026-09-30)
+
+**Audio is integrated.** All of it is CC0 and committed under `assets/audio/`
+(about 1.6 MB, mono MP3). Credits: `assets/audio/CREDITS.md`. Playback lives
+in `src/audio/sound.ts`: pooled sound effects plus one looping music track per
+screen that crossfades on navigation (menu, battle, shop), ducks under
+win/lose jingles, pauses in the background, and honours Settings → Audio.
+
+**Graphics are procedural** (Skia, no image files): painted dusk sky, sun glow,
+drifting clouds, two mountain ranges, tree line, grass, stone pillars, contact
+shadows, arrows with heads and fletching, motion trail, blood/spark/dust
+particles, screen shake, hit flashes, animated bow draw. See
+`src/game/scenery.tsx` and `src/game/GameCanvas.tsx`. This keeps the APK small
+and lets every piece animate; image assets below are optional upgrades.
+
+## How to use Unity Asset Store packs
+
+Unity Asset Store downloads require a signed-in Unity ID, so they can't be
+fetched automatically. The flow:
+
+1. Sign in at assetstore.unity.com and press **Add to My Assets** on each free
+   pack (links in the Unity table below).
+2. Install Unity Hub plus any Unity Editor version, create an empty 2D project,
+   open **Window → Package Manager → My Assets**, and **Download** each pack.
+   Unity caches the raw `.unitypackage` file here, so you don't need to import it:
+   - macOS: `~/Library/Unity/Asset Store-5.x/<Publisher>/<Category>/<Pack>.unitypackage`
+   - Windows: `%APPDATA%\Unity\Asset Store-5.x\...`
+3. Extract the images and audio without Unity:
+   ```bash
+   scripts/extract-unitypackage.sh ~/Library/Unity/Asset\ Store-5.x/.../Pack.unitypackage
+   ```
+   Files land in `assets/licensed/<Pack>/`, which is gitignored.
+4. Reference them with `require('../../assets/licensed/...')`. For audio, add
+   the clip to the `SFX` or `MUSIC` map in `src/audio/sound.ts`. For images,
+   load with Skia's `useImage` and draw with `<Image>` inside the canvas.
+
+Keep Unity files out of the public repo (EULA). EAS cloud builds only see
+committed files, so for a cloud build either switch to the CC0 equivalents or
+zip the folder, upload the zip as a file-type EAS environment variable, and
+unzip it in an `eas-build-pre-install` npm script. Local builds
+(`npx expo run:android`) pick up the gitignored folder directly.
 
 ## Key finding: there is no free stickman pack on the Unity Asset Store
 

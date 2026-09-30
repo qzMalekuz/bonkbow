@@ -3,19 +3,39 @@ import { StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { HapticTouchable } from '@/components/haptic-touchable';
+import { useScreenMusic } from '@/audio/useScreenMusic';
 import { StaggerIn } from '@/components/stagger-in';
 import { WalletButton } from '@/solana/WalletButton';
 import { useGameStore } from '@/game/store';
 import { haptic } from '@/game/haptics';
 import { COLORS } from '@/game/constants';
 import { getSkin } from '@/game/skins';
+import { MenuBackdrop } from '@/game/menu-backdrop';
+import Animated, { useAnimatedStyle, useSharedValue, withRepeat, withSequence, withTiming, Easing } from 'react-native-reanimated';
+import { useEffect } from 'react';
 
 // Main menu: two modes + shop. Playing vs AI never requires a wallet; online
 // and the shop sign you in with your wallet when you tap them.
 export default function HomeScreen() {
+  useScreenMusic('menu');
   const highScore = useGameStore((s) => s.highScore);
   const streak = useGameStore((s) => s.streak);
   const skin = getSkin(useGameStore((s) => s.equippedSkin));
+
+  // Gentle pulse on the Play button so the primary action draws the eye.
+  const pulse = useSharedValue(1);
+  useEffect(() => {
+    pulse.set(
+      withRepeat(
+        withSequence(
+          withTiming(1.03, { duration: 900, easing: Easing.inOut(Easing.quad) }),
+          withTiming(1, { duration: 900, easing: Easing.inOut(Easing.quad) }),
+        ),
+        -1,
+      ),
+    );
+  }, [pulse]);
+  const pulseStyle = useAnimatedStyle(() => ({ transform: [{ scale: pulse.value }] }));
 
   const go = (path: '/game?mode=ai' | '/lobby' | '/shop' | '/leaderboard') => {
     haptic.release();
@@ -24,10 +44,11 @@ export default function HomeScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
+      <MenuBackdrop skin={skin} />
       <View style={styles.header}>
         <View style={{ width: 28 }} />
-        <Text style={styles.wordmark}>MONOLITH</Text>
-        <HapticTouchable onPress={() => router.push('/settings')} hitSlop={12}>
+        <Text style={styles.wordmark}>STICKCHERS</Text>
+        <HapticTouchable onPress={() => router.push('/settings')} hitSlop={12} sound="ui_open">
           <Ionicons name="settings-outline" size={26} color="#FFFFFF" />
         </HapticTouchable>
       </View>
@@ -43,10 +64,12 @@ export default function HomeScreen() {
       </StaggerIn>
 
       <View style={styles.footer}>
-        <HapticTouchable style={styles.playButton} onPress={() => go('/game?mode=ai')}>
-          <Ionicons name="play" size={22} color="#0B0B0F" />
-          <Text style={styles.playText}>Play vs AI</Text>
-        </HapticTouchable>
+        <Animated.View style={pulseStyle}>
+          <HapticTouchable style={styles.playButton} onPress={() => go('/game?mode=ai')} sound="ui_open">
+            <Ionicons name="play" size={22} color="#0B0B0F" />
+            <Text style={styles.playText}>Play vs AI</Text>
+          </HapticTouchable>
+        </Animated.View>
         <View style={styles.row}>
           <HapticTouchable style={styles.secondary} onPress={() => go('/lobby')}>
             <Ionicons name="people-outline" size={20} color="#FFFFFF" />
@@ -81,7 +104,15 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 12 },
   wordmark: { color: '#FFFFFF', fontSize: 14, fontWeight: '800', letterSpacing: 4 },
   content: { flex: 1, justifyContent: 'center', paddingHorizontal: 32, gap: 14 },
-  title: { color: '#FFFFFF', fontSize: 52, fontWeight: '900', lineHeight: 56 },
+  title: {
+    color: '#FFFFFF',
+    fontSize: 52,
+    fontWeight: '900',
+    lineHeight: 56,
+    textShadowColor: 'rgba(0,0,0,0.45)',
+    textShadowOffset: { width: 0, height: 3 },
+    textShadowRadius: 10,
+  },
   subtitle: { color: 'rgba(255,255,255,0.7)', fontSize: 16, lineHeight: 24 },
   statsRow: { flexDirection: 'row', gap: 28, marginTop: 16 },
   stat: { gap: 2 },
@@ -101,11 +132,13 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', gap: 12 },
   secondary: {
     flex: 1,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.25)',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: 'rgba(20,22,44,0.55)',
     borderRadius: 16,
     paddingVertical: 16,
     paddingHorizontal: 6,

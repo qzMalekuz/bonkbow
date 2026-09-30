@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useMobileWallet } from '@wallet-ui/react-native-kit';
 import { HapticTouchable } from '@/components/haptic-touchable';
+import { useScreenMusic } from '@/audio/useScreenMusic';
 import { COLORS } from '@/game/constants';
 import { useGameStore } from '@/game/store';
 import { shortAddress } from '@/solana/config';
@@ -14,6 +15,7 @@ import { isSupabaseConfigured } from '@/utils/supabase';
 // Global best-run leaderboard keyed by wallet address (the account IS the
 // wallet). Your own row is highlighted; your local best shows even offline.
 export default function LeaderboardScreen() {
+  useScreenMusic('menu');
   const { account } = useMobileWallet();
   const highScore = useGameStore((s) => s.highScore);
   const streak = useGameStore((s) => s.streak);
@@ -43,7 +45,7 @@ export default function LeaderboardScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <HapticTouchable onPress={() => router.back()} hitSlop={12}>
+        <HapticTouchable onPress={() => router.back()} hitSlop={12} sound="ui_back">
           <Ionicons name="chevron-back" size={26} color="#FFFFFF" />
         </HapticTouchable>
         <Text style={styles.title}>Leaderboard</Text>
