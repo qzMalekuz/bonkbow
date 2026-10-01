@@ -21,8 +21,7 @@ import {
   type Look,
 } from '@/game/cosmetics';
 import { formatSol } from '@/game/skins';
-import { FACES } from '@/game/faces';
-import { Image } from 'expo-image';
+import { FaceThumb } from '@/ui/FaceThumb';
 import { useGameStore } from '@/game/store';
 import { haptic } from '@/game/haptics';
 import { playSfx } from '@/audio/sound';
@@ -167,7 +166,7 @@ export default function StyleScreen() {
                   onPress={() => setSelected((s) => ({ ...s, [category.slot]: item.id }))}
                 >
                   {'face' in item && item.face ? (
-                    <Image source={FACES[item.face].image} style={styles.swatch} contentFit="cover" />
+                    <FaceThumb face={item.face} size={14} style={styles.swatch} />
                   ) : (
                     <View style={[styles.swatch, { backgroundColor: swatchOf(item) }]} />
                   )}

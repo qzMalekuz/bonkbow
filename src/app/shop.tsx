@@ -11,8 +11,7 @@ import { playSfx } from '@/audio/sound';
 import { COLORS } from '@/game/constants';
 import { haptic } from '@/game/haptics';
 import { SKINS, formatSol, isFreeSkin, type Currency, type Skin } from '@/game/skins';
-import { FACES } from '@/game/faces';
-import { Image } from 'expo-image';
+import { FaceThumb } from '@/ui/FaceThumb';
 import { SkinStage } from '@/game3d/SkinStage';
 import { DEFAULT_LOADOUT, loadoutForSkin, lookFor } from '@/game/cosmetics';
 import { useGameStore } from '@/game/store';
@@ -255,7 +254,7 @@ export default function ShopScreen() {
                   )}
                   {item.face ? (
                     <View style={[styles.faceWrap, { borderColor: item.color }]}>
-                      <Image source={FACES[item.face].image} style={styles.face} contentFit="cover" />
+                      <FaceThumb face={item.face} size={44} />
                     </View>
                   ) : (
                     <View style={styles.swatches}>
@@ -340,7 +339,6 @@ const styles = StyleSheet.create({
   swatchBig: { width: 28, height: 28, borderRadius: 9, borderWidth: 2, borderColor: 'rgba(255,255,255,0.25)' },
   swatch: { width: 14, height: 14, borderRadius: 5 },
   faceWrap: { width: 48, height: 48, borderRadius: 14, borderWidth: 2, overflow: 'hidden', marginBottom: 2, backgroundColor: '#0E1118' },
-  face: { width: '100%', height: '100%' },
   badge: {
     position: 'absolute',
     top: 10,

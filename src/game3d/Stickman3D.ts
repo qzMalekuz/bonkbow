@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { ARM_REACH, ARROW_LEN, BODY, HIP_Y } from '@/game3d/world';
 import type { Death, Gesture, Mood } from '@/game3d/sim';
 import type { Look } from '@/game/cosmetics';
-import { FACES, type FaceId } from '@/game/faces';
+import { ATLAS_COLS, ATLAS_ROWS, FACES, TILE, type FaceId } from '@/game/faces';
 
 // Procedural 3D stickman: matte-black capsule limbs, a big head with white
 // cartoon eyes, built from three.js primitives. The loadout (cosmetics.ts)
@@ -80,7 +80,7 @@ function glossy(color: string, opts: { metal?: number; rough?: number; glow?: nu
 
 const WHITE = new THREE.MeshBasicMaterial({ color: '#FFFFFF' });
 
-// Face-visor textures, one per FaceId, shared by every rig on screen.
+// Hero atlases, one per FaceId, shared by every rig on screen.
 // @react-three/fiber/native patches TextureLoader to accept a require()'d
 // asset module, so this works on device and on web alike.
 const faceTextures = new Map<FaceId, THREE.Texture>();
@@ -93,6 +93,56 @@ function faceTexture(id: FaceId) {
     faceTextures.set(id, tex);
   }
   return tex;
+}
+
+// Hero head: the stickman's skull grows to chibi size and the atlas tiles
+// are wrapped around it as sphere patches. Head frame: +x forward, +y up.
+// Three's sphere runs phi around +y starting at -x, so the front patch is
+// centred on phi = π, the character's right side (+z) on π/2, back on 0.
+const HERO_HEAD = 1.5; // head radius multiplier vs the plain stickman
+type Patch = { phi: number; width: number; theta0: number; height: number; r: number };
+const HERO_PATCH: Record<'front' | 'right' | 'back' | 'left', Patch> = {
+  front: { phi: Math.PI, width: 2.3, theta0: Math.PI * 0.1, height: Math.PI * 0.82, r: 1.012 },
+  right: { phi: Math.PI / 2, width: 1.7, theta0: Math.PI * 0.08, height: Math.PI * 0.84, r: 1.0 },
+  left: { phi: Math.PI * 1.5, width: 1.7, theta0: Math.PI * 0.08, height: Math.PI * 0.84, r: 1.0 },
+  back: { phi: 0, width: 2.3, theta0: Math.PI * 0.06, height: Math.PI * 0.86, r: 0.994 },
+};
+// A sphere patch whose UVs address one atlas tile. Cached: the mapping only
+// depends on the patch and tile, never on which hero wears it.
+function heroPatchGeo(which: keyof typeof HERO_PATCH, tile: number, R: number) {
+  return cached(`hero:${which}:${tile}`, () => {
+    const p = HERO_PATCH[which];
+    const g = new THREE.SphereGeometry(R * p.r, 28, 20, p.phi - p.width / 2, p.width, p.theta0, p.height);
+    const uv = g.attributes.uv as THREE.BufferAttribute;
+    const tx = tile % ATLAS_COLS;
+    const ty = Math.floor(tile / ATLAS_COLS);
+    for (let i = 0; i < uv.count; i++) {
+      uv.setXY(i, (tx + uv.getX(i)) / ATLAS_COLS, (ATLAS_ROWS - 1 - ty + uv.getY(i)) / ATLAS_ROWS);
+    }
+    uv.needsUpdate = true;
+    return g;
+  });
+}
+// Which atlas tile a mood wears.
+function heroTile(mood: Mood): number {
+  switch (mood) {
+    case 'happy':
+    case 'smug':
+      return TILE.smile;
+    case 'laugh':
+    case 'wink':
+    case 'sleepy':
+    case 'dead':
+      return TILE.laugh;
+    case 'angry':
+    case 'hurt':
+      return TILE.angry;
+    case 'shock':
+    case 'scared':
+      return TILE.shock;
+    default:
+      return TILE.neutral;
+  }
 }
 const BLACK = new THREE.MeshBasicMaterial({ color: BODY_BLACK });
 
@@ -299,6 +349,8 @@ export class StickmanRig {
   private flutter: THREE.Object3D[] = [];
   private lookKey = '';
   private trail = '#FFFFFF';
+  // Hero character (real-face chibi): the front patch swaps with the mood.
+  private hero: { front: THREE.Mesh; tile: number } | null = null;
   // Smoothed blends so every state change eases instead of snapping.
   private aimBlend = 0;
   private gestBlend = 0;
@@ -429,7 +481,8 @@ export class StickmanRig {
     this.buildBow(look);
     this.buildQuiver(look);
     this.buildHat(look);
-    // A face visor replaces the cartoon eyes and mouth entirely.
+    this.buildHero(look);
+    // A hero head replaces the cartoon eyes and mouth entirely.
     this.face.visible = look.hat !== 'face';
     const glow = look.eyes ? new THREE.MeshBasicMaterial({ color: look.eyes }) : null;
     for (const e of this.eyes) e.setGlow(glow);
@@ -475,6 +528,55 @@ export class StickmanRig {
     quiver.rotation.set(0, 0, -Math.PI / 2 - 0.35);
     quiver.position.set(BODY.torso * 0.62, 0.09, 0);
     this.torso.add(quiver);
+  }
+
+  // Dress the rig as a hero: chibi head wrapped in its atlas, mitten hands,
+  // chunky boots and a chest strap, like the character sheets. Everything
+  // added here carries userData.hero so the next look can strip it.
+  private buildHero(look: Look) {
+    const { torso, neck, headR, shin, foreArm, torsoR } = BODY;
+    const strip = (g: THREE.Object3D) => g.children.filter((c) => c.userData.hero).forEach((c) => g.remove(c));
+    for (const g of [this.head, this.torso, this.shinF, this.shinB, this.foreBow, this.foreDraw]) strip(g);
+    this.hero = null;
+    this.head.position.x = torso + neck + headR * 0.92;
+    if (look.hat !== 'face' || !look.face) return;
+
+    const face = look.face;
+    const def = FACES[face];
+    const R = headR * HERO_HEAD;
+    this.head.position.x = torso + neck + R * 0.95;
+    const tag = (o: THREE.Object3D) => {
+      o.userData.hero = true;
+      return o;
+    };
+    const skin = new THREE.MeshBasicMaterial({ map: faceTexture(face), alphaTest: 0.45 });
+    // Base skull in the hero's hair/skin colour, under the patches.
+    this.head.add(tag(mesh(cached(`heroSkull:${HERO_HEAD}`, () => new THREE.SphereGeometry(R * 0.985, 28, 20)), glossy(def.base, { rough: 0.7 }))));
+    const tile = TILE.neutral;
+    const front = tag(mesh(heroPatchGeo('front', tile, R), skin)) as THREE.Mesh;
+    this.head.add(front);
+    this.head.add(tag(mesh(heroPatchGeo('right', TILE.right, R), skin)));
+    this.head.add(tag(mesh(heroPatchGeo('left', TILE.left, R), skin)));
+    this.head.add(tag(mesh(heroPatchGeo('back', TILE.back, R), skin)));
+    this.hero = { front, tile };
+
+    // Body: mitten hands, chunky boots, leather chest strap.
+    const black = glossy('#141417', { rough: 0.6 });
+    for (const fore of [this.foreBow, this.foreDraw]) {
+      const hand = tag(mesh(cached('heroHand', () => new THREE.SphereGeometry(0.052, 10, 8)), black));
+      hand.position.x = foreArm;
+      fore.add(hand);
+    }
+    for (const sh of [this.shinF, this.shinB]) {
+      const boot = tag(mesh(cached('heroBoot', () => new THREE.SphereGeometry(0.075, 12, 8)), black));
+      boot.scale.set(0.9, 1.25, 1.1);
+      boot.position.set(shin + 0.01, 0.03, 0);
+      sh.add(boot);
+    }
+    const strap = tag(mesh(cached('heroStrap', () => new THREE.TorusGeometry(torsoR * 1.25, 0.014, 6, 28)), glossy('#5A3A22', { rough: 0.8 })));
+    strap.rotation.set(0, Math.PI / 2, 0.55);
+    strap.position.x = torso * 0.55;
+    this.torso.add(strap);
   }
 
   private buildHat(look: Look) {
@@ -610,44 +712,6 @@ export class StickmanRig {
         band.rotation.x = Math.PI / 2;
         band.position.y = hr * 0.18;
         add(visor, band);
-        break;
-      }
-      case 'face': {
-        // Wearable helmet: matte shell over the skull, a coloured rim, and a
-        // curved visor on the front with the person's face printed on it.
-        // Head frame: +x is forward (where the eyes sit), +y up.
-        const shell = glossy('#15161C', { rough: 0.55 });
-        const trim = glossy(look.hatColor, { rough: 0.3, glow: 0.25 });
-        const R = hr * 1.14;
-        // Front window: sphere patch centred on +x (phi = π in three's
-        // parametrisation), roughly square so the 1:1 texture isn't stretched.
-        const PHI = 1.75;
-        const THETA0 = Math.PI * 0.2;
-        const THETA = 1.75;
-        // Shell = everything except that window: top cap, the sides and back
-        // beside it, and a chin guard below it.
-        const cap = mesh(new THREE.SphereGeometry(R, 24, 16, 0, Math.PI * 2, 0, THETA0 + 0.02), shell);
-        const dome = mesh(new THREE.SphereGeometry(R, 24, 16, Math.PI + PHI / 2 - 0.02, Math.PI * 2 - PHI + 0.04, THETA0, THETA), shell);
-        const back = mesh(new THREE.SphereGeometry(R, 24, 16, 0, Math.PI * 2, THETA0 + THETA - 0.02, Math.PI - THETA0 - THETA + 0.02), shell);
-        const face = look.face ?? 'smile';
-        const def = FACES[face];
-        if (!def.opaque) {
-          // Dark glass behind the cut-out figurine heads.
-          const glass = mesh(new THREE.SphereGeometry(R * 0.995, 24, 16, Math.PI - PHI / 2, PHI, THETA0, THETA), glossy('#0E1118', { rough: 0.15, metal: 0.5 }));
-          add(glass);
-        }
-        const visorMat = new THREE.MeshBasicMaterial({ map: faceTexture(face), transparent: !def.opaque, depthWrite: true });
-        const visor = mesh(new THREE.SphereGeometry(R * 1.005, 24, 16, Math.PI - PHI / 2, PHI, THETA0, THETA), visorMat);
-        // Rim around the window and a jaw band so it reads as a helmet.
-        const rim = mesh(new THREE.TorusGeometry(R * 0.78, 0.022, 8, 32), trim);
-        rim.rotation.y = Math.PI / 2;
-        rim.position.x = R * 0.6;
-        const band = mesh(new THREE.TorusGeometry(R * 1.0, 0.024, 8, 32), trim);
-        band.rotation.x = Math.PI / 2;
-        band.position.y = -hr * 0.52;
-        const strap = mesh(new THREE.BoxGeometry(0.04, 0.05, 0.1), glossy('#2A2C36', { rough: 0.8 }));
-        strap.position.set(R * 0.72, -hr * 0.78, 0);
-        add(cap, dome, back, visor, rim, band, strap);
         break;
       }
       case 'headband':
@@ -789,6 +853,13 @@ export class StickmanRig {
     this.eyes.forEach((e, i) => e.set(p.mood, t, i === 0));
     const mouthOpen = p.mood === 'laugh' ? 1 + Math.sin(t * 18) * 0.25 : p.mood === 'shock' ? 0.6 : p.mood === 'hurt' ? 0.5 : p.mood === 'happy' ? 0.55 : p.mood === 'scared' ? 0.45 + Math.sin(t * 26) * 0.08 : p.mood === 'wink' ? 0.35 : p.gesture === 'yawn' ? Math.max(0, Math.sin((p.gestureT / 2.4) * Math.PI)) * 1.3 : 0;
     this.mouthOpen.visible = mouthOpen > 0;
+    if (this.hero) {
+      const tile = heroTile(p.mood);
+      if (tile !== this.hero.tile) {
+        this.hero.tile = tile;
+        this.hero.front.geometry = heroPatchGeo('front', tile, BODY.headR * HERO_HEAD);
+      }
+    }
     this.mouthOpen.scale.set(1, mouthOpen, 1);
     this.mouthLine.visible = p.mood === 'angry' || p.mood === 'sad' || p.mood === 'smug' || p.mood === 'sleepy';
     this.mouthLine.rotation.x = p.mood === 'sad' ? 0.25 : p.mood === 'smug' ? -0.28 : 0;
