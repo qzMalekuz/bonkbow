@@ -1,18 +1,17 @@
 import { router } from 'expo-router';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { Canvas, Path } from '@shopify/react-native-skia';
 import { useMobileWallet } from '@wallet-ui/react-native-kit';
 import { usePostHog } from 'posthog-react-native';
 import { HapticTouchable } from '@/components/haptic-touchable';
 import { useScreenMusic } from '@/audio/useScreenMusic';
 import { playSfx } from '@/audio/sound';
-import { COLORS, STICKMAN } from '@/game/constants';
+import { COLORS } from '@/game/constants';
 import { haptic } from '@/game/haptics';
 import { SKINS, formatSol, isFreeSkin, type Currency, type Skin } from '@/game/skins';
-import { bowPath, bowStringPath, hatPath, stickmanPath } from '@/game/stickman';
+import { SkinStage } from '@/game3d/SkinStage';
 import { useGameStore } from '@/game/store';
 import { sessionWalletAddress, useWalletAuth } from '@/solana/auth';
 import { CLUSTER, SHOP_ENABLED, SKR_ENABLED } from '@/solana/config';
@@ -38,6 +37,9 @@ export default function ShopScreen() {
   const currency: Currency = SKR_ENABLED ? preferred : 'SOL';
   const skrBalance = useSkrBalance();
   const [buying, setBuying] = useState<string | null>(null);
+  // Skin shown on the 3D turntable; starts on the equipped one.
+  const [previewId, setPreviewId] = useState(equipped);
+  const preview = SKINS.find((s) => s.id === previewId) ?? SKINS[0];
   // A purchase requested before the wallet was connected: sign in first, then
   // run it on the next render, when `wallet` reflects the connected account.
   const queued = useRef<{ skin: Skin; cur: Currency } | null>(null);
@@ -162,133 +164,143 @@ export default function ShopScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <HapticTouchable onPress={() => router.back()} hitSlop={12} sound="ui_back">
-          <Ionicons name="chevron-back" size={26} color="#FFFFFF" />
-        </HapticTouchable>
-        <Text style={styles.title}>Shop</Text>
-        <Text style={styles.cluster}>{CLUSTER.name}</Text>
-      </View>
-
-      <FlatList
-        data={SKINS}
-        keyExtractor={(s) => s.id}
-        numColumns={2}
-        columnWrapperStyle={{ gap: 12 }}
-        contentContainerStyle={styles.grid}
-        ListHeaderComponent={
-          <View style={styles.headerBlock}>
-            {SKR_ENABLED && (
-              <View style={styles.segment}>
-                {(['SKR', 'SOL'] as Currency[]).map((c) => (
-                  <HapticTouchable
-                    key={c}
-                    style={[styles.segmentItem, currency === c && styles.segmentActive]}
-                    onPress={() => setPreferredCurrency(c)}
-                  >
-                    <Text style={[styles.segmentText, currency === c && styles.segmentTextActive]}>Pay in {c}</Text>
-                  </HapticTouchable>
-                ))}
-              </View>
-            )}
-            <View style={styles.balanceRow}>
-              <Ionicons name="wallet-outline" size={16} color="rgba(255,255,255,0.7)" />
-              <Text style={styles.blurb}>
-                {!wallet.account
-                  ? 'Skins stay tied to your wallet. Sign in when you buy.'
-                  : SKR_ENABLED
-                    ? skrBalance.loading
-                      ? 'Reading SKR balance…'
-                      : skrBalance.baseUnits === null
-                        ? 'SKR balance unavailable'
-                        : `${formatSkr(skrBalance.baseUnits)} in wallet`
-                    : 'Paid in SOL from your wallet.'}
-                {signingIn ? ' Confirm in your wallet…' : ''}
-              </Text>
-            </View>
-            {SKR_ENABLED && currency === 'SKR' && (
-              <Text style={styles.hint}>SKR prices run ~20% under SOL, and the Seeker skin is SKR-only.</Text>
-            )}
-            {pending && session && (
-              <Text style={styles.hint}>A payment is waiting for confirmation. It retries each time you open the shop.</Text>
-            )}
+    <SafeAreaView style={styles.container} edges={['top', 'bottom', 'left', 'right']}>
+      <View style={styles.body}>
+        <View style={styles.stageCol}>
+          <SkinStage skin={preview} style={styles.stage} />
+          <View style={styles.stageInfo} pointerEvents="none">
+            <Text style={styles.stageName}>{preview.name}</Text>
+            <Text style={styles.stageDesc} numberOfLines={2}>
+              {preview.description}
+            </Text>
           </View>
-        }
-        renderItem={({ item }) => {
-          const isOwned = owned.includes(item.id) || isFreeSkin(item);
-          const isEquipped = equipped === item.id;
-          // A skin not sold in the selected currency falls back to the other.
-          const cur: Currency =
-            currency === 'SKR' ? (item.priceSkr > 0 ? 'SKR' : 'SOL') : item.priceLamports > 0 ? 'SOL' : 'SKR';
-          const label = cur === 'SKR' ? formatSkr(item.priceSkr) : formatSol(item.priceLamports);
-          const sellable = cur === 'SOL' ? item.priceLamports > 0 : SKR_ENABLED && item.priceSkr > 0;
-          return (
-            <View style={[styles.card, isEquipped && styles.cardEquipped]}>
-              {item.priceLamports === 0 && item.priceSkr > 0 && (
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>SKR ONLY</Text>
+        </View>
+        <View style={styles.listCol}>
+          <View style={styles.header}>
+            <HapticTouchable onPress={() => router.back()} hitSlop={12} sound="ui_back">
+              <Ionicons name="chevron-back" size={26} color="#FFFFFF" />
+            </HapticTouchable>
+            <Text style={styles.title}>Shop</Text>
+            <Text style={styles.cluster}>{CLUSTER.name}</Text>
+          </View>
+
+          <FlatList
+            data={SKINS}
+            keyExtractor={(s) => s.id}
+            numColumns={3}
+            columnWrapperStyle={{ gap: 12 }}
+            contentContainerStyle={styles.grid}
+            ListHeaderComponent={
+              <View style={styles.headerBlock}>
+                {SKR_ENABLED && (
+                  <View style={styles.segment}>
+                    {(['SKR', 'SOL'] as Currency[]).map((c) => (
+                      <HapticTouchable
+                        key={c}
+                        style={[styles.segmentItem, currency === c && styles.segmentActive]}
+                        onPress={() => setPreferredCurrency(c)}
+                      >
+                        <Text style={[styles.segmentText, currency === c && styles.segmentTextActive]}>Pay in {c}</Text>
+                      </HapticTouchable>
+                    ))}
+                  </View>
+                )}
+                <View style={styles.balanceRow}>
+                  <Ionicons name="wallet-outline" size={16} color="rgba(255,255,255,0.7)" />
+                  <Text style={styles.blurb}>
+                    {!wallet.account
+                      ? 'Skins stay tied to your wallet. Sign in when you buy.'
+                      : SKR_ENABLED
+                        ? skrBalance.loading
+                          ? 'Reading SKR balance…'
+                          : skrBalance.baseUnits === null
+                            ? 'SKR balance unavailable'
+                            : `${formatSkr(skrBalance.baseUnits)} in wallet`
+                        : 'Paid in SOL from your wallet.'}
+                    {signingIn ? ' Confirm in your wallet…' : ''}
+                  </Text>
                 </View>
-              )}
-              <SkinPreview skin={item} />
-              <Text style={styles.name}>{item.name}</Text>
-              <Text style={styles.desc} numberOfLines={2}>
-                {item.description}
-              </Text>
-              {isOwned ? (
+                {SKR_ENABLED && currency === 'SKR' && (
+                  <Text style={styles.hint}>SKR prices run ~20% under SOL, and the Seeker skin is SKR-only.</Text>
+                )}
+                {pending && session && (
+                  <Text style={styles.hint}>A payment is waiting for confirmation. It retries each time you open the shop.</Text>
+                )}
+              </View>
+            }
+            renderItem={({ item }) => {
+              const isOwned = owned.includes(item.id) || isFreeSkin(item);
+              const isEquipped = equipped === item.id;
+              // A skin not sold in the selected currency falls back to the other.
+              const cur: Currency =
+                currency === 'SKR' ? (item.priceSkr > 0 ? 'SKR' : 'SOL') : item.priceLamports > 0 ? 'SOL' : 'SKR';
+              const label = cur === 'SKR' ? formatSkr(item.priceSkr) : formatSol(item.priceLamports);
+              const sellable = cur === 'SOL' ? item.priceLamports > 0 : SKR_ENABLED && item.priceSkr > 0;
+              return (
                 <HapticTouchable
-                  style={[styles.cta, isEquipped && styles.ctaGhost]}
-                  onPress={() => onEquip(item)}
-                  disabled={isEquipped}
+                  style={[styles.card, isEquipped && styles.cardEquipped, item.id === previewId && styles.cardPreview]}
+                  onPress={() => setPreviewId(item.id)}
+                  sound="ui_click"
                 >
-                  <Text style={[styles.ctaText, isEquipped && styles.ctaGhostText]}>{isEquipped ? 'Equipped' : 'Equip'}</Text>
-                </HapticTouchable>
-              ) : (
-                <HapticTouchable
-                  style={[styles.cta, !sellable && styles.ctaDisabled]}
-                  onPress={() => onBuy(item, cur)}
-                  disabled={!!buying || !sellable}
-                >
-                  {buying === item.id ? (
-                    <ActivityIndicator color="#0B0B0F" />
+                  {item.priceLamports === 0 && item.priceSkr > 0 && (
+                    <View style={styles.badge}>
+                      <Text style={styles.badgeText}>SKR ONLY</Text>
+                    </View>
+                  )}
+                  <View style={styles.swatches}>
+                    <View style={[styles.swatchBig, { backgroundColor: item.color }]} />
+                    <View style={[styles.swatch, { backgroundColor: item.accent }]} />
+                    <View style={[styles.swatch, { backgroundColor: item.bow }]} />
+                  </View>
+                  <Text style={styles.name}>{item.name}</Text>
+                  {isOwned ? (
+                    <HapticTouchable
+                      style={[styles.cta, isEquipped && styles.ctaGhost]}
+                      onPress={() => onEquip(item)}
+                      disabled={isEquipped}
+                    >
+                      <Text style={[styles.ctaText, isEquipped && styles.ctaGhostText]}>{isEquipped ? 'Equipped' : 'Equip'}</Text>
+                    </HapticTouchable>
                   ) : (
-                    <Text style={styles.ctaText}>{sellable ? label : 'Needs SKR'}</Text>
+                    <HapticTouchable
+                      style={[styles.cta, !sellable && styles.ctaDisabled]}
+                      onPress={() => onBuy(item, cur)}
+                      disabled={!!buying || !sellable}
+                    >
+                      {buying === item.id ? (
+                        <ActivityIndicator color="#0B0B0F" />
+                      ) : (
+                        <Text style={styles.ctaText}>{sellable ? label : 'Needs SKR'}</Text>
+                      )}
+                    </HapticTouchable>
                   )}
                 </HapticTouchable>
-              )}
-            </View>
-          );
-        }}
-      />
+              );
+            }}
+          />
+        </View>
+      </View>
     </SafeAreaView>
-  );
-}
-
-// Static Skia preview of the skin. The path builders are worklets but run fine
-// on the JS thread too.
-function SkinPreview({ skin }: { skin: Skin }) {
-  const size = 120;
-  const pose = useMemo(
-    () => ({ x: size / 2, y: size - 14, facing: 1 as const, armAngle: -0.5, fall: 0, hat: skin.hat, draw: 0.6, breathe: 0 }),
-    [skin.hat],
-  );
-  const body = useMemo(() => stickmanPath(pose), [pose]);
-  const hat = useMemo(() => hatPath(pose), [pose]);
-  const bow = useMemo(() => bowPath(pose), [pose]);
-  const string = useMemo(() => bowStringPath(pose), [pose]);
-  return (
-    <Canvas style={{ width: size, height: size, alignSelf: 'center' }}>
-      <Path path={bow} color={skin.bow} style="stroke" strokeWidth={3} strokeCap="round" />
-      <Path path={string} color="rgba(255,255,255,0.75)" style="stroke" strokeWidth={1} />
-      <Path path={body} color={skin.body} style="stroke" strokeWidth={STICKMAN.lineWidth} strokeCap="round" strokeJoin="round" />
-      <Path path={hat} color={skin.accent} style="stroke" strokeWidth={3} strokeCap="round" strokeJoin="round" />
-    </Canvas>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.skyTop },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 12 },
+  body: { flex: 1, flexDirection: 'row' },
+  stageCol: { width: '36%', padding: 12, paddingRight: 0 },
+  stage: { flex: 1, borderRadius: 20 },
+  stageInfo: { position: 'absolute', left: 28, right: 16, bottom: 26 },
+  stageName: {
+    color: '#FFFFFF',
+    fontSize: 22,
+    fontWeight: '900',
+    textShadowColor: 'rgba(0,0,0,0.6)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 5,
+  },
+  stageDesc: { color: 'rgba(255,255,255,0.75)', fontSize: 12, lineHeight: 16 },
+  listCol: { flex: 1 },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 4 },
   title: { color: '#FFFFFF', fontSize: 22, fontWeight: '700', flex: 1 },
   cluster: { color: 'rgba(255,255,255,0.5)', fontSize: 12, textTransform: 'uppercase', letterSpacing: 1 },
   headerBlock: { gap: 10, marginBottom: 12 },
@@ -300,17 +312,21 @@ const styles = StyleSheet.create({
   balanceRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   blurb: { flex: 1, color: 'rgba(255,255,255,0.7)', fontSize: 14, lineHeight: 20 },
   hint: { color: 'rgba(255,255,255,0.5)', fontSize: 12, lineHeight: 16 },
-  grid: { padding: 16, gap: 12, paddingBottom: 40 },
+  grid: { paddingHorizontal: 16, paddingTop: 4, gap: 10, paddingBottom: 24 },
   card: {
     flex: 1,
     backgroundColor: 'rgba(255,255,255,0.07)',
     borderRadius: 18,
-    padding: 12,
-    gap: 6,
+    padding: 10,
+    gap: 4,
     borderWidth: 1,
     borderColor: 'transparent',
   },
   cardEquipped: { borderColor: COLORS.arrow },
+  cardPreview: { backgroundColor: 'rgba(255,255,255,0.14)' },
+  swatches: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
+  swatchBig: { width: 28, height: 28, borderRadius: 9, borderWidth: 2, borderColor: 'rgba(255,255,255,0.25)' },
+  swatch: { width: 14, height: 14, borderRadius: 5 },
   badge: {
     position: 'absolute',
     top: 10,

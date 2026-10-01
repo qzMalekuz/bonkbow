@@ -6,7 +6,7 @@
     "runtimeVersion": {
       "policy": "appVersion"
     },
-    "orientation": "portrait",
+    "orientation": "landscape",
     "icon": "./assets/images/icon.png",
     "scheme": "stickchers",
     "userInterfaceStyle": "automatic",

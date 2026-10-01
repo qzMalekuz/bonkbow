@@ -15,11 +15,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useKeepAwake } from 'expo-keep-awake';
 import { Ionicons } from '@expo/vector-icons';
 import { usePostHog } from 'posthog-react-native';
-import { GameCanvas, type GameCanvasHandle, type GameEvent, type GameMode } from '@/game/GameCanvas';
-import { COLORS, HP } from '@/game/constants';
+import { Duel3D, type DuelHandle, type GameEvent, type GameMode } from '@/game3d/Duel3D';
+import { HP } from '@/game3d/world';
+import { COLORS } from '@/game/constants';
 import { haptic } from '@/game/haptics';
 import { accuracyOf, useGameStore } from '@/game/store';
-import { DEFAULT_SKIN_ID, getSkin, type Skin } from '@/game/skins';
+import { AI_SKIN, DEFAULT_SKIN_ID, getSkin, type Skin } from '@/game/skins';
 import { HapticTouchable } from '@/components/haptic-touchable';
 import { useScreenMusic } from '@/audio/useScreenMusic';
 import { duckMusic, playSfx } from '@/audio/sound';
@@ -28,19 +29,6 @@ import { supabase } from '@/utils/supabase';
 import { useRoomChannel, type Role } from '@/multiplayer/useRoom';
 
 type Turn = 'player' | 'enemy' | 'over';
-
-// The AI opponent's look — a red stickman, no hat.
-const AI_SKIN: Skin = {
-  id: 'ai',
-  name: 'AI',
-  description: '',
-  priceLamports: 0,
-  priceSkr: 0,
-  body: COLORS.enemy,
-  accent: COLORS.enemy,
-  bow: '#8B2E2E',
-  hat: 'none',
-};
 
 // Screen shell around the canvas: HUD, result sheet, and the side effects that
 // belong on JS (haptics, persistence, analytics, the multiplayer channel).
@@ -64,7 +52,8 @@ export default function GameScreen() {
   const skin = getSkin(useGameStore((s) => s.equippedSkin));
   const [opponentSkin, setOpponentSkin] = useState<Skin>(online ? getSkin(DEFAULT_SKIN_ID) : AI_SKIN);
 
-  const canvas = useRef<GameCanvasHandle>(null);
+  const canvas = useRef<DuelHandle>(null);
+  const [overview, setOverview] = useState(false);
   const [round, setRound] = useState(0);
   const [score, setScore] = useState(0);
   const [playerHp, setPlayerHp] = useState(HP.max);
@@ -243,7 +232,7 @@ export default function GameScreen() {
 
   return (
     <View style={styles.root}>
-      <GameCanvas
+      <Duel3D
         key={round}
         ref={canvas}
         mode={mode}
@@ -255,6 +244,7 @@ export default function GameScreen() {
         score={score}
         skill={skill}
         inputEnabled={!online || room.opponentPresent}
+        overview={overview}
         onEvent={onEvent}
       />
 
@@ -273,37 +263,44 @@ export default function GameScreen() {
         </View>
       )}
 
-      <SafeAreaView style={styles.hud} pointerEvents="box-none">
+      <SafeAreaView style={styles.hud} edges={['top', 'left', 'right']} pointerEvents="box-none">
         <View style={styles.hudRow} pointerEvents="box-none">
           <HapticTouchable onPress={quit} hitSlop={12} style={styles.iconButton} sound="ui_back">
-            <Ionicons name="close" size={24} color="#FFFFFF" />
+            <Ionicons name="close" size={22} color="#FFFFFF" />
           </HapticTouchable>
-          {online ? (
-            <Text style={styles.roomCode}>{code}</Text>
-          ) : (
-            <View style={{ alignItems: 'center' }}>
+          <Nameplate name="You" hp={playerHp} color={skin.color} />
+          <View style={styles.center} pointerEvents="none">
+            {online ? (
+              <Text style={styles.roomCode}>{code}</Text>
+            ) : (
               <Animated.Text style={[styles.score, scoreStyle]}>{score}</Animated.Text>
-              <Text style={styles.aiChip}>ADAPTIVE AI · {Math.round(skill * 100)}%</Text>
-            </View>
-          )}
-          <View style={styles.iconButton}>
-            {online && (
-              <Ionicons
-                name={room.opponentPresent ? 'radio-button-on' : 'radio-button-off'}
-                size={16}
-                color={room.opponentPresent ? COLORS.hpGood : 'rgba(255,255,255,0.4)'}
-              />
             )}
+            <Text style={styles.turnText}>{turnLabel || ' '}</Text>
           </View>
-        </View>
-        <View style={styles.hpRow} pointerEvents="none">
-          <HpBar hp={playerHp} color={skin.body} />
-          <Text style={styles.turnText}>{turnLabel}</Text>
-          <HpBar hp={enemyHp} color={opponentSkin.body} />
+          <Nameplate
+            name={online ? 'Opponent' : `Rival · AI ${Math.round(skill * 100)}%`}
+            hp={enemyHp}
+            color={opponentSkin.color}
+            right
+            dot={online ? room.opponentPresent : undefined}
+          />
+          <View style={styles.iconButton} />
         </View>
         {online && !room.opponentPresent && turn !== 'over' && (
           <Text style={styles.waiting}>Waiting for opponent to connect…</Text>
         )}
+      </SafeAreaView>
+
+      {/* Hold to zoom out and see the whole field (like the reference's magnifier). */}
+      <SafeAreaView style={styles.zoomWrap} edges={['bottom', 'left']} pointerEvents="box-none">
+        <HapticTouchable
+          style={[styles.zoom, overview && styles.zoomOn]}
+          onPressIn={() => setOverview(true)}
+          onPressOut={() => setOverview(false)}
+          hitSlop={10}
+        >
+          <Ionicons name={overview ? 'contract-outline' : 'search-outline'} size={22} color="#FFFFFF" />
+        </HapticTouchable>
       </SafeAreaView>
 
       {turn === 'over' && (
@@ -355,8 +352,9 @@ function coachTipFor(st: { shots: number; hits: number; long: number; short: num
   return `${Math.round(acc * 100)}% accuracy. Headshots end it in one; go for the top of the arc.`;
 }
 
-// Smoothly drains; a pale "recent damage" ghost lags behind the real bar.
-function HpBar({ hp, color }: { hp: number; color: string }) {
+// Name + HP pill. The bar drains smoothly; a pale "recent damage" ghost lags
+// behind the real value.
+function Nameplate({ name, hp, color, right, dot }: { name: string; hp: number; color: string; right?: boolean; dot?: boolean }) {
   const pct = Math.max(0, Math.min(1, hp / HP.max));
   const fill = useSharedValue(pct);
   const ghost = useSharedValue(pct);
@@ -367,9 +365,19 @@ function HpBar({ hp, color }: { hp: number; color: string }) {
   const fillStyle = useAnimatedStyle(() => ({ width: `${fill.value * 100}%` }));
   const ghostStyle = useAnimatedStyle(() => ({ width: `${ghost.value * 100}%` }));
   return (
-    <View style={styles.hpTrack}>
-      <Animated.View style={[styles.hpGhost, ghostStyle]} />
-      <Animated.View style={[styles.hpFill, fillStyle, { backgroundColor: pct > 0.5 ? color : COLORS.hpBad }]} />
+    <View style={[styles.plate, right && styles.plateRight]} pointerEvents="none">
+      <View style={[styles.plateHead, right && { flexDirection: 'row-reverse' }]}>
+        <View style={[styles.swatch, { backgroundColor: color }]} />
+        <Text style={styles.plateName} numberOfLines={1}>
+          {name}
+        </Text>
+        {dot !== undefined && <View style={[styles.presence, { backgroundColor: dot ? COLORS.hpGood : 'rgba(255,255,255,0.3)' }]} />}
+      </View>
+      <View style={[styles.hpTrack, right && { transform: [{ scaleX: -1 }] }]}>
+        <Animated.View style={[styles.hpGhost, ghostStyle]} />
+        <Animated.View style={[styles.hpFill, fillStyle, { backgroundColor: pct > 0.5 ? '#E5383B' : '#FF8A00' }]} />
+        <Text style={[styles.hpText, right && { transform: [{ scaleX: -1 }] }]}>{Math.ceil(hp)}</Text>
+      </View>
     </View>
   );
 }
@@ -377,10 +385,53 @@ function HpBar({ hp, color }: { hp: number; color: string }) {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: COLORS.skyTop },
   hud: { position: 'absolute', top: 0, left: 0, right: 0 },
-  hudRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 8 },
-  iconButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  score: { color: '#FFFFFF', fontSize: 40, fontWeight: '900', fontVariant: ['tabular-nums'] },
-  aiChip: { color: 'rgba(255,255,255,0.55)', fontSize: 10, fontWeight: '700', letterSpacing: 1.2, marginTop: -4 },
+  hudRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, paddingHorizontal: 12, paddingTop: 8 },
+  iconButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  center: { flex: 1, alignItems: 'center' },
+  score: {
+    color: '#FFFFFF',
+    fontSize: 34,
+    fontWeight: '900',
+    fontVariant: ['tabular-nums'],
+    textShadowColor: 'rgba(0,0,0,0.5)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 6,
+  },
+  plate: { width: 220, gap: 4 },
+  plateRight: { alignItems: 'flex-end' },
+  plateHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  swatch: { width: 10, height: 10, borderRadius: 3, borderWidth: 1, borderColor: 'rgba(0,0,0,0.4)' },
+  plateName: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    textShadowColor: 'rgba(0,0,0,0.6)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  presence: { width: 8, height: 8, borderRadius: 4 },
+  hpText: { position: 'absolute', left: 8, top: 0, bottom: 0, color: '#FFFFFF', fontSize: 11, fontWeight: '900', lineHeight: 16 },
+  zoomWrap: { position: 'absolute', left: 0, bottom: 0 },
+  zoom: {
+    margin: 16,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.38)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.25)',
+  },
+  zoomOn: { backgroundColor: 'rgba(244,162,97,0.55)' },
   coach: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -393,16 +444,23 @@ const styles = StyleSheet.create({
   },
   coachText: { flex: 1, color: 'rgba(255,255,255,0.85)', fontSize: 13, lineHeight: 18 },
   roomCode: { color: '#FFFFFF', fontSize: 22, fontWeight: '800', letterSpacing: 4 },
-  hpRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 20, paddingTop: 6 },
-  hpTrack: { flex: 1, height: 8, borderRadius: 4, backgroundColor: COLORS.hpTrack, overflow: 'hidden' },
-  hpFill: { position: 'absolute', left: 0, top: 0, height: '100%', borderRadius: 4 },
-  hpGhost: { position: 'absolute', left: 0, top: 0, height: '100%', borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.55)' },
+  hpTrack: {
+    alignSelf: 'stretch',
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.8)',
+    overflow: 'hidden',
+  },
+  hpFill: { position: 'absolute', left: 0, top: 0, height: '100%', borderRadius: 6 },
+  hpGhost: { position: 'absolute', left: 0, top: 0, height: '100%', borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.6)' },
   damage: {
     ...StyleSheet.absoluteFill,
     borderWidth: 28,
     borderColor: 'rgba(193,18,31,0.9)',
   },
-  popupWrap: { position: 'absolute', top: '32%', left: 0, right: 0, alignItems: 'center' },
+  popupWrap: { position: 'absolute', top: '26%', left: 0, right: 0, alignItems: 'center' },
   popup: {
     fontSize: 34,
     fontWeight: '900',
@@ -411,7 +469,16 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 6,
   },
-  turnText: { color: 'rgba(255,255,255,0.7)', fontSize: 11, fontWeight: '700', letterSpacing: 1.5, minWidth: 90, textAlign: 'center' },
+  turnText: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+    textAlign: 'center',
+    textShadowColor: 'rgba(0,0,0,0.6)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
   waiting: { color: 'rgba(255,255,255,0.6)', fontSize: 13, textAlign: 'center', marginTop: 10 },
   overlay: {
     position: 'absolute',
@@ -424,9 +491,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 24,
   },
-  sheet: { width: '100%', backgroundColor: '#11151C', borderRadius: 24, padding: 24, alignItems: 'center', gap: 8 },
+  sheet: { width: '100%', maxWidth: 420, backgroundColor: '#11151C', borderRadius: 24, padding: 20, alignItems: 'center', gap: 6 },
   overTitle: { color: 'rgba(255,255,255,0.7)', fontSize: 16, fontWeight: '600', letterSpacing: 1 },
-  overScore: { color: '#FFFFFF', fontSize: 72, fontWeight: '900', fontVariant: ['tabular-nums'] },
+  overScore: { color: '#FFFFFF', fontSize: 56, fontWeight: '900', fontVariant: ['tabular-nums'] },
   overSub: { color: COLORS.arrow, fontSize: 16, fontWeight: '700', marginBottom: 12 },
   primary: {
     alignSelf: 'stretch',
