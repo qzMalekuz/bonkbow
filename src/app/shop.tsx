@@ -1,5 +1,5 @@
-import { router } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { router, useLocalSearchParams } from 'expo-router';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -11,7 +11,10 @@ import { playSfx } from '@/audio/sound';
 import { COLORS } from '@/game/constants';
 import { haptic } from '@/game/haptics';
 import { SKINS, formatSol, isFreeSkin, type Currency, type Skin } from '@/game/skins';
+import { FACES } from '@/game/faces';
+import { Image } from 'expo-image';
 import { SkinStage } from '@/game3d/SkinStage';
+import { DEFAULT_LOADOUT, loadoutForSkin, lookFor } from '@/game/cosmetics';
 import { useGameStore } from '@/game/store';
 import { sessionWalletAddress, useWalletAuth } from '@/solana/auth';
 import { CLUSTER, SHOP_ENABLED, SKR_ENABLED } from '@/solana/config';
@@ -37,9 +40,12 @@ export default function ShopScreen() {
   const currency: Currency = SKR_ENABLED ? preferred : 'SOL';
   const skrBalance = useSkrBalance();
   const [buying, setBuying] = useState<string | null>(null);
-  // Skin shown on the 3D turntable; starts on the equipped one.
-  const [previewId, setPreviewId] = useState(equipped);
+  // Skin shown on the 3D turntable; starts on the one we were sent to (from
+  // "Choose your style") or the equipped one.
+  const params = useLocalSearchParams<{ skin?: string }>();
+  const [previewId, setPreviewId] = useState(params.skin ?? equipped);
   const preview = SKINS.find((s) => s.id === previewId) ?? SKINS[0];
+  const previewLook = useMemo(() => lookFor(loadoutForSkin(preview.id) ?? DEFAULT_LOADOUT), [preview.id]);
   // A purchase requested before the wallet was connected: sign in first, then
   // run it on the next render, when `wallet` reflects the connected account.
   const queued = useRef<{ skin: Skin; cur: Currency } | null>(null);
@@ -167,7 +173,7 @@ export default function ShopScreen() {
     <SafeAreaView style={styles.container} edges={['top', 'bottom', 'left', 'right']}>
       <View style={styles.body}>
         <View style={styles.stageCol}>
-          <SkinStage skin={preview} style={styles.stage} />
+          <SkinStage look={previewLook} style={styles.stage} />
           <View style={styles.stageInfo} pointerEvents="none">
             <Text style={styles.stageName}>{preview.name}</Text>
             <Text style={styles.stageDesc} numberOfLines={2}>
@@ -247,11 +253,17 @@ export default function ShopScreen() {
                       <Text style={styles.badgeText}>SKR ONLY</Text>
                     </View>
                   )}
-                  <View style={styles.swatches}>
-                    <View style={[styles.swatchBig, { backgroundColor: item.color }]} />
-                    <View style={[styles.swatch, { backgroundColor: item.accent }]} />
-                    <View style={[styles.swatch, { backgroundColor: item.bow }]} />
-                  </View>
+                  {item.face ? (
+                    <View style={[styles.faceWrap, { borderColor: item.color }]}>
+                      <Image source={FACES[item.face].image} style={styles.face} contentFit="cover" />
+                    </View>
+                  ) : (
+                    <View style={styles.swatches}>
+                      <View style={[styles.swatchBig, { backgroundColor: item.color }]} />
+                      <View style={[styles.swatch, { backgroundColor: item.accent }]} />
+                      <View style={[styles.swatch, { backgroundColor: item.bow }]} />
+                    </View>
+                  )}
                   <Text style={styles.name}>{item.name}</Text>
                   {isOwned ? (
                     <HapticTouchable
@@ -327,6 +339,8 @@ const styles = StyleSheet.create({
   swatches: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
   swatchBig: { width: 28, height: 28, borderRadius: 9, borderWidth: 2, borderColor: 'rgba(255,255,255,0.25)' },
   swatch: { width: 14, height: 14, borderRadius: 5 },
+  faceWrap: { width: 48, height: 48, borderRadius: 14, borderWidth: 2, overflow: 'hidden', marginBottom: 2, backgroundColor: '#0E1118' },
+  face: { width: '100%', height: '100%' },
   badge: {
     position: 'absolute',
     top: 10,

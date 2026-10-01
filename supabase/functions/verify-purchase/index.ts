@@ -24,6 +24,12 @@ const PRICES_SOL: Record<string, number> = {
   royal: 50_000_000,
   inferno: 50_000_000,
   seraph: 80_000_000,
+  bro_smile: 100_000_000,
+  bro_shades: 100_000_000,
+  bro_curls: 100_000_000,
+  bro_fade: 100_000_000,
+  bro_mobile: 100_000_000,
+  bro_beard: 100_000_000,
 }
 const PRICES_SKR: Record<string, number> = {
   ranger: 400_000_000,
@@ -32,6 +38,12 @@ const PRICES_SKR: Record<string, number> = {
   inferno: 1_000_000_000,
   seraph: 1_600_000_000,
   seeker: 750_000_000,
+  bro_smile: 2_000_000_000,
+  bro_shades: 2_000_000_000,
+  bro_curls: 2_000_000_000,
+  bro_fade: 2_000_000_000,
+  bro_mobile: 2_000_000_000,
+  bro_beard: 2_000_000_000,
 }
 
 type Currency = 'SOL' | 'SKR'

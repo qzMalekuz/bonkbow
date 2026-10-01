@@ -12,12 +12,12 @@
 // re-checks the paid amount against its own copy, never the client's.
 // 1 SOL = 1_000_000_000 lamports. 1 SKR = 1_000_000 base units (6 decimals).
 import { SKR_DECIMALS } from '@/solana/config';
+import type { Hat } from '@/game/cosmetics';
+import type { FaceId } from '@/game/faces';
 
 // Whole SKR → base units. Kept here (not in solana/skr.ts) so this catalog
 // stays free of native imports for the UI-thread game code.
 const skr = (whole: number) => Math.round(whole * 10 ** SKR_DECIMALS);
-
-export type Hat = 'none' | 'cap' | 'crown' | 'horns' | 'halo' | 'hood' | 'visor' | 'bandana';
 
 export type Currency = 'SOL' | 'SKR';
 
@@ -31,6 +31,7 @@ export type Skin = {
   accent: string; // hat / cosmetic color
   bow: string;
   hat: Hat;
+  face?: FaceId; // hat === 'face': which real-person visor (faces.ts)
   trail: string; // arrow streak color
   eyes?: string; // glowing eyes (emissive) when set
   scarf?: string; // scarf wrapped at the neck, tails flutter
@@ -127,6 +128,30 @@ export const SKINS: Skin[] = [
     hat: 'visor',
     trail: '#14F195',
   },
+  // Solana bros: a helmet with a real community face printed on the visor.
+  // Purchase-only — never free, never coins. Same price for the whole set.
+  ...([
+    ['smile', 'The Smile', 'Grin first, aim later.', '#14F195'],
+    ['shades', 'Shades', 'Never seen his eyes. Never missed.', '#9945FF'],
+    ['curls', 'Curls', 'Hair by the wind. Shots by him.', '#7FD8C8'],
+    ['fade', 'The Fade', 'Clean cut, clean headshots.', '#19FB9B'],
+    ['mobile', 'Mobile', 'Built for the phone in your hand.', '#00C2FF'],
+    ['beard', 'The Beard', 'Full beard. Full send.', '#DC1FFF'],
+  ] as [FaceId, string, string, string][]).map(
+    ([face, name, description, color]): Skin => ({
+      id: `bro_${face}`,
+      name,
+      description,
+      priceLamports: 100_000_000, // 0.1 SOL — placeholder
+      priceSkr: skr(2000),
+      color,
+      accent: color,
+      bow: '#1B1B1F',
+      hat: 'face',
+      face,
+      trail: color,
+    }),
+  ),
 ];
 
 // The AI opponent: same black stickman, red bandana, blood-red bow.

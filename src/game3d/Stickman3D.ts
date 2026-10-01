@@ -1,13 +1,15 @@
 import * as THREE from 'three';
 import { ARM_REACH, ARROW_LEN, BODY, HIP_Y } from '@/game3d/world';
-import type { Death } from '@/game3d/sim';
-import type { Skin } from '@/game/skins';
+import type { Death, Gesture, Mood } from '@/game3d/sim';
+import type { Look } from '@/game/cosmetics';
+import { FACES, type FaceId } from '@/game/faces';
 
-// Procedural 3D stickman: matte-black capsule limbs and a big head, built
-// from three.js primitives. Skins add glossy cosmetics on top (hat, bow,
-// quiver, scarf, glowing eyes) — the body itself is always black, like the
-// reference game. The rig is driven imperatively every frame (no React
-// re-render): `update()` takes the sim's pose and places every bone.
+// Procedural 3D stickman: matte-black capsule limbs, a big head with white
+// cartoon eyes, built from three.js primitives. The loadout (cosmetics.ts)
+// adds glossy headgear, a themed bow and the trail colour on top — the body
+// itself is always black, like the reference game. Driven imperatively every
+// frame (no React re-render): `update()` takes the sim's state and places
+// every bone, blending between relaxed, aiming, walking, gesturing and dead.
 //
 // Local frame: +x = the way the archer faces, +y = up, +z = toward camera.
 // The root flips with `rotation.y = π` for an archer facing left.
@@ -18,16 +20,25 @@ export type RigPose = {
   facing: 1 | -1;
   angle: number; // world aim, y-up
   draw: number; // 0..1
+  ready: boolean; // bow raised (my turn / aiming) vs held low
   flash: number;
   flinch: number;
+  shieldFlash: number;
   death: Death | null;
-  drop: number;
+  walk: number; // metres still to walk in
+  stepT: number;
+  mood: Mood;
+  gesture: Gesture | null;
+  gestureT: number;
+  recoil: number; // 1 → 0 after a release
   showNocked: boolean;
 };
 
-const BODY_BLACK = '#101012';
+const BODY_BLACK = '#0E0E10';
 const YAW = 0.42; // turn the body toward the camera for a 3/4 view
 const STRING_REST = 0.14;
+const BOW_R = 0.55;
+const BOW_HALF = 0.72;
 
 const geoCache = new Map<string, THREE.BufferGeometry>();
 function cached<T extends THREE.BufferGeometry>(key: string, make: () => T): T {
@@ -49,63 +60,212 @@ function boneGeo(len: number, r: number) {
   });
 }
 
-function mesh(geo: THREE.BufferGeometry, mat: THREE.Material, shadow = true) {
-  const m = new THREE.Mesh(geo, mat);
-  m.castShadow = shadow;
-  return m;
+function mesh(geo: THREE.BufferGeometry, mat: THREE.Material) {
+  return new THREE.Mesh(geo, mat);
 }
 
+// Phong (not PBR) keeps the glossy cosmetic look at a fraction of the
+// per-pixel cost on phone GPUs. Rougher = duller highlight; metal = brighter.
 function glossy(color: string, opts: { metal?: number; rough?: number; glow?: number } = {}) {
   const c = new THREE.Color(color);
-  return new THREE.MeshStandardMaterial({
+  const rough = opts.rough ?? 0.32;
+  return new THREE.MeshPhongMaterial({
     color: c,
-    roughness: opts.rough ?? 0.32,
-    metalness: opts.metal ?? 0.15,
+    shininess: Math.round(10 + (1 - rough) * 80),
+    specular: new THREE.Color(0xffffff).multiplyScalar(0.15 + (opts.metal ?? 0.15) * 0.6),
     emissive: opts.glow ? c : new THREE.Color(0x000000),
     emissiveIntensity: opts.glow ?? 0,
   });
 }
 
-// An arrow whose TIP is at the local origin, pointing along +x.
+const WHITE = new THREE.MeshBasicMaterial({ color: '#FFFFFF' });
+
+// Face-visor textures, one per FaceId, shared by every rig on screen.
+// @react-three/fiber/native patches TextureLoader to accept a require()'d
+// asset module, so this works on device and on web alike.
+const faceTextures = new Map<FaceId, THREE.Texture>();
+function faceTexture(id: FaceId) {
+  let tex = faceTextures.get(id);
+  if (!tex) {
+    tex = new THREE.TextureLoader().load(FACES[id].image as unknown as string);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    faceTextures.set(id, tex);
+  }
+  return tex;
+}
+const BLACK = new THREE.MeshBasicMaterial({ color: BODY_BLACK });
+
+// An arrow whose TIP is at the local origin, pointing along +x. Shaft, head
+// and three vanes are merged into one vertex-coloured mesh (one draw call per
+// arrow), cached per fletching colour.
+const ARROW_MAT = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+const arrowGeos = new Map<string, THREE.BufferGeometry>();
+
 export function makeArrow(fletch: string, shaft = '#D9C39A') {
-  const g = new THREE.Group();
-  const shaftMat = new THREE.MeshStandardMaterial({ color: shaft, roughness: 0.6 });
-  const s = mesh(
-    cached('arrowShaft', () => {
-      const c = new THREE.CylinderGeometry(0.012, 0.012, ARROW_LEN - 0.08, 5);
-      c.rotateZ(Math.PI / 2);
-      c.translate(-(ARROW_LEN - 0.08) / 2 - 0.08, 0, 0);
-      return c;
-    }),
-    shaftMat,
-  );
-  const head = mesh(
-    cached('arrowHead', () => {
-      const c = new THREE.ConeGeometry(0.035, 0.1, 5);
-      c.rotateZ(-Math.PI / 2);
-      c.translate(-0.05, 0, 0);
-      return c;
-    }),
-    new THREE.MeshStandardMaterial({ color: '#C8CCD2', roughness: 0.25, metalness: 0.8 }),
-  );
-  const fl = new THREE.MeshStandardMaterial({ color: fletch, roughness: 0.5, side: THREE.DoubleSide });
-  const vane = cached('arrowVane', () => {
+  const key = `${fletch}|${shaft}`;
+  let geo = arrowGeos.get(key);
+  if (!geo) {
+    const shaftGeo = new THREE.CylinderGeometry(0.012, 0.012, ARROW_LEN - 0.08, 5);
+    shaftGeo.rotateZ(Math.PI / 2);
+    shaftGeo.translate(-(ARROW_LEN - 0.08) / 2 - 0.08, 0, 0);
+    const headGeo = new THREE.ConeGeometry(0.035, 0.1, 5);
+    headGeo.rotateZ(-Math.PI / 2);
+    headGeo.translate(-0.05, 0, 0);
     const shape = new THREE.Shape();
     shape.moveTo(0, 0);
     shape.lineTo(0.16, 0);
     shape.lineTo(0.2, 0.05);
     shape.lineTo(0.03, 0.05);
-    const v = new THREE.ShapeGeometry(shape);
-    v.translate(-ARROW_LEN, 0, 0);
-    return v;
-  });
-  const v1 = mesh(vane, fl, false);
-  const v2 = mesh(vane, fl, false);
-  v2.rotation.x = Math.PI;
-  const v3 = mesh(vane, fl, false);
-  v3.rotation.x = Math.PI / 2;
-  g.add(s, head, v1, v2, v3);
+    const vanes = [0, Math.PI, Math.PI / 2].map((rx) => {
+      const v = new THREE.ShapeGeometry(shape);
+      v.translate(-ARROW_LEN, 0, 0);
+      v.rotateX(rx);
+      return v;
+    });
+    geo = mergeColored([
+      [shaftGeo, shaft],
+      [headGeo, '#C8CCD2'],
+      ...vanes.map((v) => [v, fletch] as [THREE.BufferGeometry, string]),
+    ]);
+    arrowGeos.set(key, geo);
+  }
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(geo, ARROW_MAT));
   return g;
+}
+
+// Concatenate geometries into one non-indexed geometry with per-part colours.
+function mergeColored(parts: [THREE.BufferGeometry, string][]) {
+  const flat = parts.map(([g, c]) => {
+    const n = g.index ? g.toNonIndexed() : g;
+    if (!n.getAttribute('normal')) n.computeVertexNormals();
+    return { g: n, c: new THREE.Color(c) };
+  });
+  const count = flat.reduce((k, p) => k + p.g.getAttribute('position').count, 0);
+  const pos = new Float32Array(count * 3);
+  const nor = new Float32Array(count * 3);
+  const col = new Float32Array(count * 3);
+  let o = 0;
+  for (const { g, c } of flat) {
+    const n = g.getAttribute('position').count;
+    pos.set(g.getAttribute('position').array as Float32Array, o * 3);
+    nor.set(g.getAttribute('normal').array as Float32Array, o * 3);
+    for (let i = 0; i < n; i++) col.set([c.r, c.g, c.b], (o + i) * 3);
+    o += n;
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  out.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return out;
+}
+
+// One cartoon eye: white sclera with black lids above and below that slide
+// and tilt to make expressions, plus an X for dead.
+class Eye {
+  readonly group = new THREE.Group();
+  private sclera: THREE.Mesh;
+  private upper: THREE.Mesh;
+  private lower: THREE.Mesh;
+  private x: THREE.Group;
+  private inner: 1 | -1; // which way (z) the nose is
+
+  constructor(inner: 1 | -1, scale: number) {
+    this.inner = inner;
+    this.sclera = mesh(cached('eye', () => new THREE.SphereGeometry(0.06, 14, 10)), WHITE);
+    this.sclera.scale.set(0.35, 1, 0.82);
+    const lidGeo = cached('lid', () => new THREE.BoxGeometry(0.05, 0.08, 0.16));
+    this.upper = mesh(lidGeo, BLACK);
+    this.lower = mesh(lidGeo, BLACK);
+    this.x = new THREE.Group();
+    for (const r of [0.78, -0.78]) {
+      const bar = mesh(cached('xbar', () => new THREE.BoxGeometry(0.02, 0.11, 0.022)), WHITE);
+      bar.rotation.x = r;
+      this.x.add(bar);
+    }
+    this.group.add(this.sclera, this.upper, this.lower, this.x);
+    this.group.scale.setScalar(scale);
+  }
+
+  setGlow(mat: THREE.Material | null) {
+    this.sclera.material = mat ?? WHITE;
+  }
+
+  // Lid positions in sclera units: upper drops from 0.11 (open) toward 0;
+  // tilt > 0 lowers the inner corner (angry), < 0 the outer (sad).
+  set(mood: Mood, t: number, winkEye = false) {
+    let up = 0.085;
+    let tilt = 0.32;
+    let low = -0.11;
+    let size = 1;
+    let dead = false;
+    switch (mood) {
+      case 'angry':
+        up = 0.055;
+        tilt = 0.6;
+        break;
+      case 'happy':
+        up = 0.12;
+        low = -0.035;
+        tilt = 0;
+        break;
+      case 'laugh':
+        up = 0.12;
+        low = -0.02 + Math.sin(t * 18) * 0.008;
+        tilt = 0;
+        break;
+      case 'hurt':
+        up = 0.03;
+        low = -0.06;
+        tilt = 0.45;
+        break;
+      case 'sad':
+        up = 0.06;
+        tilt = -0.55;
+        break;
+      case 'shock':
+        up = 0.14;
+        tilt = 0;
+        size = 1.25;
+        break;
+      case 'dead':
+        dead = true;
+        break;
+      case 'smug': // heavy lids, a touch of attitude
+        up = 0.035;
+        tilt = 0.18;
+        low = -0.075;
+        break;
+      case 'sleepy': // lids sink and drift open again
+        up = 0.012 + Math.max(0, Math.sin(t * 0.9)) * 0.03;
+        tilt = -0.2;
+        low = -0.05;
+        break;
+      case 'scared':
+        up = 0.14;
+        tilt = -0.35;
+        size = 1.3 + Math.sin(t * 30) * 0.03;
+        break;
+      case 'wink': // one eye shut (the front eye), the other happy
+        up = winkEye ? 0.0 : 0.11;
+        low = winkEye ? -0.01 : -0.04;
+        tilt = 0;
+        break;
+      default:
+        // Idle blink every few seconds.
+        if ((t % 4.3) < 0.12) up = 0.0;
+        break;
+    }
+    this.sclera.visible = !dead;
+    this.upper.visible = !dead;
+    this.lower.visible = !dead;
+    this.x.visible = dead;
+    this.sclera.scale.set(0.35, size, 0.82 * size);
+    this.upper.position.set(0.01, up + 0.04, 0);
+    this.upper.rotation.x = tilt * this.inner;
+    this.lower.position.set(0.01, low - 0.04, 0);
+  }
 }
 
 export class StickmanRig {
@@ -114,6 +274,7 @@ export class StickmanRig {
   private hips = new THREE.Group(); // yawed toward camera
   private torso = new THREE.Group(); // +x along the spine
   private head = new THREE.Group(); // upright frame at the head centre
+  private face = new THREE.Group();
   private arms = new THREE.Group(); // not yawed: arms aim in the duel plane
   private thighF = new THREE.Group();
   private shinF = new THREE.Group();
@@ -126,17 +287,29 @@ export class StickmanRig {
   private bow = new THREE.Group();
   private stringGeo = new THREE.BufferGeometry();
   private nocked: THREE.Group;
-  private bodyMat: THREE.MeshStandardMaterial;
-  private headMat: THREE.MeshStandardMaterial;
+  private bodyMat: THREE.MeshLambertMaterial;
+  private headMat: THREE.MeshPhongMaterial;
   private cosmetics = new THREE.Group();
+  private eyes: Eye[] = [];
+  private mouthOpen: THREE.Mesh;
+  private mouthLine: THREE.Mesh;
+  private flagProp: THREE.Group;
+  private shieldBubble: THREE.Mesh;
+  private shadow: THREE.Mesh;
   private flutter: THREE.Object3D[] = [];
-  private skinId = '';
+  private lookKey = '';
+  private trail = '#FFFFFF';
+  // Smoothed blends so every state change eases instead of snapping.
+  private aimBlend = 0;
+  private gestBlend = 0;
+  private lastGesture: Gesture | null = null;
+  private sadBlend = 0;
   // Arrows stuck in this body are parented here so they tumble with it.
   readonly stuckMount = new THREE.Group();
 
-  constructor(skin: Skin) {
-    this.bodyMat = new THREE.MeshStandardMaterial({ color: BODY_BLACK, roughness: 0.55, metalness: 0.05 });
-    this.headMat = new THREE.MeshStandardMaterial({ color: BODY_BLACK, roughness: 0.3, metalness: 0.1 });
+  constructor(look: Look) {
+    this.bodyMat = new THREE.MeshLambertMaterial({ color: BODY_BLACK });
+    this.headMat = new THREE.MeshPhongMaterial({ color: BODY_BLACK, shininess: 60, specular: new THREE.Color(0x444444) });
 
     const { thigh, shin, torso, neck, headR, upperArm, foreArm, limbR, torsoR } = BODY;
 
@@ -163,9 +336,35 @@ export class StickmanRig {
     this.hips.add(this.torso);
     this.head.position.x = torso + neck + headR * 0.92;
     this.head.rotation.z = -Math.PI / 2;
-    const skull = mesh(cached('head', () => new THREE.SphereGeometry(headR, 20, 16)), this.headMat);
-    this.head.add(skull, this.cosmetics);
+    const skull = mesh(cached('head', () => new THREE.SphereGeometry(headR, 22, 16)), this.headMat);
+    this.head.add(skull, this.face, this.cosmetics);
     this.torso.add(this.head);
+
+    // Face: eyes sit on the front of the head, turned with its surface.
+    for (const [z, inner, s] of [
+      [headR * 0.4, -1, 1.05],
+      [-headR * 0.34, 1, 0.9],
+    ] as const) {
+      const e = new Eye(inner, s);
+      const theta = Math.atan2(z, headR * 0.84);
+      e.group.position.set(Math.cos(theta) * headR * 0.92, headR * 0.16, z);
+      e.group.rotation.y = -theta;
+      this.eyes.push(e);
+      this.face.add(e.group);
+    }
+    this.mouthOpen = mesh(
+      cached('mouthOpen', () => {
+        const g = new THREE.CircleGeometry(0.07, 14, Math.PI, Math.PI);
+        g.rotateY(Math.PI / 2);
+        return g;
+      }),
+      WHITE,
+    );
+    this.mouthOpen.position.set(headR * 0.93, -headR * 0.32, headR * 0.12);
+    this.mouthOpen.rotation.y = -0.2;
+    this.mouthLine = mesh(cached('mouthLine', () => new THREE.BoxGeometry(0.01, 0.012, 0.09)), WHITE);
+    this.mouthLine.position.set(headR * 0.95, -headR * 0.38, headR * 0.1);
+    this.face.add(this.mouthOpen, this.mouthLine);
 
     // Arms (2D-placed segments in the arms group)
     const armSeg = (len: number) => mesh(boneGeo(len, limbR * 0.95), this.bodyMat);
@@ -178,7 +377,6 @@ export class StickmanRig {
     this.upperDraw.position.z = -0.06;
     this.foreDraw.position.z = -0.06;
     this.arms.add(this.upperBow, this.foreBow, this.upperDraw, this.foreDraw, this.bow);
-    this.bow.position.z = 0.06;
 
     // Bowstring (tip → nock → tip)
     this.stringGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9), 3));
@@ -187,97 +385,199 @@ export class StickmanRig {
     str.position.z = 0.06;
     this.arms.add(str);
 
-    this.nocked = makeArrow(skin.trail);
-    this.nocked.position.z = 0.06;
+    this.nocked = makeArrow(look.trail);
     this.arms.add(this.nocked);
 
-    this.setSkin(skin);
+    // Little white surrender flag, shown during the "flag" emote.
+    this.flagProp = new THREE.Group();
+    const pole = mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.7, 5), new THREE.MeshStandardMaterial({ color: '#6B4F2A' }));
+    pole.position.y = 0.3;
+    const cloth = mesh(new THREE.PlaneGeometry(0.32, 0.22), new THREE.MeshStandardMaterial({ color: '#FFFFFF', side: THREE.DoubleSide }));
+    cloth.position.set(0.16, 0.55, 0);
+    cloth.userData.cloth = true;
+    this.flagProp.add(pole, cloth);
+    this.flagProp.visible = false;
+    this.arms.add(this.flagProp);
+
+    // Shield shimmer and contact shadow
+    this.shieldBubble = mesh(
+      cached('bubble', () => new THREE.IcosahedronGeometry(1, 2)),
+      new THREE.MeshBasicMaterial({ color: '#4FC3F7', transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, wireframe: true }),
+    );
+    this.shieldBubble.position.y = HIP_Y + 0.25;
+    this.shieldBubble.scale.set(0.75, 1.2, 0.75);
+    this.shadow = mesh(
+      cached('blob', () => new THREE.CircleGeometry(0.42, 20).rotateX(-Math.PI / 2)),
+      new THREE.MeshBasicMaterial({ color: '#000000', transparent: true, opacity: 0.38, depthWrite: false }),
+    );
+    this.shadow.position.y = 0.015;
+    this.root.add(this.shieldBubble, this.shadow);
+
+    this.setLook(look);
   }
 
-  setSkin(skin: Skin) {
-    if (skin.id === this.skinId) return;
-    this.skinId = skin.id;
+  get trailColor() {
+    return this.trail;
+  }
+
+  setLook(look: Look) {
+    if (look.key === this.lookKey) return;
+    this.lookKey = look.key;
+    this.trail = look.trail;
     this.cosmetics.clear();
     this.flutter = [];
-    // Bow: an arc bulging toward the target, tips back toward the archer.
+    this.buildBow(look);
+    this.buildQuiver(look);
+    this.buildHat(look);
+    // A face visor replaces the cartoon eyes and mouth entirely.
+    this.face.visible = look.hat !== 'face';
+    const glow = look.eyes ? new THREE.MeshBasicMaterial({ color: look.eyes }) : null;
+    for (const e of this.eyes) e.setGlow(glow);
+
+    // Nocked arrow takes the trail colour for its fletching
+    this.arms.remove(this.nocked);
+    this.nocked = makeArrow(look.trail);
+    this.arms.add(this.nocked);
+  }
+
+  private buildBow(look: Look) {
     this.bow.clear();
-    const R = 0.55;
-    const half = 0.72;
     const limbGeo = cached('bowArc', () => {
-      const g = new THREE.TorusGeometry(R, 0.022, 6, 24, half * 2);
-      g.rotateZ(-half);
-      g.translate(-R, 0, 0);
+      const g = new THREE.TorusGeometry(BOW_R, 0.022, 6, 24, BOW_HALF * 2);
+      g.rotateZ(-BOW_HALF);
+      g.translate(-BOW_R, 0, 0);
       return g;
     });
-    const bowMat = glossy(skin.bow, { rough: 0.35, metal: skin.id === 'royal' ? 0.8 : 0.1 });
-    this.bow.add(mesh(limbGeo, bowMat));
-    const grip = mesh(cached('bowGrip', () => new THREE.CylinderGeometry(0.03, 0.03, 0.14, 8)), glossy(skin.accent));
-    this.bow.add(grip);
-    // Tip caps in the accent colour
+    const metal = look.bowColor === '#C9A227' ? 0.8 : 0.1;
+    this.bow.add(mesh(limbGeo, glossy(look.bowColor, { rough: 0.35, metal, glow: look.bowGlow ? 0.35 : 0 })));
+    this.bow.add(mesh(cached('bowGrip', () => new THREE.CylinderGeometry(0.03, 0.03, 0.14, 8)), glossy(look.bowAccent)));
     for (const s of [1, -1]) {
-      const cap = mesh(cached('bowCap', () => new THREE.SphereGeometry(0.035, 8, 6)), glossy(skin.accent, { glow: skin.eyes ? 0.6 : 0 }));
-      cap.position.set(-R + R * Math.cos(half), s * R * Math.sin(half), 0);
+      const cap = mesh(cached('bowCap', () => new THREE.SphereGeometry(0.035, 8, 6)), glossy(look.bowAccent, { glow: look.bowGlow ? 1.2 : 0 }));
+      cap.position.set(-BOW_R + BOW_R * Math.cos(BOW_HALF), s * BOW_R * Math.sin(BOW_HALF), 0);
       this.bow.add(cap);
     }
+  }
 
-    // Quiver on the back
+  private buildQuiver(look: Look) {
+    this.torso.children.filter((c) => c.userData.quiver).forEach((c) => this.torso.remove(c));
     const quiver = new THREE.Group();
-    const q = mesh(cached('quiver', () => new THREE.CylinderGeometry(0.075, 0.06, 0.5, 10)), glossy(skin.color, { rough: 0.5 }));
-    quiver.add(q);
+    quiver.add(mesh(cached('quiver', () => new THREE.CylinderGeometry(0.075, 0.06, 0.5, 10)), glossy('#3A2A1E', { rough: 0.7 })));
+    const band = mesh(cached('qband', () => new THREE.CylinderGeometry(0.079, 0.079, 0.05, 10)), glossy(look.banner));
+    band.position.y = 0.15;
+    quiver.add(band);
     for (let i = 0; i < 3; i++) {
-      const f = mesh(cached('qfl', () => new THREE.ConeGeometry(0.03, 0.12, 4)), glossy(skin.trail, { rough: 0.6 }), false);
+      const f = mesh(cached('qfl', () => new THREE.ConeGeometry(0.03, 0.12, 4)), glossy(look.trail, { rough: 0.6 }));
       f.position.set((i - 1) * 0.035, 0.3, (i % 2) * 0.02);
       quiver.add(f);
     }
-    this.torso.children.filter((c) => c.userData.quiver).forEach((c) => this.torso.remove(c));
     quiver.userData.quiver = true;
     // Torso space: +x runs up the spine, +y points behind the archer.
     quiver.rotation.set(0, 0, -Math.PI / 2 - 0.35);
     quiver.position.set(BODY.torso * 0.62, 0.09, 0);
     this.torso.add(quiver);
+  }
 
+  private buildHat(look: Look) {
     const hr = BODY.headR;
-    const acc = glossy(skin.accent);
-    switch (skin.hat) {
+    const acc = glossy(look.hatColor);
+    const add = (...o: THREE.Object3D[]) => this.cosmetics.add(...o);
+    switch (look.hat) {
       case 'cap': {
         const dome = mesh(new THREE.SphereGeometry(hr * 1.06, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), acc);
         dome.position.y = hr * 0.12;
-        const brim = mesh(new THREE.CylinderGeometry(hr * 0.75, hr * 0.75, 0.02, 16, 1, false, -Math.PI / 2, Math.PI), glossy(skin.color));
+        const brim = mesh(new THREE.CylinderGeometry(hr * 0.75, hr * 0.75, 0.02, 16, 1, false, -Math.PI / 2, Math.PI), glossy('#1B1B1B'));
         brim.position.set(-hr * 0.7, hr * 0.2, 0);
-        this.cosmetics.add(dome, brim);
+        add(dome, brim);
+        break;
+      }
+      case 'helmet': {
+        const dome = mesh(new THREE.SphereGeometry(hr * 1.14, 18, 12, 0, Math.PI * 2, 0, Math.PI * 0.55), glossy(look.hatColor, { rough: 0.8 }));
+        dome.position.y = hr * 0.05;
+        const rim = mesh(new THREE.TorusGeometry(hr * 1.12, 0.022, 6, 24), glossy('#3E4A26', { rough: 0.8 }));
+        rim.rotation.x = Math.PI / 2;
+        rim.position.y = hr * 0.08;
+        add(dome, rim);
+        // Camo blotches
+        const blot = [glossy('#3E4A26', { rough: 0.9 }), glossy('#8A7B4A', { rough: 0.9 }), glossy('#2A2A1A', { rough: 0.9 })];
+        for (let i = 0; i < 9; i++) {
+          const a = (i / 9) * Math.PI * 2;
+          const el = 0.35 + (i % 3) * 0.25;
+          const b = mesh(cached('blot', () => new THREE.SphereGeometry(0.05, 6, 4)), blot[i % 3]);
+          b.scale.set(1.4, 0.35, 1);
+          b.position.set(Math.cos(a) * Math.cos(el) * hr * 1.13, hr * 0.05 + Math.sin(el) * hr * 1.13, Math.sin(a) * Math.cos(el) * hr * 1.13);
+          b.lookAt(0, 0, 0);
+          add(b);
+        }
+        break;
+      }
+      case 'viking': {
+        const steel = glossy(look.hatColor, { metal: 0.85, rough: 0.3 });
+        const dome = mesh(new THREE.SphereGeometry(hr * 1.1, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), steel);
+        dome.position.y = hr * 0.1;
+        const nose = mesh(new THREE.BoxGeometry(0.03, 0.16, 0.035), steel);
+        nose.position.set(hr * 1.08, 0, 0.0);
+        add(dome, nose);
+        for (const s of [1, -1]) {
+          const horn = mesh(new THREE.TorusGeometry(0.13, 0.03, 6, 12, Math.PI * 0.6), glossy('#F1E3C6', { rough: 0.4 }));
+          horn.position.set(0, hr * 0.55, s * hr * 0.95);
+          horn.rotation.set(0, s > 0 ? 0 : Math.PI, 0.3);
+          add(horn);
+        }
+        break;
+      }
+      case 'dragon': {
+        const purple = glossy(look.hatColor, { rough: 0.35 });
+        const dome = mesh(new THREE.SphereGeometry(hr * 1.2, 18, 12, 0, Math.PI * 2, 0, Math.PI * 0.62), purple);
+        dome.position.y = hr * 0.02;
+        const snout = mesh(new THREE.ConeGeometry(0.12, 0.26, 6), purple);
+        snout.rotation.z = -Math.PI / 2;
+        snout.position.set(hr * 1.15, hr * 0.42, 0);
+        add(dome, snout);
+        const gold = glossy('#E9C46A', { metal: 0.7, rough: 0.3 });
+        for (const s of [1, -1]) {
+          const horn = mesh(new THREE.ConeGeometry(0.045, 0.32, 8), gold);
+          horn.position.set(-hr * 0.35, hr * 1.05, s * hr * 0.5);
+          horn.rotation.set(s * 0.4, 0, 0.9);
+          add(horn);
+        }
+        for (let i = 0; i < 4; i++) {
+          const fin = mesh(new THREE.ConeGeometry(0.04, 0.14, 4), glossy('#FF5AF1', { glow: 0.6 }));
+          fin.position.set(-hr * (0.2 + i * 0.3), hr * (1.15 - i * 0.18), 0);
+          fin.rotation.z = 0.6 + i * 0.25;
+          add(fin);
+        }
         break;
       }
       case 'crown': {
-        const gold = glossy(skin.accent, { metal: 0.9, rough: 0.2, glow: 0.12 });
+        const gold = glossy(look.hatColor, { metal: 0.9, rough: 0.2, glow: 0.12 });
         const band = mesh(new THREE.CylinderGeometry(hr * 0.8, hr * 0.85, 0.1, 14, 1, true), gold);
         band.position.y = hr * 0.95;
-        this.cosmetics.add(band);
+        add(band);
         for (let i = 0; i < 6; i++) {
           const a = (i / 6) * Math.PI * 2;
           const spike = mesh(new THREE.ConeGeometry(0.035, 0.12, 4), gold);
           spike.position.set(Math.cos(a) * hr * 0.8, hr * 0.95 + 0.1, Math.sin(a) * hr * 0.8);
-          const gem = mesh(new THREE.SphereGeometry(0.02, 6, 4), glossy('#9D0208', { glow: 0.5 }), false);
+          const gem = mesh(new THREE.SphereGeometry(0.02, 6, 4), glossy('#9D0208', { glow: 0.5 }));
           gem.position.set(Math.cos(a) * hr * 0.85, hr * 0.95, Math.sin(a) * hr * 0.85);
-          this.cosmetics.add(spike, gem);
+          add(spike, gem);
         }
         break;
       }
       case 'horns': {
         for (const s of [1, -1]) {
-          const horn = mesh(new THREE.ConeGeometry(0.05, 0.26, 8), glossy(skin.accent, { rough: 0.25 }));
+          const horn = mesh(new THREE.ConeGeometry(0.05, 0.26, 8), glossy(look.hatColor, { rough: 0.25 }));
           horn.position.set(0.02, hr * 0.85, s * hr * 0.6);
           horn.rotation.set(s * 0.5, 0, -0.35);
-          this.cosmetics.add(horn);
+          add(horn);
         }
         break;
       }
       case 'halo': {
-        const halo = mesh(new THREE.TorusGeometry(hr * 0.85, 0.022, 8, 28), glossy(skin.accent, { glow: 1.6 }), false);
+        const halo = mesh(new THREE.TorusGeometry(hr * 0.85, 0.022, 8, 28), glossy(look.hatColor, { glow: 1.6 }));
         halo.rotation.x = Math.PI / 2;
         halo.position.y = hr * 1.6;
         halo.userData.bob = true;
         this.flutter.push(halo);
-        // Small wings
         for (const s of [1, -1]) {
           const wing = mesh(new THREE.SphereGeometry(0.16, 10, 8), glossy('#FFFFFF', { rough: 0.6, glow: 0.25 }));
           wing.scale.set(0.35, 1, 0.12);
@@ -285,9 +585,9 @@ export class StickmanRig {
           wing.rotation.set(s * 0.6, 0, 0.5);
           wing.userData.wing = s;
           this.flutter.push(wing);
-          this.cosmetics.add(wing);
+          add(wing);
         }
-        this.cosmetics.add(halo);
+        add(halo);
         break;
       }
       case 'hood': {
@@ -296,176 +596,355 @@ export class StickmanRig {
         const peak = mesh(new THREE.ConeGeometry(0.07, 0.18, 6), acc);
         peak.position.set(-hr * 0.9, hr * 0.55, 0);
         peak.rotation.z = 1.2;
-        this.cosmetics.add(hood, peak);
+        add(hood, peak);
         break;
       }
       case 'visor': {
         const visor = mesh(
           new THREE.CylinderGeometry(hr * 1.04, hr * 1.04, 0.075, 18, 1, true, -Math.PI * 0.4, Math.PI * 0.8),
-          glossy(skin.accent, { glow: 1.4, rough: 0.1 }),
-          false,
+          glossy(look.hatColor, { glow: 1.4, rough: 0.1 }),
         );
         visor.rotation.y = Math.PI / 2;
         visor.position.y = hr * 0.18;
         const band = mesh(new THREE.TorusGeometry(hr * 1.02, 0.018, 6, 24), glossy('#1B2B34', { metal: 0.6 }));
         band.rotation.x = Math.PI / 2;
         band.position.y = hr * 0.18;
-        this.cosmetics.add(visor, band);
+        add(visor, band);
         break;
       }
-      case 'bandana': {
-        const band = mesh(new THREE.TorusGeometry(hr * 0.98, 0.035, 8, 24), acc);
+      case 'face': {
+        // Wearable helmet: matte shell over the skull, a coloured rim, and a
+        // curved visor on the front with the person's face printed on it.
+        // Head frame: +x is forward (where the eyes sit), +y up.
+        const shell = glossy('#15161C', { rough: 0.55 });
+        const trim = glossy(look.hatColor, { rough: 0.3, glow: 0.25 });
+        const R = hr * 1.14;
+        // Front window: sphere patch centred on +x (phi = π in three's
+        // parametrisation), roughly square so the 1:1 texture isn't stretched.
+        const PHI = 1.75;
+        const THETA0 = Math.PI * 0.2;
+        const THETA = 1.75;
+        // Shell = everything except that window: top cap, the sides and back
+        // beside it, and a chin guard below it.
+        const cap = mesh(new THREE.SphereGeometry(R, 24, 16, 0, Math.PI * 2, 0, THETA0 + 0.02), shell);
+        const dome = mesh(new THREE.SphereGeometry(R, 24, 16, Math.PI + PHI / 2 - 0.02, Math.PI * 2 - PHI + 0.04, THETA0, THETA), shell);
+        const back = mesh(new THREE.SphereGeometry(R, 24, 16, 0, Math.PI * 2, THETA0 + THETA - 0.02, Math.PI - THETA0 - THETA + 0.02), shell);
+        const face = look.face ?? 'smile';
+        const def = FACES[face];
+        if (!def.opaque) {
+          // Dark glass behind the cut-out figurine heads.
+          const glass = mesh(new THREE.SphereGeometry(R * 0.995, 24, 16, Math.PI - PHI / 2, PHI, THETA0, THETA), glossy('#0E1118', { rough: 0.15, metal: 0.5 }));
+          add(glass);
+        }
+        const visorMat = new THREE.MeshBasicMaterial({ map: faceTexture(face), transparent: !def.opaque, depthWrite: true });
+        const visor = mesh(new THREE.SphereGeometry(R * 1.005, 24, 16, Math.PI - PHI / 2, PHI, THETA0, THETA), visorMat);
+        // Rim around the window and a jaw band so it reads as a helmet.
+        const rim = mesh(new THREE.TorusGeometry(R * 0.78, 0.022, 8, 32), trim);
+        rim.rotation.y = Math.PI / 2;
+        rim.position.x = R * 0.6;
+        const band = mesh(new THREE.TorusGeometry(R * 1.0, 0.024, 8, 32), trim);
         band.rotation.x = Math.PI / 2;
-        band.position.y = hr * 0.35;
-        this.cosmetics.add(band);
+        band.position.y = -hr * 0.52;
+        const strap = mesh(new THREE.BoxGeometry(0.04, 0.05, 0.1), glossy('#2A2C36', { rough: 0.8 }));
+        strap.position.set(R * 0.72, -hr * 0.78, 0);
+        add(cap, dome, back, visor, rim, band, strap);
+        break;
+      }
+      case 'headband':
+      case 'bandana': {
+        const band = mesh(new THREE.TorusGeometry(hr * 0.98, look.hat === 'bandana' ? 0.035 : 0.022, 8, 24), acc);
+        band.rotation.x = Math.PI / 2;
+        band.position.y = hr * 0.38;
+        add(band);
         for (const s of [1, -1]) {
-          const tail = mesh(new THREE.BoxGeometry(0.2, 0.05, 0.015), acc);
+          const tail = mesh(new THREE.BoxGeometry(look.hat === 'bandana' ? 0.2 : 0.26, 0.04, 0.012), acc);
           tail.geometry.translate(-0.1, 0, 0);
-          tail.position.set(-hr * 0.95, hr * 0.3, s * 0.03);
+          tail.position.set(-hr * 0.95, hr * 0.33, s * 0.03);
           tail.userData.tail = s;
           this.flutter.push(tail);
-          this.cosmetics.add(tail);
+          add(tail);
         }
         break;
       }
       default:
         break;
     }
-
-    if (skin.eyes) {
-      for (const s of [1, -1]) {
-        const eye = mesh(new THREE.SphereGeometry(0.028, 8, 6), glossy(skin.eyes, { glow: 2.2 }), false);
-        eye.scale.set(0.6, 1, 1);
-        eye.position.set(hr * 0.9, hr * 0.12, s * hr * 0.35);
-        this.cosmetics.add(eye);
-      }
-    }
-
-    if (skin.scarf) {
-      const scarfMat = glossy(skin.scarf, { rough: 0.7 });
-      const ring = mesh(new THREE.TorusGeometry(0.075, 0.035, 8, 16), scarfMat);
-      ring.rotation.x = Math.PI / 2;
-      ring.position.y = -hr - 0.02;
-      this.cosmetics.add(ring);
-      const tail = mesh(new THREE.BoxGeometry(0.3, 0.07, 0.02), scarfMat);
-      tail.geometry.translate(-0.15, 0, 0);
-      tail.position.set(-0.05, -hr - 0.04, 0);
-      tail.userData.tail = 1;
-      tail.userData.long = true;
-      this.flutter.push(tail);
-      this.cosmetics.add(tail);
-    }
-
-    // Nocked arrow takes the trail colour for its fletching
-    this.arms.remove(this.nocked);
-    this.nocked = makeArrow(skin.trail);
-    this.nocked.position.z = 0.06;
-    this.arms.add(this.nocked);
-
-    this.root.traverse((o) => {
-      if ((o as THREE.Mesh).isMesh) o.castShadow = true;
-    });
   }
 
-  // Place every bone for this frame. `t` = time (s) for idle motion.
-  update(p: RigPose, t: number) {
+  // Place every bone for this frame. `t` = time (s), `dt` = frame step.
+  update(p: RigPose, t: number, dt = 1 / 60) {
     const f = p.facing;
     const d = p.death;
     this.root.rotation.y = f === 1 ? 0 : Math.PI;
     const limp = d ? Math.min(1, d.t * 3) : 0;
+    const k = 1 - Math.exp(-dt * 8);
 
-    // Root / tumble
+    // Blends: aim raises the bow; gestures and defeat take over the arms.
+    const aiming = p.ready || p.draw > 0.02;
+    this.aimBlend += ((aiming ? 1 : 0) - this.aimBlend) * k;
+    if (p.gesture) this.lastGesture = p.gesture;
+    this.gestBlend += ((p.gesture ? 1 : 0) - this.gestBlend) * k;
+    this.sadBlend += ((p.mood === 'sad' && !p.gesture ? 1 : 0) - this.sadBlend) * k;
+    const g = this.gestBlend;
+    const gt = p.gestureT;
+    const gesture = p.gesture ?? this.lastGesture;
+
+    // Root / tumble / walk-in / drop
+    const walkOff = -f * p.walk;
+    let bounce = 0;
+    if (p.walk > 0) bounce = Math.abs(Math.sin(p.stepT * Math.PI)) * 0.05;
+    if (gesture === 'cheer') bounce += g * Math.abs(Math.sin(gt * 7)) * 0.32;
+    if (gesture === 'laugh') bounce += g * Math.abs(Math.sin(gt * 14)) * 0.04;
+    if (gesture === 'dance') bounce += g * Math.abs(Math.sin(gt * 6)) * 0.12;
+    if (gesture === 'flex') bounce += g * Math.max(0, Math.sin(gt * 5)) * 0.03;
     if (d) {
       this.root.position.set(d.x, d.y - (HIP_Y - 0.1) * Math.abs(Math.sin(d.rot)) * (d.landed ? 1 : 0.4), 0);
       // World spin d.rot, expressed in the (possibly flipped) root frame.
       this.body.rotation.z = d.rot * f;
     } else {
-      this.root.position.set(p.x, p.y + p.drop, 0);
+      // Hit stagger: a small shove back that springs out.
+      const shove = -f * p.flinch * 0.12;
+      this.root.position.set(p.x + walkOff + shove, p.y, 0);
       this.body.rotation.z = 0;
     }
+    this.body.position.y = HIP_Y + bounce;
+    this.shadow.visible = !d || d.landed;
+    this.shadow.scale.setScalar(1 - Math.min(0.5, bounce));
 
-    // Hit flash
-    const fl = p.flash;
-    this.bodyMat.emissive.setScalar(fl * 0.9);
-    this.headMat.emissive.setScalar(fl * 0.9);
+    // Hit flash and shield shimmer
+    this.bodyMat.emissive.setRGB(p.flash * 0.9, p.flash * 0.25, p.flash * 0.25);
+    this.headMat.emissive.copy(this.bodyMat.emissive);
+    const sb = this.shieldBubble.material as THREE.MeshBasicMaterial;
+    sb.opacity = p.shieldFlash * 0.55;
+    this.shieldBubble.visible = p.shieldFlash > 0.01;
+    this.shieldBubble.rotation.y = t * 1.5;
+    this.shieldBubble.scale.set(0.75 + (1 - p.shieldFlash) * 0.25, 1.2 + (1 - p.shieldFlash) * 0.3, 0.75 + (1 - p.shieldFlash) * 0.25);
 
-    // Legs: planted stance, loose flail while dead
-    const flail = (k: number) => (d && !d.landed ? Math.sin(d.t * 14 + k) * 0.9 : 0);
+    // Legs: planted stance, walk cycle, stomp, loose flail while dead
+    const flail = (n: number) => (d && !d.landed ? Math.sin(d.t * 14 + n) * 0.9 : 0);
     const splay = d && d.landed ? 0.5 : 0;
+    const walking = p.walk > 0 ? 1 : 0;
+    const stride = Math.sin(p.stepT * Math.PI * 2) * 0.55 * walking;
+    const stomp = gesture === 'stomp' ? g * Math.max(0, Math.sin(gt * 9)) * 0.8 : gesture === 'dance' ? g * Math.max(0, Math.sin(gt * 6)) * 0.5 : 0;
+    const cheerKick = gesture === 'cheer' ? g * Math.max(0, Math.sin(gt * 7)) * 0.4 : 0;
     this.hips.rotation.y = -YAW * (1 - limp);
-    this.thighF.rotation.z = -Math.PI / 2 + 0.3 + flail(0) * limp + splay;
-    this.shinF.rotation.z = -0.12 + Math.abs(flail(1)) * 0.5 * limp;
-    this.thighB.rotation.z = -Math.PI / 2 - 0.26 + flail(2) * limp - splay;
-    this.shinB.rotation.z = -0.28 + Math.abs(flail(3)) * 0.5 * limp;
+    this.thighF.rotation.z = -Math.PI / 2 + 0.3 * (1 - walking) + stride + flail(0) * limp + splay + stomp + cheerKick;
+    this.shinF.rotation.z = -0.12 - Math.max(0, -stride) * 0.8 - stomp * 0.9 - cheerKick + Math.abs(flail(1)) * 0.5 * limp;
+    this.thighB.rotation.z = -Math.PI / 2 - 0.26 * (1 - walking) - stride + flail(2) * limp - splay - cheerKick;
+    this.shinB.rotation.z = -0.28 - Math.max(0, stride) * 0.8 - cheerKick + Math.abs(flail(3)) * 0.5 * limp;
 
-    // Torso lean: breathe, lean back into the draw, recoil on hit
+    // Torso lean: breathe, lean into the draw, recoil on hit, emote lean
     const breathe = d ? 0 : Math.sin(t * 2.1) * 0.025;
-    const lean = p.draw * 0.12 + p.flinch * 0.45 + breathe + flail(4) * 0.3 * limp;
+    let gLean = 0;
+    let headTilt = 0;
+    if (gesture === 'laugh') {
+      gLean = -0.25 - Math.sin(gt * 14) * 0.08;
+      headTilt = 0.35;
+    } else if (gesture === 'facepalm' || gesture === 'cry') {
+      gLean = 0.2;
+      headTilt = -0.3 + Math.sin(gt * (gesture === 'cry' ? 22 : 6)) * 0.08;
+    } else if (gesture === 'cheer') {
+      gLean = -0.1;
+      headTilt = 0.3;
+    } else if (gesture === 'stomp') {
+      gLean = 0.12;
+      headTilt = -0.1;
+    } else if (gesture === 'shrug') {
+      headTilt = Math.sin(gt * 3) * 0.15;
+    } else if (gesture === 'bow') {
+      // Fold forward, hold, rise.
+      const k = Math.sin(Math.min(1, gt / 2.0) * Math.PI);
+      gLean = 0.9 * Math.min(1, k * 1.6);
+      headTilt = -0.2 * k;
+    } else if (gesture === 'flex') {
+      gLean = -0.08;
+      headTilt = 0.15 + Math.sin(gt * 5) * 0.05;
+    } else if (gesture === 'think') {
+      gLean = 0.06;
+      headTilt = 0.25 + Math.sin(gt * 1.6) * 0.12;
+    } else if (gesture === 'salute') {
+      gLean = -0.05;
+    } else if (gesture === 'dance') {
+      gLean = Math.sin(gt * 6) * 0.14;
+      headTilt = Math.sin(gt * 6 + 1) * 0.3;
+    } else if (gesture === 'yawn') {
+      const k = Math.sin((gt / 2.4) * Math.PI);
+      gLean = -0.18 * k;
+      headTilt = 0.5 * k;
+    }
+    // Sad (defeat): head hangs, shoulders slump.
+    const sad = this.sadBlend;
+    const lean =
+      (p.draw * 0.12 + p.flinch * 0.45 + breathe) * (1 - g) +
+      gLean * g +
+      sad * 0.22 +
+      flail(4) * 0.3 * limp +
+      (p.walk > 0 ? -0.06 : 0);
+    // lean > 0 tips the spine backward (+x toward the archer's back).
     this.torso.rotation.z = Math.PI / 2 + lean;
-    this.head.rotation.z = -Math.PI / 2 - lean * 0.3 + (d ? 0 : Math.sin(t * 1.3) * 0.03);
+    const idleLook = d ? 0 : Math.sin(t * 0.7) * 0.05 + Math.sin(t * 1.9) * 0.02;
+    this.head.rotation.z = -Math.PI / 2 - lean * 0.3 + idleLook * (1 - g) + headTilt * g - sad * 0.55 - p.flinch * 0.3;
+
+    // Face
+    this.eyes.forEach((e, i) => e.set(p.mood, t, i === 0));
+    const mouthOpen = p.mood === 'laugh' ? 1 + Math.sin(t * 18) * 0.25 : p.mood === 'shock' ? 0.6 : p.mood === 'hurt' ? 0.5 : p.mood === 'happy' ? 0.55 : p.mood === 'scared' ? 0.45 + Math.sin(t * 26) * 0.08 : p.mood === 'wink' ? 0.35 : p.gesture === 'yawn' ? Math.max(0, Math.sin((p.gestureT / 2.4) * Math.PI)) * 1.3 : 0;
+    this.mouthOpen.visible = mouthOpen > 0;
+    this.mouthOpen.scale.set(1, mouthOpen, 1);
+    this.mouthLine.visible = p.mood === 'angry' || p.mood === 'sad' || p.mood === 'smug' || p.mood === 'sleepy';
+    this.mouthLine.rotation.x = p.mood === 'sad' ? 0.25 : p.mood === 'smug' ? -0.28 : 0;
 
     // Shoulder point in body space (hip = origin), after lean & yaw
     const spine = BODY.torso;
-    const sx = Math.cos(Math.PI / 2 + lean) * spine * Math.cos(this.hips.rotation.y);
-    const sy = Math.sin(Math.PI / 2 + lean) * spine;
+    const sAng = Math.PI / 2 + lean;
+    const sx = Math.cos(sAng) * spine * Math.cos(this.hips.rotation.y);
+    const sy = Math.sin(sAng) * spine - sad * 0.05;
 
-    // Aim angle in the archer's local frame
+    // ---- arm targets (relative to the shoulder) ---------------------------
+    // Aiming: bow hand straight out along the aim; string hand at the nock.
     let a = f === 1 ? p.angle : Math.PI - p.angle;
+    // Release follow-through: the bow arm kicks up and settles.
+    const rc = p.recoil * p.recoil;
+    a += rc * 0.22;
     if (d) a = -1.2 + flail(5) * 0.6;
     const cosA = Math.cos(a);
     const sinA = Math.sin(a);
-    const hx = sx + cosA * ARM_REACH;
-    const hy = sy + sinA * ARM_REACH;
-
-    // Bow arm: straight line shoulder → hand
-    place(this.upperBow, sx, sy, a);
-    place(this.foreBow, sx + cosA * BODY.upperArm, sy + sinA * BODY.upperArm, a - 0.04);
-
-    // Bow at the hand, perpendicular to the aim
-    this.bow.position.set(hx, hy, 0.06);
-    this.bow.rotation.z = a;
-    this.bow.visible = true;
-
-    // String hand (nock): rests at the string, pulls back to the anchor
+    const aimHand = { x: cosA * ARM_REACH, y: sinA * ARM_REACH };
     const pull = STRING_REST + p.draw * 0.62;
     const lift = p.draw * 0.06;
-    const nx = hx - cosA * pull - sinA * lift;
-    const ny = hy - sinA * pull + cosA * lift;
+    const aimNock = { x: aimHand.x - cosA * pull - sinA * lift, y: aimHand.y - sinA * pull + cosA * lift };
+    // Relaxed: bow held low and forward, other hand hanging.
+    const relaxBow = { x: 0.16, y: -0.48 + Math.sin(t * 2.1) * 0.01 };
+    const relaxDraw = { x: -0.06, y: -0.52 };
+    const ab = d ? 0 : this.aimBlend;
+    let bowHand = lerp2(relaxBow, aimHand, ab);
+    // After a release the string hand flows back past the chin.
+    const follow = { x: -0.22, y: 0.1 };
+    let drawHand = lerp2(relaxDraw, lerp2(aimNock, follow, rc), ab);
+    if (p.walk > 0) {
+      bowHand = { x: bowHand.x - stride * 0.15, y: bowHand.y };
+      drawHand = { x: drawHand.x + stride * 0.15, y: drawHand.y };
+    }
+    if (g > 0.001 && gesture && !d) {
+      const gp = gesturePose(gesture, gt);
+      bowHand = lerp2(bowHand, gp.bow, g);
+      drawHand = lerp2(drawHand, gp.draw, g);
+    }
+    if (sad > 0.001 && !d) {
+      bowHand = lerp2(bowHand, { x: 0.05, y: -0.55 }, sad);
+      drawHand = lerp2(drawHand, { x: -0.02, y: -0.56 }, sad);
+    }
 
-    // Draw arm: two-bone IK shoulder → nock. Elbow hangs low at rest and
-    // swings up behind the shoulder at full draw.
-    ik(this.upperDraw, this.foreDraw, sx, sy, d ? hx - 0.2 : nx, d ? hy - 0.4 : ny, BODY.upperArm, BODY.foreArm, -1);
+    // Bow arm: elbow bends down/out; draw arm: elbow up/behind when drawing.
+    ik(this.upperBow, this.foreBow, sx, sy, sx + bowHand.x, sy + bowHand.y, BODY.upperArm, BODY.foreArm, -1);
+    ik(this.upperDraw, this.foreDraw, sx, sy, sx + drawHand.x, sy + drawHand.y, BODY.upperArm, BODY.foreArm, -1);
+    const hx = sx + bowHand.x;
+    const hy = sy + bowHand.y;
+    const nx = sx + drawHand.x;
+    const ny = sy + drawHand.y;
 
-    // Bowstring through the nock
-    const R = 0.55;
-    const half = 0.72;
-    const tipBack = -R + R * Math.cos(half);
-    const tipUp = R * Math.sin(half);
+    // Bow: perpendicular to the aim when raised, limbs vertical when held low.
+    const bowRot = lerpAngle(-0.25, a, ab);
+    this.bow.position.set(hx, hy, 0.06);
+    this.bow.rotation.z = bowRot;
+    const cosB = Math.cos(bowRot);
+    const sinB = Math.sin(bowRot);
+
+    // Bowstring through the nock while drawn, straight otherwise
+    const tipBack = -BOW_R + BOW_R * Math.cos(BOW_HALF);
+    const tipUp = BOW_R * Math.sin(BOW_HALF);
     const pos = this.stringGeo.getAttribute('position') as THREE.BufferAttribute;
-    const tx = (lx: number, ly: number) => hx + lx * cosA - ly * sinA;
-    const ty = (lx: number, ly: number) => hy + lx * sinA + ly * cosA;
-    const drawn = p.draw > 0.01 && !d;
+    const tx = (lx: number, ly: number) => hx + lx * cosB - ly * sinB;
+    const ty = (lx: number, ly: number) => hy + lx * sinB + ly * cosB;
+    const drawn = p.draw > 0.01 && !d && ab > 0.5;
+    // Twang: the released string vibrates around its rest line.
+    const twang = Math.sin(t * 75) * 0.05 * rc;
     pos.setXYZ(0, tx(tipBack, tipUp), ty(tipBack, tipUp), 0);
-    pos.setXYZ(1, drawn ? nx : tx(tipBack, 0), drawn ? ny : ty(tipBack, 0), 0);
+    pos.setXYZ(1, drawn ? nx : tx(tipBack + twang, 0), drawn ? ny : ty(tipBack + twang, 0), 0);
     pos.setXYZ(2, tx(tipBack, -tipUp), ty(tipBack, -tipUp), 0);
     pos.needsUpdate = true;
 
     // Nocked arrow sits on the string
-    this.nocked.visible = p.showNocked && !d;
+    this.nocked.visible = p.showNocked && !d && ab > 0.6;
     this.nocked.position.set(nx + cosA * ARROW_LEN, ny + sinA * ARROW_LEN, 0.06);
     this.nocked.rotation.z = a;
+
+    // Surrender flag rides the draw hand
+    this.flagProp.visible = gesture === 'flag' && g > 0.3 && !d;
+    if (this.flagProp.visible) {
+      this.flagProp.position.set(nx, ny - 0.3, -0.06);
+      const cloth = this.flagProp.children[1];
+      cloth.rotation.y = Math.sin(t * 8) * 0.4;
+    }
 
     // Cosmetic flutter
     for (const o of this.flutter) {
       if (o.userData.bob) o.position.y = BODY.headR * 1.6 + Math.sin(t * 2.4) * 0.02;
       if (o.userData.tail) {
-        const amp = o.userData.long ? 0.35 : 0.25;
-        o.rotation.z = 0.6 + Math.sin(t * 7 + o.userData.tail) * amp;
+        o.rotation.z = 0.6 + Math.sin(t * 7 + o.userData.tail) * 0.25;
         o.rotation.y = Math.sin(t * 5.3 + o.userData.tail * 2) * 0.3;
       }
       if (o.userData.wing) o.rotation.x = o.userData.wing * (0.6 + Math.sin(t * 3) * 0.2);
     }
   }
+}
+
+type V2 = { x: number; y: number };
+
+// Hand targets (relative to the shoulder, local frame) for each emote.
+function gesturePose(g: Gesture, t: number): { bow: V2; draw: V2 } {
+  switch (g) {
+    case 'cheer':
+      return {
+        bow: { x: 0.12, y: 0.5 + Math.sin(t * 7) * 0.06 },
+        draw: { x: -0.05, y: 0.32 + Math.abs(Math.sin(t * 9)) * 0.22 },
+      };
+    case 'laugh':
+      return { bow: { x: 0.14, y: -0.3 }, draw: { x: 0.12, y: -0.36 + Math.sin(t * 14) * 0.03 } };
+    case 'facepalm':
+      return { bow: { x: 0.1, y: -0.5 }, draw: { x: 0.2, y: 0.3 } };
+    case 'cry':
+      return { bow: { x: 0.2, y: 0.28 + Math.sin(t * 22) * 0.01 }, draw: { x: 0.18, y: 0.3 } };
+    case 'shrug':
+      return { bow: { x: 0.36, y: 0.02 + Math.sin(t * 3) * 0.04 }, draw: { x: -0.32, y: 0.02 + Math.sin(t * 3) * 0.04 } };
+    case 'wave':
+      return { bow: { x: 0.14, y: -0.48 }, draw: { x: 0.12 + Math.sin(t * 12) * 0.14, y: 0.5 } };
+    case 'stomp':
+      return { bow: { x: 0.18, y: -0.4 - Math.max(0, Math.sin(t * 9)) * 0.1 }, draw: { x: -0.12, y: -0.38 - Math.max(0, Math.sin(t * 9)) * 0.1 } };
+    case 'thumbs':
+      return { bow: { x: 0.14, y: -0.48 }, draw: { x: 0.42, y: 0.12 + Math.min(1, t * 4) * 0.05 } };
+    case 'flag':
+      return { bow: { x: 0.1, y: 0.52 }, draw: { x: -0.04, y: 0.56 + Math.sin(t * 6) * 0.03 } };
+    case 'bow':
+      return { bow: { x: 0.2, y: -0.42 }, draw: { x: 0.1, y: -0.5 } };
+    case 'flex': {
+      const f = 0.5 + Math.sin(t * 5) * 0.5;
+      return { bow: { x: 0.3, y: 0.3 + f * 0.1 }, draw: { x: -0.22, y: 0.3 + f * 0.1 } };
+    }
+    case 'think':
+      return { bow: { x: 0.14, y: -0.48 }, draw: { x: 0.22, y: 0.2 + Math.sin(t * 2.2) * 0.015 } };
+    case 'salute':
+      return { bow: { x: 0.14, y: -0.48 }, draw: { x: 0.2, y: 0.44 } };
+    case 'dance':
+      return {
+        bow: { x: 0.18 + Math.sin(t * 6) * 0.12, y: 0.42 + Math.sin(t * 12) * 0.1 },
+        draw: { x: -0.12 - Math.sin(t * 6) * 0.12, y: 0.42 - Math.sin(t * 12) * 0.1 },
+      };
+    case 'yawn': {
+      const k = Math.sin((t / 2.4) * Math.PI);
+      return { bow: { x: 0.34, y: 0.1 + k * 0.5 }, draw: { x: -0.26, y: 0.1 + k * 0.5 } };
+    }
+  }
+}
+
+function lerp2(a: V2, b: V2, k: number): V2 {
+  return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k };
+}
+
+function lerpAngle(a: number, b: number, k: number) {
+  let d = b - a;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return a + d * k;
 }
 
 // Point `o` (a +x capsule) from (x, y) along angle `a` in its parent's plane.
@@ -475,7 +954,7 @@ function place(o: THREE.Object3D, x: number, y: number, a: number) {
   o.rotation.z = a;
 }
 
-// Two-bone IK in the x/y plane. `bend` picks the elbow side (+1 = up/behind).
+// Two-bone IK in the x/y plane. `bend` picks the elbow side.
 function ik(upper: THREE.Object3D, fore: THREE.Object3D, sx: number, sy: number, tx: number, ty: number, l1: number, l2: number, bend: 1 | -1) {
   const dx = tx - sx;
   const dy = ty - sy;
