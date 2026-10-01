@@ -8,8 +8,9 @@ import { supabase } from '@/utils/supabase';
 // the `room:<code>` channel:
 //   presence  → who's connected (both sides see "opponent joined/left")
 //   'shot'    → { angle, power }  the shooter's own aim, in ITS frame
-//   'result'  → { zone, hp }      authoritative outcome from the shooter's sim
-//   'skin'    → { skinId }        cosmetic so the opponent renders your skin
+//   'result'  → { zone, hp, shield } authoritative outcome from the shooter's sim
+//   'look'    → { head, bow, trail } loadout so the opponent renders your style
+//   'emote'   → { kind, value }   chat emote or quick message
 //   'ready'   → {}                both ready → host fires first
 //
 // Both clients run the same deterministic sim; the shooter is authoritative on
@@ -21,12 +22,15 @@ export type Role = 'host' | 'guest';
 export type Room = { code: string; host_id: string; guest_id: string | null; seed: number; status: string };
 
 export type RemoteShot = { angle: number; power: number };
-export type RemoteResult = { zone: 'head' | 'body' | 'miss'; hp: number };
+export type RemoteResult = { zone: 'head' | 'body' | 'legs' | 'miss'; hp: number; shield: number };
+export type RemoteEmote = { kind: 'emote' | 'text'; value: string };
+export type RemoteLook = { head?: string; bow?: string; trail?: string };
 
 type Handlers = {
   onShot?: (s: RemoteShot) => void;
   onResult?: (r: RemoteResult) => void;
-  onSkin?: (skinId: string) => void;
+  onLook?: (look: RemoteLook) => void;
+  onEmote?: (e: RemoteEmote) => void;
   onOpponentPresence?: (present: boolean) => void;
   onOpponentLeft?: () => void;
 };
@@ -99,8 +103,18 @@ export function useRoomChannel(code: string | undefined, role: Role | undefined,
         if (key === other) handlersRef.current.onOpponentLeft?.();
       })
       .on('broadcast', { event: 'shot' }, ({ payload }) => handlersRef.current.onShot?.(payload as RemoteShot))
-      .on('broadcast', { event: 'result' }, ({ payload }) => handlersRef.current.onResult?.(payload as RemoteResult))
-      .on('broadcast', { event: 'skin' }, ({ payload }) => handlersRef.current.onSkin?.((payload as { skinId: string }).skinId))
+      .on('broadcast', { event: 'result' }, ({ payload }) => {
+        const r = payload as Partial<RemoteResult>;
+        if (!r.zone || typeof r.hp !== 'number') return;
+        handlersRef.current.onResult?.({ zone: r.zone, hp: r.hp, shield: typeof r.shield === 'number' ? r.shield : 0 });
+      })
+      .on('broadcast', { event: 'look' }, ({ payload }) => handlersRef.current.onLook?.(payload as RemoteLook))
+      .on('broadcast', { event: 'emote' }, ({ payload }) => {
+        const e = payload as Partial<RemoteEmote>;
+        if ((e.kind === 'emote' || e.kind === 'text') && typeof e.value === 'string') {
+          handlersRef.current.onEmote?.({ kind: e.kind, value: e.value.slice(0, 40) });
+        }
+      })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
           setConnected(true);
@@ -119,7 +133,7 @@ export function useRoomChannel(code: string | undefined, role: Role | undefined,
     };
   }, [code, role]);
 
-  const send = useCallback((event: 'shot' | 'result' | 'skin' | 'ready', payload: object) => {
+  const send = useCallback((event: 'shot' | 'result' | 'look' | 'emote' | 'ready', payload: object) => {
     channelRef.current?.send({ type: 'broadcast', event, payload }).catch(() => {});
   }, []);
 

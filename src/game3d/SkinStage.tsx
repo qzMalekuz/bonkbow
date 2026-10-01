@@ -4,17 +4,17 @@ import { useIsFocused } from 'expo-router';
 import { Canvas, useFrame, useThree } from '@react-three/fiber/native';
 import * as THREE from 'three';
 import { StickmanRig } from '@/game3d/Stickman3D';
-import type { Skin } from '@/game/skins';
+import type { Look } from '@/game/cosmetics';
 
-// Turntable preview of a skin for the shop: the black stickman on a lit
+// Turntable preview of a look for the shop: the black stickman on a lit
 // plinth, slowly turning, drawing and relaxing the bow.
-export function SkinStage({ skin, style }: { skin: Skin; style?: ViewStyle }) {
+export function SkinStage({ look, style }: { look: Look; style?: ViewStyle }) {
   const focused = useIsFocused();
-  const [view] = useState(() => new StageView(skin));
-  useEffect(() => view.setSkin(skin), [view, skin]);
+  const [view] = useState(() => new StageView(look));
+  useEffect(() => view.setLook(look), [view, look]);
   return (
     <View style={[styles.wrap, style]} pointerEvents="none">
-      <Canvas shadows style={styles.fill} frameloop={focused ? 'always' : 'never'} camera={{ fov: 30, position: [0, 1.4, 5.2] }}>
+      <Canvas gl={{ antialias: false }} style={styles.fill} frameloop={focused ? 'always' : 'never'} camera={{ fov: 30, position: [0, 1.4, 5.2] }}>
         <Stage view={view} />
       </Canvas>
     </View>
@@ -36,8 +36,8 @@ class StageView {
   private rim = new THREE.DirectionalLight('#FFFFFF', 2.2);
   private t = 0;
 
-  constructor(skin: Skin) {
-    this.rig = new StickmanRig(skin);
+  constructor(look: Look) {
+    this.rig = new StickmanRig(look);
     this.spin.add(this.rig.root);
     this.root.add(this.spin);
 
@@ -54,18 +54,16 @@ class StageView {
 
     const key = new THREE.DirectionalLight('#FFF4E0', 2.6);
     key.position.set(2.5, 4, 3);
-    key.castShadow = true;
-    key.shadow.mapSize.set(512, 512);
     this.rim.position.set(-3, 2.5, -3);
     const hemi = new THREE.HemisphereLight('#BFD4FF', '#2A2030', 1.0);
     this.root.add(key, this.rim, hemi);
-    this.setSkin(skin);
+    this.setLook(look);
   }
 
-  setSkin(skin: Skin) {
-    this.rig.setSkin(skin);
-    this.ringMat.color.set(skin.color);
-    this.rim.color.set(skin.color);
+  setLook(look: Look) {
+    this.rig.setLook(look);
+    this.ringMat.color.set(look.banner);
+    this.rim.color.set(look.banner);
   }
 
   attach(scene: THREE.Scene, camera: THREE.Camera) {
@@ -89,10 +87,17 @@ class StageView {
         facing: 1,
         angle: 0.15 + Math.sin(t * 0.7) * 0.1,
         draw: cycle > 0.4 ? (cycle - 0.4) * 1.5 : 0,
+        ready: true,
         flash: 0,
         flinch: 0,
+        shieldFlash: 0,
         death: null,
-        drop: 0,
+        walk: 0,
+        stepT: 0,
+        mood: 'neutral',
+        gesture: null,
+        gestureT: 0,
+        recoil: 0,
         showNocked: true,
       },
       t,

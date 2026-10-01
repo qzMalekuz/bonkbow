@@ -25,7 +25,7 @@ export default function LobbyScreen() {
     if (started.current) return;
     started.current = true;
     haptic.success();
-    router.replace({ pathname: '/game', params: { mode: 'online', code: room.code, role, seed: String(room.seed) } });
+    router.replace({ pathname: '/match', params: { mode: 'online', code: room.code, role, seed: String(room.seed) } });
   }, []);
 
   useWaitForGuest(hosting?.code, !!hosting, (room) => start(room, 'host'));

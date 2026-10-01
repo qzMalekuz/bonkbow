@@ -21,9 +21,12 @@ const safe = (p: Promise<void>) => {
 };
 
 export const haptic = {
-  // Bow being drawn: one tick per power notch, like a ratchet.
-  drawTick: () => {
-    if (hapticsOn()) safe(Haptics.selectionAsync());
+  // Bow being drawn: one tick per power notch, like a ratchet — the ticks
+  // get heavier as the string tightens so tension is felt, not just seen.
+  drawTick: (power = 0) => {
+    if (!hapticsOn()) return;
+    if (power < 0.45) safe(Haptics.selectionAsync());
+    else safe(Haptics.impactAsync(power < 0.8 ? Haptics.ImpactFeedbackStyle.Light : Haptics.ImpactFeedbackStyle.Medium));
   },
   // Touch down on the canvas.
   aimStart: () => {
@@ -60,6 +63,43 @@ export const haptic = {
   // Arrow hit the ground / flew off screen.
   miss: () => {
     if (hapticsOn()) safe(Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft));
+  },
+  // Arrow clanged off armour.
+  shieldHit: () => {
+    if (hapticsOn()) safe(Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Rigid));
+  },
+  // Armour shattered.
+  shieldBreak: () => {
+    if (hapticsOn()) safe(Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning));
+    if (vibrationOn()) Vibration.vibrate([0, 30, 40, 50]);
+  },
+  // Emote / message bubble popped up.
+  emote: () => {
+    if (hapticsOn()) safe(Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft));
+  },
+  // Turn timer is about to run out.
+  timerWarn: () => {
+    if (hapticsOn()) safe(Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light));
+  },
+  // Opponent found / VS slam.
+  matchFound: () => {
+    if (hapticsOn()) safe(Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success));
+    if (vibrationOn()) Vibration.vibrate(45);
+  },
+  victory: () => {
+    if (hapticsOn()) safe(Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success));
+    if (vibrationOn()) Vibration.vibrate([0, 50, 70, 50, 70, 120]);
+  },
+  defeat: () => {
+    if (hapticsOn()) safe(Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error));
+  },
+  // XP bar filling: tiny ticks; level-up: a satisfying thump.
+  xpTick: () => {
+    if (hapticsOn()) safe(Haptics.selectionAsync());
+  },
+  levelUp: () => {
+    if (hapticsOn()) safe(Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success));
+    if (vibrationOn()) Vibration.vibrate([0, 40, 50, 80]);
   },
   // UI outcomes also play their sound, so every call site gets both.
   success: () => {

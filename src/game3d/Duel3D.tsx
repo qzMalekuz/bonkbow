@@ -1,140 +1,267 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, { useAnimatedProps, useAnimatedStyle, useSharedValue, type SharedValue } from 'react-native-reanimated';
+import Svg, { Circle, Path } from 'react-native-svg';
 import { Canvas, useFrame, useThree } from '@react-three/fiber/native';
 import * as THREE from 'three';
 import { Arena } from '@/game3d/Arena';
 import { StickmanRig, makeArrow, type RigPose } from '@/game3d/Stickman3D';
 import { themeFor, type Theme } from '@/game3d/themes';
-import { PHYS, handPoint, HEAD_Y } from '@/game3d/world';
+import { HEAD_Y, PHYS, handPoint } from '@/game3d/world';
 import {
   DuelSim,
   P_BLOOD,
   P_DUST,
   P_POOL,
+  P_SHIELD,
   P_SPARK,
   P_STRIDE,
   type Archer,
   type GameEvent,
   type GameMode,
+  type Gesture as Act,
+  type Mood,
+  type Who,
   type Zone,
 } from '@/game3d/sim';
-import type { Skin } from '@/game/skins';
+import type { Look } from '@/game/cosmetics';
 
-export type { GameEvent, GameMode, Zone };
+export type { GameEvent, GameMode, Mood, Who, Zone };
 
 export type DuelHandle = {
   // Opponent's shot, in THEIR frame (they shoot to the right too). Mirrored here.
   fireRemote: (shot: { angle: number; power: number }) => void;
   // Opponent's authoritative outcome for the arrow they just fired at me.
-  applyRemoteResult: (result: { zone: Zone; hp: number }) => void;
+  applyRemoteResult: (result: { zone: Zone; hp: number; shield: number }) => void;
+  // Act out an emote.
+  gesture: (who: Who, g: Act, mood: Mood) => void;
 };
+
+// Where each archer's head is on screen, refreshed every frame, so the HUD
+// can pin speech bubbles, damage numbers and the death marker to them.
+export type Anchors = {
+  px: number;
+  py: number;
+  pOn: boolean;
+  ex: number;
+  ey: number;
+  eOn: boolean;
+  pDead: boolean;
+  eDead: boolean;
+};
+
+export const emptyAnchors: Anchors = { px: 0, py: 0, pOn: false, ex: 0, ey: 0, eOn: false, pDead: false, eDead: false };
 
 type Props = {
   mode: GameMode;
   seed: number;
   role: 'host' | 'guest';
   myTurnFirst: boolean;
-  skin: Skin;
-  opponentSkin: Skin;
+  look: Look;
+  opponentLook: Look;
   score: number;
   skill: number; // lifetime hit rate in [0, 1] → adaptive AI
   inputEnabled: boolean;
   overview: boolean; // HUD's hold-to-zoom-out: frame the whole field
+  anchors: SharedValue<Anchors>;
   onEvent: (e: GameEvent) => void;
+  onTheme?: (t: Theme) => void;
+  // First frames rendered: the pre-match loading screen can lift.
+  onReady?: () => void;
 };
 
 // Landscape 3D duel. The sim (sim.ts) runs inside the R3F render loop on the
 // JS thread with a fixed physics step; DuelView turns its state into meshes
-// and drives the cinematic camera; a touch layer on top feeds the slingshot.
+// and drives the cinematic camera; a touch layer on top feeds the slingshot
+// and draws the tension cone.
 export const Duel3D = forwardRef<DuelHandle, Props>(function Duel3D(props, ref) {
   // One sim + view per mount; game.tsx re-keys this component for a new round.
   const [{ sim, view }] = useState(() => {
     const s = new DuelSim({ mode: props.mode, seed: props.seed, role: props.role, myTurnFirst: props.myTurnFirst });
-    return { sim: s, view: new DuelView(s, props.skin, props.opponentSkin) };
+    return { sim: s, view: new DuelView(s, props.look, props.opponentLook) };
   });
 
   useEffect(() => {
     view.setProps(props);
   });
+  const { onTheme } = props;
+  useEffect(() => {
+    onTheme?.(view.theme);
+  }, [view, onTheme]);
 
   useImperativeHandle(
     ref,
     () => ({
       fireRemote: ({ angle, power }) => sim.fireRemote(angle, power),
       applyRemoteResult: (r) => sim.applyRemoteResult(r),
+      gesture: (who, g, mood) => sim.gesture(who, g, mood),
     }),
     [sim],
   );
 
+  // Drag indicator (screen space): touch-down point, finger, tension 0..1.
+  const drag = useSharedValue({ x0: 0, y0: 0, x: 0, y: 0, on: false, power: 0 });
   const pan = useMemo(
     () =>
       Gesture.Pan()
         .runOnJS(true)
         .minDistance(0)
-        .onBegin((e) => sim.aimBegin(e.x, e.y))
-        .onUpdate((e) => sim.aimMove(e.x, e.y))
-        .onFinalize(() => sim.aimEnd()),
-    [sim],
+        .onBegin((e) => {
+          sim.aimBegin(e.x, e.y);
+          drag.set({ x0: e.x, y0: e.y, x: e.x, y: e.y, on: sim.aiming, power: 0 });
+        })
+        .onUpdate((e) => {
+          sim.aimMove(e.x, e.y);
+          drag.set({ x0: drag.get().x0, y0: drag.get().y0, x: e.x, y: e.y, on: sim.aiming, power: sim.aimPower });
+        })
+        .onFinalize(() => {
+          sim.aimEnd();
+          drag.set({ ...drag.get(), on: false, power: 0 });
+        }),
+    [sim, drag],
   );
 
   return (
     <View style={styles.fill}>
-      <Canvas style={styles.fill} shadows camera={{ fov: 36, near: 0.1, far: 900, position: [10, 4, 30] }}>
+      <Canvas
+        gl={{ antialias: false }}
+        style={styles.fill}
+        camera={{ fov: 34, near: 0.1, far: 900, position: [8, 4, 24] }}
+      >
         <DuelScene view={view} />
       </Canvas>
       <GestureDetector gesture={pan}>
-        <View style={StyleSheet.absoluteFill} collapsable={false} />
+        <View style={StyleSheet.absoluteFill} collapsable={false}>
+          <TensionCone drag={drag} />
+        </View>
       </GestureDetector>
     </View>
   );
 });
 
 function DuelScene({ view }: { view: DuelView }) {
-  const { scene, camera } = useThree();
+  const { scene, camera, size } = useThree();
   useEffect(() => view.attach(scene), [view, scene]);
-  useFrame((_, delta) => view.frame(delta, camera));
+  // Priority 1: we render ourselves so the draw itself can be timed.
+  useFrame((state, delta) => {
+    view.frame(Math.min(delta, 1 / 20), camera, size.width, size.height);
+    const t0 = PERF_LOG ? Date.now() : 0;
+    state.gl.render(scene, camera);
+    if (PERF_LOG) view.recordRender(Date.now() - t0, delta, state.gl.info.render.calls, state.gl.info.render.triangles);
+  }, 1);
   return null;
 }
 
+const AnimatedPath = Animated.createAnimatedComponent(Path);
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
+
+// The pull-back cone from the touch point to the finger: yellow when slack,
+// orange, then red at full tension — the reference game's draw indicator.
+function TensionCone({ drag }: { drag: SharedValue<{ x0: number; y0: number; x: number; y: number; on: boolean; power: number }> }) {
+  const coneProps = useAnimatedProps(() => {
+    const d = drag.value;
+    const dx = d.x - d.x0;
+    const dy = d.y - d.y0;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len;
+    const ny = dx / len;
+    const w0 = 3;
+    const w1 = 6 + d.power * 16;
+    const path = `M ${d.x0 + nx * w0} ${d.y0 + ny * w0} L ${d.x + nx * w1} ${d.y + ny * w1} L ${d.x - nx * w1} ${d.y - ny * w1} L ${d.x0 - nx * w0} ${d.y0 - ny * w0} Z`;
+    return { d: path, fill: tensionColor(d.power), fillOpacity: d.on && len > 6 ? 0.75 : 0 };
+  });
+  const ringProps = useAnimatedProps(() => {
+    const d = drag.value;
+    return { cx: d.x0, cy: d.y0, stroke: tensionColor(d.power), strokeOpacity: d.on ? 1 : 0, r: 14 + d.power * 6 };
+  });
+  const dotProps = useAnimatedProps(() => {
+    const d = drag.value;
+    return { cx: d.x0, cy: d.y0, fill: tensionColor(d.power), fillOpacity: d.on ? 1 : 0 };
+  });
+  const style = useAnimatedStyle(() => ({ opacity: drag.value.on ? 1 : 0 }));
+  return (
+    <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, style]}>
+      <Svg style={StyleSheet.absoluteFill}>
+        <AnimatedPath animatedProps={coneProps} />
+        <AnimatedCircle animatedProps={ringProps} fill="none" strokeWidth={4} />
+        <AnimatedCircle animatedProps={dotProps} r={6} />
+      </Svg>
+    </Animated.View>
+  );
+}
+
+// Yellow → orange → red as the draw tightens.
+function tensionColor(p: number) {
+  'worklet';
+  const k = Math.max(0, Math.min(1, p));
+  const r = 255;
+  const g = Math.round(k < 0.5 ? 214 - (214 - 140) * (k / 0.5) : 140 - (140 - 40) * ((k - 0.5) / 0.5));
+  const b = Math.round(k < 0.5 ? 64 - 64 * (k / 0.5) : 0 + 30 * ((k - 0.5) / 0.5));
+  return `rgb(${r},${g},${b})`;
+}
+
+// Frame-timing log (logcat "[perf]"). On for the current perf pass; set to
+// __DEV__ (or false) once the release build's numbers are confirmed.
+const PERF_LOG = true;
+
 const SPAN = { min: -45, max: 120 };
 const TRAIL_N = 20;
-const DOTS = 9;
+const DOTS = 10;
 
 class DuelView {
+  readonly theme: Theme;
   private sim: DuelSim;
   private props: Props | null = null;
-  private theme: Theme;
   private arena: Arena;
   private player: StickmanRig;
   private enemy: StickmanRig;
   private root = new THREE.Group();
   private flying: THREE.Group;
+  private flyingKey = '';
   private trail: THREE.Mesh;
   private parts: THREE.InstancedMesh;
   private aimLine: THREE.Mesh;
+  private aimMat: THREE.MeshBasicMaterial;
   private dots: THREE.InstancedMesh;
+  private ghost: THREE.InstancedMesh;
   private stuck = new Map<number, THREE.Group>();
+  private alive = new Set<number>();
   private enemyKey = '';
-  private skinKey = '';
-  private camPos = new THREE.Vector3(10, 6, 34);
-  private look = new THREE.Vector3(10, 3, 0);
+  private lookKey = '';
+  private camPos = new THREE.Vector3(8, 6, 26);
+  private look = new THREE.Vector3(8, 3, 0);
   private m = new THREE.Matrix4();
   private q = new THREE.Quaternion();
   private v = new THREE.Vector3();
   private s = new THREE.Vector3();
   private c = new THREE.Color();
   private e = new THREE.Euler();
+  private proj = new THREE.Vector3();
+  private frames = 0;
+  private partsLive = false;
+  private trailLive = false;
+  private partColors: THREE.Color[];
+  // Dev-only frame timing, logged every few seconds.
+  private perf = { frames: 0, time: 0, work: 0, render: 0, calls: 0, tris: 0, slow: 0 };
+  private pLife = new Uint8Array(P_POOL); // 1 once a particle has been drawn live (so we zero it once)
+  private shakeT = 0;
+  private anchorLast = emptyAnchors;
+  private colBlood = new THREE.Color('#A4101C');
+  private colSpark = new THREE.Color('#FFD166');
+  private colShield = new THREE.Color('#7FD8FF');
+  private colDust: THREE.Color;
 
-  constructor(sim: DuelSim, skin: Skin, opponentSkin: Skin) {
+  constructor(sim: DuelSim, look: Look, opponentLook: Look) {
     this.sim = sim;
     this.theme = themeFor(sim.layout.theme);
+    this.colDust = new THREE.Color(this.theme.id === 'frost' ? '#FFFFFF' : '#C9B79C');
     this.arena = new Arena(this.theme, sim.seed, SPAN);
-    this.player = new StickmanRig(skin);
-    this.enemy = new StickmanRig(opponentSkin);
+    this.player = new StickmanRig(look);
+    this.enemy = new StickmanRig(opponentLook);
     this.root.add(this.arena.group, this.player.root, this.enemy.root);
 
-    this.flying = makeArrow(skin.trail);
+    this.flying = makeArrow(look.trail);
     this.flying.visible = false;
     this.root.add(this.flying);
 
@@ -162,30 +289,31 @@ class DuelView {
     this.trail.frustumCulled = false;
     this.root.add(this.trail);
 
-    // Particles: blood mist, sparks, dust.
-    this.parts = new THREE.InstancedMesh(
-      new THREE.IcosahedronGeometry(1, 0),
-      new THREE.MeshStandardMaterial({ roughness: 0.6, flatShading: true }),
-      P_POOL,
-    );
+    // Particles: blood, sparks, dust, shield shards.
+    this.parts = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ flatShading: true }), P_POOL);
     this.parts.frustumCulled = false;
     this.parts.setColorAt(0, new THREE.Color());
     this.root.add(this.parts);
+    const dust = this.theme.id === 'frost' ? '#FFFFFF' : '#C9B79C';
+    this.partColors = [new THREE.Color('#A4101C'), new THREE.Color('#FFD166'), new THREE.Color(dust), new THREE.Color('#7FD8FF')];
 
-    // Aim guide: an orange line out of the bow plus shrinking trajectory dots.
-    this.aimLine = new THREE.Mesh(
-      new THREE.BoxGeometry(1, 0.035, 0.035).translate(0.5, 0, 0),
-      new THREE.MeshBasicMaterial({ color: '#FF7A1A', transparent: true, opacity: 0.9, fog: false }),
-    );
+    // Aim guide: a tension-coloured line out of the bow, the live trajectory
+    // (white) and my previous shot (green ghost) as dots.
+    this.aimMat = new THREE.MeshBasicMaterial({ color: '#FFD640', transparent: true, opacity: 0.95, fog: false });
+    this.aimLine = new THREE.Mesh(new THREE.BoxGeometry(1, 0.04, 0.04).translate(0.5, 0, 0), this.aimMat);
     this.aimLine.visible = false;
-    this.dots = new THREE.InstancedMesh(
-      new THREE.SphereGeometry(1, 8, 6),
-      new THREE.MeshBasicMaterial({ color: '#FFFFFF', transparent: true, opacity: 0.85, fog: false }),
+    const dotGeo = new THREE.SphereGeometry(1, 8, 6);
+    this.dots = new THREE.InstancedMesh(dotGeo, new THREE.MeshBasicMaterial({ color: '#FFFFFF', fog: false }), DOTS);
+    this.ghost = new THREE.InstancedMesh(
+      new THREE.TorusGeometry(1, 0.28, 6, 12),
+      new THREE.MeshBasicMaterial({ color: '#8BE04E', transparent: true, opacity: 0.85, fog: false }),
       DOTS,
     );
-    this.dots.frustumCulled = false;
-    this.dots.visible = false;
-    this.root.add(this.aimLine, this.dots);
+    for (const d of [this.dots, this.ghost]) {
+      d.frustumCulled = false;
+      d.visible = false;
+    }
+    this.root.add(this.aimLine, this.dots, this.ghost);
   }
 
   setProps(p: Props) {
@@ -193,13 +321,13 @@ class DuelView {
     this.sim.score = p.score;
     this.sim.skill = p.skill;
     this.sim.inputEnabled = p.inputEnabled;
-    const key = `${p.skin.id}:${p.opponentSkin.id}`;
-    if (key !== this.skinKey) {
-      this.skinKey = key;
-      this.player.setSkin(p.skin);
-      this.enemy.setSkin(p.opponentSkin);
-      this.arena.setArcher(0, { x: this.sim.player.x, top: this.sim.player.top, facing: 1, color: p.skin.color });
-      this.enemyKey = ''; // re-plant the opponent's pennant in their colour
+    const key = `${p.look.key}:${p.opponentLook.key}`;
+    if (key !== this.lookKey) {
+      this.lookKey = key;
+      this.player.setLook(p.look);
+      this.enemy.setLook(p.opponentLook);
+      this.arena.setArcher(0, { x: this.sim.player.x, top: this.sim.player.top, facing: 1, color: p.look.banner });
+      this.enemyKey = ''; // re-plant the opponent's banner in their colour
     }
   }
 
@@ -212,52 +340,105 @@ class DuelView {
     };
   }
 
-  frame(delta: number, camera: THREE.Camera) {
+  frame(delta: number, camera: THREE.Camera, w: number, h: number) {
     const p = this.props;
     if (!p) return;
+    const t0 = PERF_LOG ? Date.now() : 0;
     const sim = this.sim;
     const events = sim.update(delta);
     for (const e of events) p.onEvent(e);
     const t = sim.real;
 
-    // Enemy pillar moved (AI respawn) or skin changed: rebuild its tower + pennant.
+    // Enemy ledge moved (AI respawn) or look changed: rebuild ledge + banner.
     const key = `${sim.enemy.x.toFixed(2)}:${sim.enemy.top.toFixed(2)}`;
     if (key !== this.enemyKey) {
       this.enemyKey = key;
-      this.arena.setArcher(1, { x: sim.enemy.x, top: sim.enemy.top, facing: -1, color: p.opponentSkin.color });
+      this.arena.setArcher(1, { x: sim.enemy.x, top: sim.enemy.top, facing: -1, color: p.opponentLook.banner });
     }
 
-    this.player.update(pose(sim.player, sim.phase === 'player' || sim.aiming), t);
-    this.enemy.update(pose(sim.enemy, sim.phase === 'enemyThink' && sim.enemy.draw > 0.02), t + 1.7);
+    const myTurn = sim.phase === 'player';
+    this.player.update(pose(sim.player, myTurn || sim.aiming, myTurn || sim.aiming), t, delta);
+    const theirTurn = sim.phase === 'enemyThink' || sim.phase === 'waitRemote';
+    this.enemy.update(pose(sim.enemy, theirTurn, sim.enemy.draw > 0.02), t + 1.7, delta);
 
-    // Flying arrow + trail
+    // Flying arrow + trail, fletched in the shooter's trail colour
     const a = sim.arrow;
     this.flying.visible = a.active;
     if (a.active) {
+      const trail = a.shooter === 'player' ? p.look.trail : p.opponentLook.trail;
+      if (trail !== this.flyingKey) {
+        this.flyingKey = trail;
+        this.root.remove(this.flying);
+        this.flying = makeArrow(trail);
+        this.root.add(this.flying);
+      }
       this.flying.position.set(a.x, a.y, 0);
       this.flying.rotation.z = a.angle;
     }
-    const trailColor = a.active ? (a.shooter === 'player' ? p.skin.trail : p.opponentSkin.trail) : '#000000';
-    this.updateTrail(sim.trail, trailColor);
+    this.updateTrail(sim.trail, a.active ? (a.shooter === 'player' ? p.look.trail : p.opponentLook.trail) : '#000000');
 
     this.syncStuck(p);
     this.updateParticles(t);
     this.updateAim();
     this.updateCamera(delta, t, camera, p.overview);
+    this.updateAnchors(camera, w, h, p.anchors);
 
     this.arena.update(t, delta * sim.timeScale, this.look);
+    this.frames += 1;
+    if (this.frames === 4) p.onReady?.();
+    if (PERF_LOG) {
+      const pf = this.perf;
+      pf.frames += 1;
+      pf.time += delta;
+      pf.work += Date.now() - t0;
+      if (pf.time >= 3) {
+        console.log(
+          `[perf] ${(pf.frames / pf.time).toFixed(1)} fps · sim ${(pf.work / pf.frames).toFixed(1)} ms · render ${(pf.render / pf.frames).toFixed(1)} ms · ${pf.calls} draws · ${Math.round(pf.tris / 1000)}k tris · ${pf.slow} slow frames`,
+        );
+        Object.assign(pf, { frames: 0, time: 0, work: 0, render: 0, slow: 0 });
+      }
+    }
+  }
+
+  recordRender(ms: number, delta: number, calls: number, tris: number) {
+    const pf = this.perf;
+    pf.render += ms;
+    pf.calls = calls;
+    pf.tris = tris;
+    if (delta > 0.021) pf.slow += 1;
+  }
+
+  // Head positions in screen px for the HUD overlays.
+  private updateAnchors(camera: THREE.Camera, w: number, h: number, anchors: SharedValue<Anchors>) {
+    const sim = this.sim;
+    const at = (a: Archer) => {
+      const d = a.death;
+      const x = d ? d.x : a.x - a.facing * a.walk;
+      const y = d ? d.y + 0.5 : a.top + HEAD_Y + 0.45;
+      this.proj.set(x, y, 0).project(camera);
+      return { x: (this.proj.x * 0.5 + 0.5) * w, y: (-this.proj.y * 0.5 + 0.5) * h, on: this.proj.z < 1 && Math.abs(this.proj.x) < 1.1 && Math.abs(this.proj.y) < 1.1 };
+    };
+    const pp = at(sim.player);
+    const ep = at(sim.enemy);
+    const pDead = !!sim.player.death;
+    const eDead = !!sim.enemy.death;
+    const l = this.anchorLast;
+    if (
+      Math.abs(pp.x - l.px) < 0.4 && Math.abs(pp.y - l.py) < 0.4 && Math.abs(ep.x - l.ex) < 0.4 && Math.abs(ep.y - l.ey) < 0.4 &&
+      pp.on === l.pOn && ep.on === l.eOn && pDead === l.pDead && eDead === l.eDead
+    ) return;
+    this.anchorLast = { px: pp.x, py: pp.y, pOn: pp.on, ex: ep.x, ey: ep.y, eOn: ep.on, pDead, eDead };
+    anchors.set(this.anchorLast);
   }
 
   // Stuck arrows: scenery ones live in the world, body ones ride the rig.
   private syncStuck(p: Props) {
     const sim = this.sim;
-    const alive = new Set<number>();
+    this.alive.clear();
     for (const s of sim.stuck) {
-      alive.add(s.id);
+      this.alive.add(s.id);
       if (this.stuck.has(s.id)) continue;
-      // Body arrows came from the other archer; scenery ones from whoever just shot.
-      const fromPlayer = s.owner === 2 || (s.owner === 0 && sim.arrow.shooter === 'player');
-      const mesh = makeArrow(fromPlayer ? p.skin.trail : p.opponentSkin.trail);
+      const mesh = makeArrow(s.shooter === 'player' ? p.look.trail : p.opponentLook.trail);
       if (s.owner === 0) {
         mesh.position.set(s.x + Math.cos(s.angle) * 0.2, s.y + Math.sin(s.angle) * 0.2, 0);
         mesh.rotation.z = s.angle;
@@ -272,7 +453,7 @@ class DuelView {
       this.stuck.set(s.id, mesh);
     }
     for (const [id, mesh] of this.stuck) {
-      if (alive.has(id)) continue;
+      if (this.alive.has(id)) continue;
       mesh.removeFromParent();
       this.stuck.delete(id);
     }
@@ -280,21 +461,29 @@ class DuelView {
 
   private updateParticles(t: number) {
     const pa = this.sim.parts;
-    const dust = this.theme.id === 'frost' ? '#FFFFFF' : '#C9B79C';
+    let live = false;
+    for (let i = 0; i < P_POOL; i++) if (pa[i * P_STRIDE + 6] > 0) live = true;
+    // Nothing alive now and nothing left visible from last frame: skip.
+    if (!live && !this.partsLive) return;
+    this.partsLive = live;
     for (let i = 0; i < P_POOL; i++) {
       const o = i * P_STRIDE;
       const life = pa[o + 6];
       const kind = pa[o + 7];
       let r = 0;
-      if (life > 0) r = kind === P_DUST ? 0.08 + (1 - life) * 0.3 : kind === P_BLOOD ? 0.035 + life * 0.05 : 0.03 + life * 0.03;
+      if (life > 0) {
+        if (kind === P_DUST) r = 0.08 + (1 - life) * 0.3;
+        else if (kind === P_BLOOD) r = 0.03 + life * 0.05;
+        else if (kind === P_SHIELD) r = 0.03 + life * 0.04;
+        else r = 0.03 + life * 0.03;
+      }
       this.v.set(pa[o], pa[o + 1], pa[o + 2]);
       this.e.set(t * 3 + i, t * 2, 0);
       this.q.setFromEuler(this.e);
       this.s.setScalar(r);
       this.m.compose(this.v, this.q, this.s);
       this.parts.setMatrixAt(i, this.m);
-      this.c.set(kind === P_BLOOD ? '#A4101C' : kind === P_SPARK ? '#FFD166' : dust);
-      this.parts.setColorAt(i, this.c);
+      if (life > 0) this.parts.setColorAt(i, this.partColors[kind === P_BLOOD ? 0 : kind === P_SPARK ? 1 : kind === P_DUST ? 2 : 3]);
     }
     this.parts.instanceMatrix.needsUpdate = true;
     if (this.parts.instanceColor) this.parts.instanceColor.needsUpdate = true;
@@ -305,41 +494,52 @@ class DuelView {
     const on = sim.aiming && sim.aimPower >= PHYS.minPower * 0.5;
     this.aimLine.visible = on;
     this.dots.visible = on;
+    this.ghost.visible = on && !!sim.prevShot;
     if (!on) return;
     const h = handPoint(sim.player.x, sim.player.top, sim.aimAngle);
     this.aimLine.position.set(h.x, h.y, 0.08);
     this.aimLine.rotation.z = sim.aimAngle;
-    this.aimLine.scale.set(0.6 + sim.aimPower * 2.4, 1, 1);
-    const v = sim.aimPower * PHYS.maxSpeed;
-    const vx = Math.cos(sim.aimAngle) * v;
-    const vy = Math.sin(sim.aimAngle) * v;
+    this.aimLine.scale.set(0.6 + sim.aimPower * 2.4, 1 + sim.aimPower, 1 + sim.aimPower);
+    setTension(this.aimMat.color, sim.aimPower);
+    this.placeDots(this.dots, h, sim.aimAngle, sim.aimPower, 0.07);
+    if (sim.prevShot) this.placeDots(this.ghost, handPoint(sim.player.x, sim.player.top, sim.prevShot.angle), sim.prevShot.angle, sim.prevShot.power, 0.055);
+  }
+
+  private placeDots(mesh: THREE.InstancedMesh, from: { x: number; y: number }, angle: number, power: number, size: number) {
+    const v = power * PHYS.maxSpeed;
+    const vx = Math.cos(angle) * v;
+    const vy = Math.sin(angle) * v;
     this.q.identity();
     for (let i = 0; i < DOTS; i++) {
-      const tt = 0.06 + i * 0.045;
-      this.v.set(h.x + vx * tt, h.y + vy * tt - 0.5 * PHYS.gravity * tt * tt, 0);
-      this.s.setScalar(0.07 - i * 0.006);
+      const tt = 0.06 + i * 0.05;
+      this.v.set(from.x + vx * tt, from.y + vy * tt - 0.5 * PHYS.gravity * tt * tt, 0);
+      this.s.setScalar(size * (1 - i * 0.05));
       this.m.compose(this.v, this.q, this.s);
-      this.dots.setMatrixAt(i, this.m);
+      mesh.setMatrixAt(i, this.m);
     }
-    this.dots.instanceMatrix.needsUpdate = true;
+    mesh.instanceMatrix.needsUpdate = true;
   }
 
   private updateCamera(delta: number, t: number, camera: THREE.Camera, overview: boolean) {
     const sim = this.sim;
     const focus = cameraTarget(sim, overview);
-    const k = 1 - Math.exp(-delta * (sim.arrow.active ? 7 : 3.2));
+    const k = 1 - Math.exp(-delta * (sim.arrow.active ? 7 : overview ? 5 : 3.2));
     // Slightly above and to the left of the look point for a 3/4 perspective,
     // with a slow drift so the scene never feels static.
-    this.v.set(focus.x - focus.d * 0.12 + Math.sin(t * 0.25) * 0.4, focus.y + focus.d * 0.16, focus.d);
+    this.v.set(focus.x - focus.d * 0.1 + Math.sin(t * 0.25) * 0.3, focus.y + focus.d * 0.12, focus.d);
     this.camPos.lerp(this.v, k);
     this.look.x += (focus.x - this.look.x) * k;
     this.look.y += (focus.y - this.look.y) * k;
     const sh = sim.shake;
-    camera.position.set(this.camPos.x + (Math.random() - 0.5) * sh, this.camPos.y + (Math.random() - 0.5) * sh, this.camPos.z);
+    this.shakeT += delta * 38;
+    camera.position.set(this.camPos.x + Math.sin(this.shakeT * 1.7) * 0.5 * sh, this.camPos.y + Math.sin(this.shakeT * 2.3 + 1.3) * 0.5 * sh, this.camPos.z);
     camera.lookAt(this.look.x, this.look.y, 0);
   }
 
   private updateTrail(pts: number[], color: string) {
+    // Only rewrite the ribbon while there is one (plus one frame to clear it).
+    if (pts.length < 4 && !this.trailLive) return;
+    this.trailLive = pts.length >= 4;
     const geo = this.trail.geometry;
     const pos = geo.getAttribute('position') as THREE.BufferAttribute;
     const col = geo.getAttribute('color') as THREE.BufferAttribute;
@@ -364,10 +564,10 @@ class DuelView {
       nx /= len;
       ny /= len;
       const f = j / (n - 1); // 0 oldest → 1 newest
-      const w = 0.01 + f * 0.07;
+      const w = 0.004 + f * 0.035; // thin streak, widest at the arrow
       pos.setXYZ(i * 2, x + nx * w, y + ny * w, 0);
       pos.setXYZ(i * 2 + 1, x - nx * w, y - ny * w, 0);
-      const b = f * f * 1.2;
+      const b = f * f * 0.85;
       col.setXYZ(i * 2, this.c.r * b, this.c.g * b, this.c.b * b);
       col.setXYZ(i * 2 + 1, this.c.r * b, this.c.g * b, this.c.b * b);
     }
@@ -376,17 +576,32 @@ class DuelView {
   }
 }
 
-function pose(a: Archer, nocked: boolean): RigPose {
+// Same yellow → orange → red ramp as the on-screen cone, without parsing.
+function setTension(c: THREE.Color, p: number) {
+  const k = Math.max(0, Math.min(1, p));
+  const g = k < 0.5 ? 214 - 74 * (k / 0.5) : 140 - 100 * ((k - 0.5) / 0.5);
+  const b = k < 0.5 ? 64 - 64 * (k / 0.5) : 30 * ((k - 0.5) / 0.5);
+  c.setRGB(1, g / 255, b / 255, THREE.SRGBColorSpace);
+}
+
+function pose(a: Archer, ready: boolean, nocked: boolean): RigPose {
   return {
     x: a.x,
     y: a.top,
     facing: a.facing,
     angle: a.angle,
     draw: a.draw,
+    ready,
     flash: a.flash,
     flinch: a.flinch,
+    shieldFlash: a.shieldFlash,
     death: a.death,
-    drop: a.drop,
+    walk: a.walk,
+    stepT: a.stepT,
+    mood: a.mood,
+    gesture: a.gesture,
+    gestureT: a.gestureT,
+    recoil: a.recoil,
     showNocked: nocked,
   };
 }
@@ -399,12 +614,12 @@ function cameraTarget(sim: DuelSim, overview: boolean) {
   if (overview) return mid;
   const since = sim.real - sim.lastImpact.at;
 
-  // Round intro: look at the opponent, pull out over the whole field, settle on me.
+  // Round intro: watch the rival walk in, sweep over the field, settle on me.
   if (sim.phase === 'intro') {
     const t = sim.time;
-    if (t < 0.9) return { x: E.x - 1, y: E.top + HEAD_Y * 0.7, d: 7 };
-    if (t < 1.7) return mid;
-    return { x: P.x + 3.2, y: P.top + 1.3, d: 9 };
+    if (t < 1.0) return { x: E.x - 0.8, y: E.top + HEAD_Y * 0.7, d: 6.5 };
+    if (t < 1.8) return mid;
+    return { x: P.x + 2.6, y: P.top + 1.25, d: 7.2 };
   }
   // Chase the arrow; push in close during bullet time.
   if (sim.arrow.active) {
@@ -415,25 +630,24 @@ function cameraTarget(sim: DuelSim, overview: boolean) {
     return {
       x: a.x + dir * (slow ? 0.6 : 2),
       y: a.y * 0.6 + (victim.top + 1.2) * 0.4,
-      d: slow ? 4.2 : 10,
+      d: slow ? 4 : 9,
     };
   }
   // Linger on the impact.
-  if (since < (sim.lastImpact.kill ? 1.6 : 0.9)) {
-    return { x: sim.lastImpact.x, y: sim.lastImpact.y + 0.4, d: sim.lastImpact.kill ? 6 : 7.5 };
+  if (since < (sim.lastImpact.kill ? 1.7 : 1.0)) {
+    return { x: sim.lastImpact.x, y: sim.lastImpact.y + 0.3, d: sim.lastImpact.kill ? 5.5 : 6.5 };
   }
   if (sim.phase === 'enemyThink' || sim.phase === 'waitRemote') {
-    if (E.drop > 0 || E.death) return { x: E.x - 1, y: E.top + 1.4, d: 8.5 };
-    return { x: E.x - 3.2, y: E.top + 1.3, d: 9 };
+    if (E.walk > 0 || E.death) return { x: E.x - 0.8, y: E.top + 1.3, d: 7 };
+    return { x: E.x - 2.6, y: E.top + 1.25, d: 7.2 };
   }
   if (sim.phase === 'over') {
-    const dead = P.death ? P : E;
-    const d = dead.death;
-    return { x: d ? d.x : dead.x, y: (d ? d.y : dead.top) + 0.8, d: 7 };
+    const w = sim.winner === 'player' ? P : E;
+    return { x: w.x - w.facing * 0.2, y: w.top + 1.2, d: 5.5 };
   }
   // My turn: frame me with room ahead; pull back a little as I draw.
   const pow = sim.aiming ? sim.aimPower : 0;
-  return { x: P.x + 3.4 + pow * 1.6, y: P.top + 1.3 + pow * 0.4, d: 9 + pow * 2.5 };
+  return { x: P.x + 2.6 + pow * 1.8, y: P.top + 1.25 + pow * 0.5, d: 7.2 + pow * 3 };
 }
 
 const styles = StyleSheet.create({

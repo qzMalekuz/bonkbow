@@ -12,7 +12,7 @@ export const PHYS = {
   step: 1 / 120, // fixed physics step
 };
 
-// Stickman proportions (metres). The figure stands with feet at the pillar top.
+// Stickman proportions (metres). The figure stands with feet on its ledge.
 export const BODY = {
   thigh: 0.44,
   shin: 0.42,
@@ -29,7 +29,10 @@ export const SHOULDER_Y = HIP_Y + BODY.torso;
 export const HEAD_Y = SHOULDER_Y + BODY.neck + BODY.headR;
 export const ARM_REACH = BODY.upperArm + BODY.foreArm - 0.04;
 
-export const HP = { max: 100, headshot: 100, body: 50 };
+// Health is red, the shield (armour) is blue. Body hits drain the shield
+// first; leg hits split between shield and health; headshots ignore it.
+export const HP = { max: 100, shield: 80 };
+export const DAMAGE = { head: 58, body: 34, legs: 26 };
 
 export const AI = {
   noiseStart: 0.075,
@@ -39,25 +42,29 @@ export const AI = {
   skillSlackMin: 0.7,
   speedFraction: 0.86,
   thinkMs: 900,
-  respawnMs: 1600,
+  respawnMs: 1900,
 };
 
+export const TURN_SECONDS = 20;
 export const ARROW_LEN = 0.82;
-export const MAX_STUCK = 10;
+export const MAX_STUCK = 12;
+// Each archer stands this far back from the cliff edge of their ledge.
+export const LEDGE_FRONT = 1.3;
 
-export type Zone = 'head' | 'body' | 'miss';
-export type Surface = 'ground' | 'pillar' | 'none';
+export type HitZone = 'head' | 'body' | 'legs';
+export type Zone = HitZone | 'miss';
+export type Surface = 'ground' | 'ledge' | 'none';
 
-// A round's arena: I stand at x = 0; the opponent at x = gap. Pillar heights
+// A round's arena: I stand at x = 0; the opponent at x = gap. Ledge heights
 // are per role so both phones agree on who stands where.
-export type Layout = { gap: number; hostPillar: number; guestPillar: number; theme: number };
+export type Layout = { gap: number; hostLedge: number; guestLedge: number; theme: number };
 
 export function layoutFor(seed: number, index: number): Layout {
   const rnd = mulberry32(seed + index * 7919);
   return {
-    gap: 17 + rnd() * 13,
-    hostPillar: 1.2 + rnd() * 5.5,
-    guestPillar: 1.2 + rnd() * 5.5,
+    gap: 18 + rnd() * 12,
+    hostLedge: 2 + rnd() * 4.5,
+    guestLedge: 2 + rnd() * 4.5,
     theme: Math.floor(rnd() * 1000),
   };
 }
@@ -68,35 +75,42 @@ export function handPoint(x: number, top: number, angle: number) {
 }
 
 // Arrow tip vs a standing figure at (x, top).
-export function hitTest(x: number, top: number, tx: number, ty: number): 'head' | 'body' | null {
+export function hitTest(x: number, top: number, tx: number, ty: number): HitZone | null {
   const hx = tx - x;
   const hy = ty - (top + HEAD_Y);
   const r = BODY.headR + 0.05;
   if (hx * hx + hy * hy <= r * r) return 'head';
-  if (Math.abs(hx) <= 0.17 && ty >= top && ty <= top + SHOULDER_Y + BODY.neck) return 'body';
-  return null;
+  if (Math.abs(hx) > 0.17 || ty < top || ty > top + SHOULDER_Y + BODY.neck) return null;
+  return ty < top + HIP_Y ? 'legs' : 'body';
 }
 
-export const PILLAR_HALF = 0.75;
+// Damage for a hit, split into what the shield soaks and what health loses.
+// Harder draws hit harder (power 0.12..1 → ×0.8..×1.2).
+export function damageFor(zone: HitZone, power: number, shield: number) {
+  const raw = Math.round(DAMAGE[zone] * (0.75 + power * 0.45));
+  if (zone === 'head') return { shield: 0, hp: raw, raw };
+  const toShield = Math.min(shield, zone === 'body' ? raw : Math.round(raw / 2));
+  return { shield: toShield, hp: raw - toShield, raw };
+}
+
+// Ledge geometry: each archer's ledge runs from LEDGE_FRONT in front of them
+// back off-screen; the gap between the cliffs is ground level (y = 0).
+export function onLedge(archerX: number, facing: 1 | -1, x: number) {
+  return facing === 1 ? x <= archerX + LEDGE_FRONT : x >= archerX - LEDGE_FRONT;
+}
 
 export type FlightResult = { zone: Zone; surface: Surface; x: number; y: number; angle: number; steps: number };
 
+type Side = { x: number; top: number; facing: 1 | -1 };
+
 // Simulates a whole shot ahead of time with the same fixed step the live
-// arrow uses. The scene uses it to know a headshot is coming (bullet time)
-// and the AI uses nothing more than the closed-form solver below.
-export function simulateShot(
-  from: { x: number; y: number },
-  angle: number,
-  power: number,
-  target: { x: number; top: number },
-  ownPillarX: number,
-): FlightResult {
+// arrow uses. The scene uses it to know a lethal hit is coming (bullet time).
+export function simulateShot(from: { x: number; y: number }, angle: number, power: number, target: Side, own: Side): FlightResult {
   const v = power * PHYS.maxSpeed;
   let x = from.x;
   let y = from.y;
   const vx = Math.cos(angle) * v;
   let vy = Math.sin(angle) * v;
-  const dir = Math.sign(vx) || 1;
   for (let i = 1; i < 120 * 8; i++) {
     const r = stepArrow(x, y, vx, vy);
     x = r.x;
@@ -105,7 +119,7 @@ export function simulateShot(
     const a = Math.atan2(vy, vx);
     const zone = hitTest(target.x, target.top, x, y);
     if (zone) return { zone, surface: 'none', x, y, angle: a, steps: i };
-    const surf = surfaceHit(x, y, target, ownPillarX, dir);
+    const surf = surfaceHit(x, y, target, own);
     if (surf) return { zone: 'miss', surface: surf, x, y: surf === 'ground' ? Math.max(0, y) : y, angle: a, steps: i };
     if (Math.abs(x - from.x) > 90 || y < -5) return { zone: 'miss', surface: 'none', x, y, angle: a, steps: i };
   }
@@ -117,10 +131,10 @@ export function stepArrow(x: number, y: number, vx: number, vy: number) {
   return { x: x + vx * PHYS.step, y: y + nvy * PHYS.step, vy: nvy };
 }
 
-// Pillars are solid stone; the arrow only collides with the target's pillar
-// (it has already left its own).
-export function surfaceHit(x: number, y: number, target: { x: number; top: number }, _ownX: number, _dir: number): Surface | null {
-  if (Math.abs(x - target.x) < PILLAR_HALF && y <= target.top) return 'pillar';
+// Solid rock: either cliff, or the ground in the gap.
+export function surfaceHit(x: number, y: number, target: Side, own: Side): Surface | null {
+  if (y <= target.top && onLedge(target.x, target.facing, x)) return 'ledge';
+  if (y <= own.top && onLedge(own.x, own.facing, x)) return 'ledge';
   if (y <= 0) return 'ground';
   return null;
 }

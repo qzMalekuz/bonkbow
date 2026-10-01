@@ -27,6 +27,24 @@ const SFX = {
   jingle_kill: require('../../assets/audio/sfx/jingle_kill.mp3'),
   jingle_win: require('../../assets/audio/sfx/jingle_win.mp3'),
   jingle_lose: require('../../assets/audio/sfx/jingle_lose.mp3'),
+  shield_hit: require('../../assets/audio/sfx/shield_hit.mp3'),
+  shield_break: require('../../assets/audio/sfx/shield_break.mp3'),
+  emote_pop: require('../../assets/audio/sfx/emote_pop.mp3'),
+  chat_send: require('../../assets/audio/sfx/chat_send.mp3'),
+  match_found: require('../../assets/audio/sfx/match_found.mp3'),
+  vs_slam: require('../../assets/audio/sfx/vs_slam.mp3'),
+  search_loop: require('../../assets/audio/sfx/search_loop.mp3'),
+  timer_tick: require('../../assets/audio/sfx/timer_tick.mp3'),
+  xp_tick: require('../../assets/audio/sfx/xp_tick.mp3'),
+  level_up: require('../../assets/audio/sfx/level_up.mp3'),
+  coin_gain: require('../../assets/audio/sfx/coin_gain.mp3'),
+  crowd_cheer: require('../../assets/audio/sfx/crowd_cheer.mp3'),
+  defeat_sting: require('../../assets/audio/sfx/defeat_sting.mp3'),
+  footstep: require('../../assets/audio/sfx/footstep.mp3'),
+  body_hit_flesh: require('../../assets/audio/sfx/body_hit_flesh.mp3'),
+  whoosh_fast: require('../../assets/audio/sfx/whoosh_fast.mp3'),
+  laugh: require('../../assets/audio/sfx/laugh.mp3'),
+  grunt: require('../../assets/audio/sfx/grunt.mp3'),
 } as const;
 
 export type Sfx = keyof typeof SFX;
@@ -52,11 +70,29 @@ const VOLUME: Record<Sfx, number> = {
   jingle_kill: 0.6,
   jingle_win: 0.7,
   jingle_lose: 0.7,
+  shield_hit: 0.8,
+  shield_break: 0.9,
+  emote_pop: 0.6,
+  chat_send: 0.45,
+  match_found: 0.7,
+  vs_slam: 0.9,
+  search_loop: 0.35,
+  timer_tick: 0.4,
+  xp_tick: 0.25,
+  level_up: 0.8,
+  coin_gain: 0.6,
+  crowd_cheer: 0.6,
+  defeat_sting: 0.6,
+  footstep: 0.28,
+  body_hit_flesh: 0.85,
+  whoosh_fast: 0.4,
+  laugh: 0.55,
+  grunt: 0.6,
 };
 
 // Sounds that can overlap themselves (rapid taps, ratchet ticks) get a small
 // round-robin pool so a retrigger doesn't cut the previous one off.
-const POOL_SIZE: Partial<Record<Sfx, number>> = { ui_click: 3, draw_tick: 3, hit_body: 2 };
+const POOL_SIZE: Partial<Record<Sfx, number>> = { ui_click: 3, draw_tick: 3, hit_body: 2, footstep: 3, xp_tick: 3, timer_tick: 2 };
 
 const MUSIC = {
   menu: require('../../assets/audio/music/menu.mp3'),
@@ -65,6 +101,17 @@ const MUSIC = {
 } as const;
 
 export type MusicTrack = keyof typeof MUSIC;
+
+// Map ambience beds (rain on the town, wind in the forest, torch crackle),
+// layered under the music during a duel.
+const AMBIENCE = {
+  rain: require('../../assets/audio/music/amb_rain.mp3'),
+  forest: require('../../assets/audio/music/amb_forest.mp3'),
+  fire: require('../../assets/audio/music/amb_fire.mp3'),
+} as const;
+
+export type Ambience = keyof typeof AMBIENCE;
+const AMBIENCE_VOLUME = 0.42;
 
 const MUSIC_VOLUME = 0.32;
 const DUCKED_VOLUME = 0.1;
@@ -75,6 +122,8 @@ const musicOn = () => useGameStore.getState().musicEnabled;
 
 const pools = new Map<Sfx, { players: AudioPlayer[]; next: number }>();
 const music = new Map<MusicTrack, AudioPlayer>();
+const beds = new Map<Ambience, AudioPlayer>();
+let currentBed: Ambience | null = null;
 const fades = new Map<AudioPlayer, ReturnType<typeof setInterval>>();
 
 let current: MusicTrack | null = null;
@@ -209,4 +258,26 @@ export function duckMusic(on: boolean) {
   ducked = on;
   if (!current || !musicOn()) return;
   fadeTo(musicPlayer(current), targetVolume(), 350);
+}
+
+// Start (or switch, or stop with null) the map's ambience bed.
+export function playAmbience(kind: Ambience | null) {
+  if (kind === currentBed) return;
+  if (currentBed) {
+    const prev = beds.get(currentBed);
+    if (prev) fadeTo(prev, 0, 500);
+  }
+  currentBed = kind;
+  if (!kind || !soundOn()) return;
+  attempt(() => {
+    let p = beds.get(kind);
+    if (!p) {
+      p = createAudioPlayer(AMBIENCE[kind]);
+      p.loop = true;
+      p.volume = 0;
+      beds.set(kind, p);
+    }
+    p.play();
+    fadeTo(p, AMBIENCE_VOLUME, 900);
+  });
 }

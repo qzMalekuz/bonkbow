@@ -1,5 +1,5 @@
 import { Pressable, type PressableProps, type StyleProp, type ViewStyle } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming, Easing } from 'react-native-reanimated';
 import { haptic } from '@/game/haptics';
 import { playSfx, type Sfx } from '@/audio/sound';
 
@@ -30,7 +30,7 @@ export function HapticTouchable({ onPress, onPressIn, onPressOut, style, sound =
         onPressIn?.(e);
       }}
       onPressOut={(e) => {
-        pressed.value = withSpring(0, { damping: 12, stiffness: 320 });
+        pressed.value = withTiming(0, { duration: 220, easing: Easing.out(Easing.cubic) });
         onPressOut?.(e);
       }}
       onPress={(e) => {

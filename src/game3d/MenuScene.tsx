@@ -7,20 +7,20 @@ import { Arena } from '@/game3d/Arena';
 import { StickmanRig, makeArrow } from '@/game3d/Stickman3D';
 import { THEMES, type Theme } from '@/game3d/themes';
 import { PHYS, handPoint, solveLaunchAngle } from '@/game3d/world';
-import type { Skin } from '@/game/skins';
+import type { Look } from '@/game/cosmetics';
 
 // Living 3D backdrop for menus: your equipped archer on a rock tower, loosing
 // arrows at a straw target across the field while the camera drifts. The
 // arena rotates daily. Rendering pauses while another screen covers it.
-export function MenuScene({ skin, focusRight = false }: { skin: Skin; focusRight?: boolean }) {
+export function MenuScene({ look, focusRight = false }: { look: Look; focusRight?: boolean }) {
   const focused = useIsFocused();
-  const [view] = useState(() => new MenuView(skin, focusRight));
-  useEffect(() => view.setSkin(skin), [view, skin]);
+  const [view] = useState(() => new MenuView(look, focusRight));
+  useEffect(() => view.setLook(look), [view, look]);
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="none">
       <Canvas
+        gl={{ antialias: false }}
         style={styles.fill}
-        shadows
         frameloop={focused ? 'always' : 'never'}
         camera={{ fov: 34, near: 0.1, far: 900, position: [4, 3, 11] }}
       >
@@ -33,7 +33,7 @@ export function MenuScene({ skin, focusRight = false }: { skin: Skin; focusRight
 function Scene({ view }: { view: MenuView }) {
   const { scene, camera } = useThree();
   useEffect(() => view.attach(scene), [view, scene]);
-  useFrame((_, dt) => view.frame(dt, camera));
+  useFrame((_, dt) => view.frame(Math.min(dt, 1 / 20), camera));
   return null;
 }
 
@@ -52,32 +52,32 @@ class MenuView {
   private root = new THREE.Group();
   private arrow: THREE.Group;
   private stuck: THREE.Group[] = [];
-  private skin: Skin;
+  private look: Look;
   private focusRight: boolean;
   private t = 0;
   private cycle = 0;
   private angle = 0.3;
   private shot = { flying: false, x: 0, y: 0, vx: 0, vy: 0 };
-  private look = new THREE.Vector3();
+  private focus = new THREE.Vector3();
 
-  constructor(skin: Skin, focusRight: boolean) {
-    this.skin = skin;
+  constructor(look: Look, focusRight: boolean) {
+    this.look = look;
     this.focusRight = focusRight;
-    this.rig = new StickmanRig(skin);
-    this.arena.setArcher(0, { x: 0, top: TOWER, facing: 1, color: skin.color });
+    this.rig = new StickmanRig(look);
+    this.arena.setArcher(0, { x: 0, top: TOWER, facing: 1, color: look.banner });
     this.root.add(this.arena.group, this.rig.root, makeTarget());
-    this.arrow = makeArrow(skin.trail);
+    this.arrow = makeArrow(look.trail);
     this.arrow.visible = false;
     this.root.add(this.arrow);
   }
 
-  setSkin(skin: Skin) {
-    if (skin.id === this.skin.id) return;
-    this.skin = skin;
-    this.rig.setSkin(skin);
-    this.arena.setArcher(0, { x: 0, top: TOWER, facing: 1, color: skin.color });
+  setLook(look: Look) {
+    if (look.key === this.look.key) return;
+    this.look = look;
+    this.rig.setLook(look);
+    this.arena.setArcher(0, { x: 0, top: TOWER, facing: 1, color: look.banner });
     this.root.remove(this.arrow);
-    this.arrow = makeArrow(skin.trail);
+    this.arrow = makeArrow(look.trail);
     this.arrow.visible = false;
     this.root.add(this.arrow);
   }
@@ -120,10 +120,17 @@ class MenuView {
         facing: 1,
         angle: this.angle,
         draw,
+        ready: true,
         flash: 0,
         flinch: 0,
+        shieldFlash: 0,
         death: null,
-        drop: 0,
+        walk: 0,
+        stepT: 0,
+        mood: 'neutral',
+        gesture: null,
+        gestureT: 0,
+        recoil: Math.max(0, 1 - (this.cycle - 2.2) * 2.2) * (this.cycle > 2.2 ? 1 : 0),
         showNocked: this.cycle > 0.6 && this.cycle < 2.2,
       },
       this.t,
@@ -133,10 +140,10 @@ class MenuView {
     // the menu can sit on the left.
     const orbit = Math.sin(this.t * 0.12);
     const lx = this.focusRight ? -2.4 : 2.2;
-    this.look.set(lx + orbit * 0.6, TOWER + 1.2, 0);
+    this.focus.set(lx + orbit * 0.6, TOWER + 1.2, 0);
     camera.position.set(lx - 1.6 + orbit * 2.2, TOWER + 1.9 + Math.sin(this.t * 0.2) * 0.3, 8.2 + Math.cos(this.t * 0.12) * 0.8);
-    camera.lookAt(this.look);
-    this.arena.update(this.t, dt, this.look);
+    camera.lookAt(this.focus);
+    this.arena.update(this.t, dt, this.focus);
   }
 
   private fly(dt: number) {
@@ -151,7 +158,7 @@ class MenuView {
     if (s.x < TARGET_X - 0.15 && s.y > 0) return;
     s.flying = false;
     this.arrow.visible = false;
-    const stuck = makeArrow(this.skin.trail);
+    const stuck = makeArrow(this.look.trail);
     stuck.position.set(Math.min(s.x, TARGET_X - 0.05), Math.max(0.05, s.y), (Math.random() - 0.5) * 0.3);
     stuck.rotation.z = a;
     this.root.add(stuck);
