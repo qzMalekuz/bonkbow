@@ -1,12 +1,14 @@
 // Hero characters: real-person likenesses (Solana / Seeker community
 // figures) built as chibi archers on the stickman rig. Each one has a
-// 2048×1024 texture atlas cut from its archer-boys.pdf character sheet:
-// eight 512² tiles, four across by two down —
+// 2048×1536 texture atlas cut from its archer-boys.pdf character sheet:
+// ten 512² tiles, four across by three down —
 //   row 0: smile, neutral, angry, laugh (eyes shut)
 //   row 1: shock, right side, back, left side
-// The rig wraps the expression tile over the front of an oversized head
-// and the side/back tiles around the rest, swapping the front tile with
-// the archer's mood. Each hero is locked behind its own paid skin bundle
+//   row 2: front 3/4, back 3/4 (both with the face turned to image-right)
+// The rig draws the head as a card that always faces the camera and shows
+// the sheet view matching the viewing angle, with the front views swapping
+// expression to the archer's mood — the sheet art itself, not a projection
+// of it onto a ball. Each hero is locked behind its own paid skin bundle
 // (skins.ts) — there is no free or coin path to one.
 //
 // NOTE: these are likenesses of real people. Get each person's OK before
@@ -22,9 +24,9 @@ export type FaceDef = {
 };
 
 // Atlas tile indices.
-export const TILE = { smile: 0, neutral: 1, angry: 2, laugh: 3, shock: 4, right: 5, back: 6, left: 7 } as const;
+export const TILE = { smile: 0, neutral: 1, angry: 2, laugh: 3, shock: 4, right: 5, back: 6, left: 7, front34: 8, back34: 9 } as const;
 export const ATLAS_COLS = 4;
-export const ATLAS_ROWS = 2;
+export const ATLAS_ROWS = 3;
 
 export const FACES: Record<FaceId, FaceDef> = {
   smile: { id: 'smile', name: 'The Smile', tagline: 'Grin first, aim later.', image: require('../../assets/faces/hero_smile.png'), base: '#17171A' },

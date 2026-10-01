@@ -95,33 +95,44 @@ function faceTexture(id: FaceId) {
   return tex;
 }
 
-// Hero head: the stickman's skull grows to chibi size and the atlas tiles
-// are wrapped around it as sphere patches. Head frame: +x forward, +y up.
-// Three's sphere runs phi around +y starting at -x, so the front patch is
-// centred on phi = π, the character's right side (+z) on π/2, back on 0.
-const HERO_HEAD = 1.5; // head radius multiplier vs the plain stickman
-type Patch = { phi: number; width: number; theta0: number; height: number; r: number };
-const HERO_PATCH: Record<'front' | 'right' | 'back' | 'left', Patch> = {
-  front: { phi: Math.PI, width: 2.3, theta0: Math.PI * 0.1, height: Math.PI * 0.82, r: 1.012 },
-  right: { phi: Math.PI / 2, width: 1.7, theta0: Math.PI * 0.08, height: Math.PI * 0.84, r: 1.0 },
-  left: { phi: Math.PI * 1.5, width: 1.7, theta0: Math.PI * 0.08, height: Math.PI * 0.84, r: 1.0 },
-  back: { phi: 0, width: 2.3, theta0: Math.PI * 0.06, height: Math.PI * 0.86, r: 0.994 },
-};
-// A sphere patch whose UVs address one atlas tile. Cached: the mapping only
-// depends on the patch and tile, never on which hero wears it.
-function heroPatchGeo(which: keyof typeof HERO_PATCH, tile: number, R: number) {
-  return cached(`hero:${which}:${tile}`, () => {
-    const p = HERO_PATCH[which];
-    const g = new THREE.SphereGeometry(R * p.r, 28, 20, p.phi - p.width / 2, p.width, p.theta0, p.height);
+// Hero head: a card at the head centre, as big as a figurine head, that
+// turns to face whichever camera is drawing it and shows the sheet view
+// for that angle. Views with the face turned to image-right are mirrored
+// (flipped U) when the character's forward points to the camera's left.
+const HERO_HEAD = 1.5; // card half-size vs the plain stickman's head radius
+const _fwd = new THREE.Vector3();
+const _toCam = new THREE.Vector3();
+const _pos = new THREE.Vector3();
+const _camPos = new THREE.Vector3();
+const _q = new THREE.Quaternion();
+const _m = new THREE.Matrix4();
+const _up = new THREE.Vector3(0, 1, 0);
+// A unit quad addressing one atlas tile, optionally mirrored.
+function heroCardGeo(tile: number, flip: boolean) {
+  return cached(`heroCard:${tile}:${flip ? 'f' : 'n'}`, () => {
+    const g = new THREE.PlaneGeometry(1, 1);
     const uv = g.attributes.uv as THREE.BufferAttribute;
     const tx = tile % ATLAS_COLS;
     const ty = Math.floor(tile / ATLAS_COLS);
     for (let i = 0; i < uv.count; i++) {
-      uv.setXY(i, (tx + uv.getX(i)) / ATLAS_COLS, (ATLAS_ROWS - 1 - ty + uv.getY(i)) / ATLAS_ROWS);
+      const u = flip ? 1 - uv.getX(i) : uv.getX(i);
+      uv.setXY(i, (tx + u) / ATLAS_COLS, (ATLAS_ROWS - 1 - ty + uv.getY(i)) / ATLAS_ROWS);
     }
     uv.needsUpdate = true;
     return g;
   });
+}
+// The view for a signed yaw between the head's forward and the camera
+// (0 = camera straight ahead of the face, π = behind). `moodTile` is the
+// front expression. Returns [tile, mirrored].
+function heroView(yaw: number, moodTile: number): [number, boolean] {
+  const a = Math.abs(yaw);
+  const right = yaw > 0; // forward points to the camera's right
+  if (a < 0.4) return [moodTile, false];
+  if (a < 1.15) return [TILE.front34, !right];
+  if (a < 1.95) return [right ? TILE.right : TILE.left, false];
+  if (a < 2.75) return [TILE.back34, !right];
+  return [TILE.back, false];
 }
 // Which atlas tile a mood wears.
 function heroTile(mood: Mood): number {
@@ -350,7 +361,7 @@ export class StickmanRig {
   private lookKey = '';
   private trail = '#FFFFFF';
   // Hero character (real-face chibi): the front patch swaps with the mood.
-  private hero: { front: THREE.Mesh; tile: number } | null = null;
+  private hero: { card: THREE.Mesh; mood: number; tile: number; flip: boolean } | null = null;
   // Smoothed blends so every state change eases instead of snapping.
   private aimBlend = 0;
   private gestBlend = 0;
@@ -536,32 +547,85 @@ export class StickmanRig {
   private buildHero(look: Look) {
     const { torso, neck, headR, shin, foreArm, torsoR } = BODY;
     const strip = (g: THREE.Object3D) => g.children.filter((c) => c.userData.hero).forEach((c) => g.remove(c));
-    for (const g of [this.head, this.torso, this.shinF, this.shinB, this.foreBow, this.foreDraw]) strip(g);
+    const limbGroups = [this.thighF, this.shinF, this.thighB, this.shinB, this.upperBow, this.foreBow, this.upperDraw, this.foreDraw];
+    for (const g of [this.head, this.torso, ...limbGroups]) strip(g);
+    // The plain stick limbs come back when the hero comes off.
+    for (const g of [this.torso, ...limbGroups]) g.children.forEach((c) => (c.visible = true));
     this.hero = null;
     this.head.position.x = torso + neck + headR * 0.92;
+    this.head.children.forEach((c) => {
+      c.visible = true;
+    });
     if (look.hat !== 'face' || !look.face) return;
 
     const face = look.face;
-    const def = FACES[face];
     const R = headR * HERO_HEAD;
-    this.head.position.x = torso + neck + R * 0.95;
+    this.head.position.x = torso + neck + R * 0.62;
     const tag = (o: THREE.Object3D) => {
       o.userData.hero = true;
       return o;
     };
-    const skin = new THREE.MeshBasicMaterial({ map: faceTexture(face), alphaTest: 0.45 });
-    // Base skull in the hero's hair/skin colour, under the patches.
-    this.head.add(tag(mesh(cached(`heroSkull:${HERO_HEAD}`, () => new THREE.SphereGeometry(R * 0.985, 28, 20)), glossy(def.base, { rough: 0.7 }))));
-    const tile = TILE.neutral;
-    const front = tag(mesh(heroPatchGeo('front', tile, R), skin)) as THREE.Mesh;
-    this.head.add(front);
-    this.head.add(tag(mesh(heroPatchGeo('right', TILE.right, R), skin)));
-    this.head.add(tag(mesh(heroPatchGeo('left', TILE.left, R), skin)));
-    this.head.add(tag(mesh(heroPatchGeo('back', TILE.back, R), skin)));
-    this.hero = { front, tile };
+    const skin = new THREE.MeshBasicMaterial({ map: faceTexture(face), alphaTest: 0.4, side: THREE.DoubleSide });
+    const card = tag(mesh(heroCardGeo(TILE.neutral, false), skin)) as THREE.Mesh;
+    card.scale.setScalar(R * 2.5);
+    card.position.y = -R * 0.08;
+    card.frustumCulled = false;
+    const hero: { card: THREE.Mesh; mood: number; tile: number; flip: boolean } = { card, mood: TILE.neutral, tile: TILE.neutral, flip: false };
+    this.hero = hero;
+    card.onBeforeRender = (_r, _s, camera) => {
+      // Yaw from the head's world forward (+x in head space) to the camera.
+      card.getWorldPosition(_pos);
+      _fwd.set(1, 0, 0).transformDirection(this.head.matrixWorld);
+      _fwd.y = 0;
+      _fwd.normalize();
+      camera.getWorldPosition(_camPos);
+      _toCam.subVectors(_camPos, _pos);
+      _toCam.y = 0;
+      _toCam.normalize();
+      const yaw = Math.atan2(_fwd.x * _toCam.z - _fwd.z * _toCam.x, _fwd.dot(_toCam));
+      const [tile, flip] = heroView(yaw, hero.mood);
+      if (tile !== hero.tile || flip !== hero.flip) {
+        hero.tile = tile;
+        hero.flip = flip;
+        card.geometry = heroCardGeo(tile, flip);
+      }
+      // Face the camera, upright, regardless of how the head is posed:
+      // world look-at, then expressed in the head's local frame.
+      _m.lookAt(_camPos, _pos, _up);
+      card.quaternion.setFromRotationMatrix(_m);
+      card.quaternion.premultiply(this.head.getWorldQuaternion(_q).invert());
+    };
+    this.head.add(card);
+    // Hide the black skull: the card is the whole head.
+    this.head.children.forEach((c) => {
+      if (!c.userData.hero && c !== this.face && c !== this.cosmetics) c.visible = false;
+    });
 
-    // Body: mitten hands, chunky boots, leather chest strap.
-    const black = glossy('#141417', { rough: 0.6 });
+    // Body: the figurine build from the sheets — a rounded torso and thick
+    // soft limbs replace the sticks, then mitten hands, chunky boots and a
+    // leather chest strap.
+    const black = glossy('#18181C', { rough: 0.92 });
+    const { thigh, upperArm, limbR } = BODY;
+    const thick = (g: THREE.Object3D, len: number, r: number) => {
+      g.children.forEach((c) => {
+        if (!c.userData.hero) c.visible = false;
+      });
+      g.add(tag(mesh(boneGeo(len, r), black)));
+    };
+    thick(this.thighF, thigh, limbR * 1.45);
+    thick(this.thighB, thigh, limbR * 1.45);
+    thick(this.shinF, shin + 0.02, limbR * 1.35);
+    thick(this.shinB, shin + 0.02, limbR * 1.35);
+    thick(this.upperBow, upperArm, limbR * 1.25);
+    thick(this.upperDraw, upperArm, limbR * 1.25);
+    thick(this.foreBow, foreArm, limbR * 1.15);
+    thick(this.foreDraw, foreArm, limbR * 1.15);
+    this.torso.children.forEach((c) => {
+      if (!c.userData.hero && !c.userData.quiver && c !== this.head) c.visible = false;
+    });
+    const chest = tag(mesh(boneGeo(torso + neck * 0.5, torsoR * 2.1), black));
+    chest.scale.set(1, 1, 1.1);
+    this.torso.add(chest);
     for (const fore of [this.foreBow, this.foreDraw]) {
       const hand = tag(mesh(cached('heroHand', () => new THREE.SphereGeometry(0.052, 10, 8)), black));
       hand.position.x = foreArm;
@@ -853,13 +917,7 @@ export class StickmanRig {
     this.eyes.forEach((e, i) => e.set(p.mood, t, i === 0));
     const mouthOpen = p.mood === 'laugh' ? 1 + Math.sin(t * 18) * 0.25 : p.mood === 'shock' ? 0.6 : p.mood === 'hurt' ? 0.5 : p.mood === 'happy' ? 0.55 : p.mood === 'scared' ? 0.45 + Math.sin(t * 26) * 0.08 : p.mood === 'wink' ? 0.35 : p.gesture === 'yawn' ? Math.max(0, Math.sin((p.gestureT / 2.4) * Math.PI)) * 1.3 : 0;
     this.mouthOpen.visible = mouthOpen > 0;
-    if (this.hero) {
-      const tile = heroTile(p.mood);
-      if (tile !== this.hero.tile) {
-        this.hero.tile = tile;
-        this.hero.front.geometry = heroPatchGeo('front', tile, BODY.headR * HERO_HEAD);
-      }
-    }
+    if (this.hero) this.hero.mood = heroTile(p.mood);
     this.mouthOpen.scale.set(1, mouthOpen, 1);
     this.mouthLine.visible = p.mood === 'angry' || p.mood === 'sad' || p.mood === 'smug' || p.mood === 'sleepy';
     this.mouthLine.rotation.x = p.mood === 'sad' ? 0.25 : p.mood === 'smug' ? -0.28 : 0;
