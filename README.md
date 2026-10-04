@@ -2,18 +2,18 @@
 
 Repo: https://github.com/qzMalekuz/stickchers
 
-Turn-based stickman archery (Stickman Archer style) built with Expo / React
-Native for the **CLOCK IN Solana Mobile hackathon**. Two modes — **vs AI** and
+Turn-based 3D stickman archery, landscape, built with Expo / React Native for
+the **CLOCK IN Solana Mobile hackathon**. Two modes — **vs AI** and
 **multiplayer rooms** with shareable 6-letter codes — plus an **in-game shop**
-of archer skins paid in SOL. The wallet **is** the account: Mobile Wallet
-Adapter (MWA) authorizes, Sign in with Solana creates the Supabase session,
-purchases are SOL transfers signed in the wallet and verified on-chain before
-the skin unlocks.
+of six hero characters and three maps paid in **SOL or SKR**. The wallet **is**
+the account: Mobile Wallet Adapter (MWA) authorizes, Sign in with Solana
+creates the Supabase session, purchases are transfers signed in the wallet and
+verified on-chain before anything unlocks.
 
-Stack: React Native Skia (UI-thread rendering + fixed-step physics in
-Reanimated worklets), `@wallet-ui/react-native-kit` + `@solana/kit` (MWA),
-Supabase (auth, rooms, realtime, purchases, edge functions), PostHog, Sentry,
-EAS Build/Update, from the Bitwise Expo boilerplate.
+Stack: three.js through `@react-three/fiber` on `expo-gl` (one fixed-step
+simulation, rendered in 3D), `@wallet-ui/react-native-kit` + `@solana/kit`
+(MWA), Supabase (auth, rooms, realtime, purchases, edge functions), PostHog,
+Sentry, EAS Build/Update, from the Bitwise Expo boilerplate.
 
 ## Hackathon facts (verified 2026-09-29)
 
@@ -51,45 +51,50 @@ functions are Deno and excluded from ESLint; use `deno lint supabase/functions`.
 
 ## What works without any backend
 
-Play vs AI, haptics/vibration settings, local high score, skin preview. Wallet
-connect works too (MWA only). Multiplayer, the shop's unlock step, and the
-leaderboard need Supabase (below).
+Play vs AI, the style screen, haptics and audio settings, local best score and
+streak. Wallet connect works too (MWA only). Multiplayer, the shop's unlock
+step, and the leaderboard need Supabase (below); the shop also needs
+`EXPO_PUBLIC_TREASURY_ADDRESS`.
 
 ## Project layout
 
 ```
 index.js / polyfill.js         entry: installs react-native-quick-crypto BEFORE any Solana import
 src/app/
-  index.tsx                    menu: Play vs AI · Multiplayer · Shop · Sign in with wallet
-  game.tsx                     HUD + result sheet; /game?mode=ai | ?mode=online&code=&role=&seed=
+  index.tsx                    menu: Play vs AI · Multiplayer · Shop · Style · Sign in with wallet
+  match.tsx / game.tsx         VS screen, then the duel HUD; /game?mode=ai | ?mode=online&code=&role=&seed=
+  result.tsx                   win / lose screen
   lobby.tsx                    create room (code + share) / join by code
-  shop.tsx                     skins grid, pay in SOL or SKR, SKR balance, restore, equip
+  shop.tsx                     heroes and maps, pay in SOL or SKR, SKR balance, restore, equip
+  style.tsx                    switch between the classic archer and owned heroes
   leaderboard.tsx              global best runs by wallet, your best + day streak
-  settings.tsx                 haptics + vibration toggles, sign out, legal, updates, delete account
+  settings.tsx                 haptics + audio toggles, sign out, legal, updates, delete account
 src/game/
-  GameCanvas.tsx               Skia scene, fixed-step (120 Hz) physics, pan gesture, AI + remote shots,
-                               particles, screen shake, hit flashes, arrow trail, stuck arrows
-  scenery.tsx / menu-backdrop  painted dusk backdrop (sky, sun, clouds, mountains, trees); animated menu scene
-  stickman.ts / skins.ts       procedural stickman, hats, skin catalog with SOL + SKR prices (placeholders)
-  aim.ts / rng.ts / constants  ballistics solver, adaptive AI noise, seeded layouts, tuning
-  haptics.ts / store.ts        expo-haptics + Vibration; zustand persisted settings, streak, accuracy, owned skins
+  skins.ts / maps.ts           what the shop sells, with SOL + SKR prices (placeholders)
+  cosmetics.ts / faces.ts      loadouts and the six heroes
+  store.ts / haptics.ts / rng  zustand persisted settings, streak, accuracy, ownership; haptics; seeded RNG
+src/game3d/
+  sim.ts / world.ts            the duel: fixed-step physics, turns, hit zones, adaptive AI, seeded layouts
+  Duel3D.tsx / Arena.ts        the 3D scene and the arenas (themes.ts, mapProps.ts)
+  Stickman3D.ts / StickmanBody the archer rig and its skinned body; HeroHead / HeroMesh for the heroes
+  Stage.tsx / SkinStage.tsx    3D sets for the menu, shop, style and result screens
 src/solana/
   config.ts                    cluster, RPC, app identity (wallet sheet), SKR mint + treasury
   auth.ts                      useWalletAuth: MWA authorize → Sign in with Solana → Supabase session
   skr.ts                       useSkrBalance (token account via kit RPC), SKR TransferChecked builder
   payments.ts                  buySkin (SOL or SKR) via MWA → verify-purchase; pending-purchase restore
   WalletButton.tsx             sign in / sign out
-src/audio/
-  sound.ts                     preloaded SFX pools, per-screen music crossfade, ducking, Settings toggles
-  useScreenMusic.ts            plays a screen's track on focus
+src/audio/                     preloaded SFX pools, per-screen music crossfade, ducking
 src/multiplayer/useRoom.ts     rooms table + Realtime channel (presence, shot/result/skin broadcasts)
+src/ui/                        HUD, emotes, loading screen, shared buttons
 supabase/
   schema.sql                   profiles, scores, leaderboard, purchases, rooms + join_room()
-  functions/verify-purchase    checks the transfer on-chain, grants the skin (service role)
+  functions/verify-purchase    checks the transfer on-chain, grants the item (service role)
   functions/delete-account     account deletion
+assets/heroes/                 hero heads and suits built by scripts/heroes/build.sh
 assets/audio/                  CC0 music + SFX (credits in CREDITS.md)
-scripts/extract-unitypackage.sh  pull PNG/WAV out of a Unity .unitypackage into gitignored assets/licensed/
-docs/ASSETS.md                 asset sources, licensing, and the Unity Asset Store workflow
+scripts/                       hero build, map optimizer, Unity export scripts
+docs/                          DEV_RULES, ASSETS (sources + licensing), HACKATHON, SUBMISSION, trailer
 .eas/workflows/                build the dApp Store APK on push to main
 .github/workflows/             PR preview QR (EAS Update) + automated PR review
 ```
@@ -97,10 +102,11 @@ docs/ASSETS.md                 asset sources, licensing, and the Unity Asset Sto
 ## How the pieces work
 
 **Game loop.** Drag anywhere and pull back like a slingshot; a dotted arc
-previews the shot; release fires. Headshot = 100, body = 50, both archers have
-100 HP. All simulation runs on the UI thread in shared values with a fixed
-1/120 s step; only discrete events cross to JS for haptics, HUD and the
-multiplayer channel. `matter-js` is installed for a future ragdoll death.
+previews the shot; release fires. Damage depends on the zone hit (head, body,
+legs); both archers have 100 HP. The duel is one plain simulation object on a
+fixed physics step (`src/game3d/sim.ts`), so both multiplayer phones agree; the
+3D scene only reads it, and discrete events drive haptics, HUD and the
+multiplayer channel.
 
 **Audio** (Settings → Audio): menu, battle and shop music crossfade as you
 navigate and duck under the win/lose jingle. Bow creak and ratchet ticks
@@ -136,17 +142,16 @@ next time the shop opens. Ownership is cached in the zustand store and
 refreshed on sign-in and on shop open. Prices in `src/game/skins.ts` and the
 edge function are placeholders and must match.
 
-**SKR integration.** SKR is the shop's native currency: ~20% under SOL prices,
-an SKR-only "Seeker" skin, and a live balance read from the wallet's associated
-token account through the MWA provider's `@solana/kit` RPC client. Mainnet
-mint `SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3` is the default on
-mainnet-beta; on devnet set `EXPO_PUBLIC_SKR_MINT` to any 6-decimal test mint.
+**SKR integration.** SKR is the shop's native currency: every hero and map
+has an SKR price (~20% under SOL), the shop remembers "pay in SKR", and shows a
+live balance read from the wallet's associated token account through the MWA
+provider's `@solana/kit` RPC client. Mainnet mint
+`SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3` is the default on mainnet-beta;
+on devnet set `EXPO_PUBLIC_SKR_MINT` to any 6-decimal test mint.
 
-**Adaptive AI + coach.** The AI's aim noise is a function of the run score and
-your lifetime hit rate (decayed, in the store), so a sharp shooter faces a
-sharper opponent — the HUD shows it as "ADAPTIVE AI · 62%". After each run a
-rules-based coach reads the shot log (long vs short misses, accuracy) and gives
-one concrete tip. Offline, instant, no LLM.
+**Adaptive AI.** The AI's aim noise is a function of the run score and your
+lifetime hit rate (kept in the store), so a sharp shooter faces a sharper
+opponent (`enemyNoise` in `src/game3d/world.ts`). Offline, instant, no LLM.
 
 **Multiplayer.** Host inserts a `rooms` row (6-char code, random seed) and
 shares the code; guest calls `join_room(code)` (atomic seat-take). Both open
@@ -172,8 +177,8 @@ loses; a disconnect forfeits.
 3. **Publisher Portal**: create publisher + app, mint the App NFT, grab an API
    key. Needs a mainnet Solana keypair with a little SOL.
 4. **Publish**: `npm run publish:dapp-store -- --apk-file ./app.apk --keypair ./dapp-store/publisher-keypair.json --whats-new "v1"`
-5. Publish `https://<domain>/privacy` and `/terms`; replace `{{DOMAIN}}` /
-   `{{SUPPORT_EMAIL}}` in `src/utils/legal.ts`; host an icon at
+5. Publish `https://<domain>/privacy` and `/terms`; set `DOMAIN` and
+   `SUPPORT_EMAIL` in `src/utils/legal.ts`; host an icon at
    `APP_IDENTITY.uri` (`src/solana/config.ts`); switch cluster + RPC to
    mainnet; set real prices; set `TREASURY_ADDRESS` to a wallet you control.
 
@@ -193,12 +198,5 @@ https://docs.solanamobile.com/dapp-store/build-and-sign-an-apk
 
 ## Next steps toward submission
 
-- [x] Initial commit pushed to GitHub — keep committing in small, descriptive steps; judges grade commit history
-- [ ] `eas init` + `eas update:configure` (adds `updates.url` / `extra.eas.projectId` to app.json — without them OTA and the CI `eas update` jobs are inert), first dev build, test MWA on a real device (Seeker if you have one)
-- [ ] Supabase project + schema + Web3 provider + anonymous sign-in, then test SIWS, rooms, a devnet SOL and SKR purchase end to end
-- [ ] Real icon, splash; host `favicon.ico` + privacy/terms at `stickchers.bitwise.app`
-- [x] Sounds, per-screen music, UI clicks (CC0, `src/audio/`)
-- [x] Scenery, particles, screen shake, bow-draw animation
-- [ ] Ragdoll death via `matter-js`
-- [ ] Rematch in online mode, room timeout handling
-- [ ] Demo video + pitch deck ([docs/SUBMISSION.md](docs/SUBMISSION.md))
+The live list, with what is done and what blocks the submission, is in
+[docs/SUBMISSION.md](docs/SUBMISSION.md).
