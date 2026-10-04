@@ -45,6 +45,50 @@ unity command eval -- --code "$(cat ~/Developer/stickchers/scripts/unity/export-
 
 Restart Metro with `--clear` after adding or removing the file.
 
+## The heroes: rebuilt from archer-boys.pdf (2026-10-05)
+
+The six shop heroes (Akshay, Beeman, Chase, M-it, Mert, Tolly, PDF pages
+1–6) are built from the character sheets themselves:
+
+```bash
+scripts/heroes/build.sh            # all heroes (≈2 min)
+scripts/heroes/build.sh chase      # one hero
+```
+
+Each head is the shape every turnaround view agrees on, painted with the
+sheet's art (one texture per expression); each chibi suit is sculpted in
+code (`scripts/heroes/body.ts`) and skinned to a skeleton with the Unity
+body's bone names, so `StickmanBody.ts` drives it. Outputs in
+`assets/heroes/` are committed. Needs `pdftoppm`, Python 3 with numpy,
+scipy and opencv, bun, and the `meshoptimizer` dev dependency. These are
+likenesses of real people: get each person's OK before mainnet.
+
+## The shop maps: three Unity environment packs (2026-10-05)
+
+The three locked maps are dressed with the owner's Asset Store packs
+(free, Standard EULA), exported to the gitignored `assets/licensed/maps/`:
+
+| Map | Pack | Product | Export |
+|---|---|---|---|
+| Elder Forest (`map_grove`) | Environment Pack: Free Forest Sample (Supercyan) | 168396 | painted props + 512 px JPG textures |
+| Windmill Valley (`map_valley`) | Low Poly Environment (Sky Den Games) | 315184 | palette baked to one colour per face |
+| Snowfall Village (`map_snow`) | Cozy Snowy Environment - Low Poly (HobiSoLoved) | 383100 | baked colours, simplified to a phone budget |
+
+Recreate the files (same Unity project and CLI as the stick man):
+
+```bash
+cd ~/UnityProjects/StickmanSource && unity open .
+unity command eval -- --code "$(cat ~/Developer/stickchers/scripts/unity/fetch-environments.cs)"
+# import each downloaded .unitypackage (paths under ~/Library/Unity/Asset Store-5.x/)
+unity command eval -- --code 'UnityEditor.AssetDatabase.ImportPackage("<path>.unitypackage", false); return "ok";'
+unity command eval -- --code "$(cat ~/Developer/stickchers/scripts/unity/export-environments.cs)" --timeout 300000
+bun scripts/maps/optimize.ts          # triangle caps for the baked packs
+```
+
+Without the files the maps fall back to the procedural landscape in their
+own colours, so a public clone still builds. Restart Metro with `--clear`
+after adding or removing them.
+
 ## How to use Unity Asset Store packs
 
 Unity Asset Store downloads require a signed-in Unity ID, so they can't be

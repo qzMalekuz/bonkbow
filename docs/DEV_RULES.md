@@ -63,26 +63,57 @@ here (in the right section) in the same change that applies it.
    (fps, sim ms, render ms, draw calls, slow frames). Target 60 fps with
    0–2 slow frames per 3 s on the Pixel 6a. Turn `PERF_LOG` off for shipping.
 
-9. **Hero characters are data, not new rigs.** A hero is an entry in
-   `src/game3d/heroSpecs.ts` (hair, beard, glasses, colours, resting face) that
-   `HeroHead.ts` sculpts onto the shared `StickmanRig`; body, bow, quiver,
-   arrows, animation and hitboxes stay common to every archer. Keep each head
-   to one merged vertex-coloured mesh plus the moving lids, brows and mouth —
-   no textures, no morph targets (expo-gl). Check every change from front,
-   side, back and 45° in Settings → Character showcase (dev builds only).
+9. **Hero heads come from the character sheets, not from sculpting.**
+   `scripts/heroes/build.sh [id]` rebuilds them from `archer-boys.pdf`: the
+   head volume is what every turnaround view's silhouette agrees on, the
+   3/4 views' real angles are fitted, and the sheet's own art is projected
+   back onto the mesh, one texture per sheet expression
+   (`assets/heroes/<id>_<expr>.jpg`); `HeroHead.ts` crossfades between them
+   when the mood changes. Calibration (pupils, chin, expression strip) for
+   each page lives in `HEROES` in `scripts/heroes/project.py`. Commit the
+   outputs; never edit them by hand. One mesh (~10k triangles) and one draw
+   per head. Check every change against the PDF from front, 3/4, side and
+   back and every expression, before the phone (offline harness: bun build
+   + headless Brave with `--allow-file-access-from-files`), then in
+   Settings → Character showcase.
 
-10. **The body mesh is the Unity Stick Man asset, posed by the rig.**
-    `StickmanBody.ts` bends its skeleton to the rig's joints each frame
-    (two-bone IK at the asset's bone lengths). Change poses in `Stickman3D.ts`,
-    never by editing the export; regenerate the export only with
-    `scripts/unity/export-stickman.cs` (steps in docs/ASSETS.md). Keep the
-    capsule fallback working: the public repo has no licensed files.
+10. **Bodies are skinned meshes posed by the rig.** Plain archers wear the
+    Unity Stick Man asset; heroes wear their baked chibi suit. Both go
+    through `StickmanBody.ts`, which bends the skeleton to the rig's joints
+    each frame (two-bone IK at the mesh's bone lengths). Change poses in
+    `Stickman3D.ts`, never in an export; regenerate the Unity export only
+    with `scripts/unity/export-stickman.cs` (steps in docs/ASSETS.md). Keep
+    the capsule fallback working: the public repo has no licensed files.
+    Hero proportions are visual only: the sim's hitboxes (world.ts) are the
+    same for every archer.
 11. **Character motion has no jumps.** Rig blends are critically damped
     springs (`Blend` in Stickman3D.ts), never exponential easing; an emote's
     clock keeps running while it eases out and a new or restarted emote
     crossfades in; hand targets have a top speed; hand blends swing around
-    the shoulder. New poses must keep hands out of the head and torso — check
-    them from front, side, back and 45° in the showcase, at every transition.
+    the shoulder. The character-sheet actions (run, crouch aim, look back)
+    are `RigPose` layers with their own `Blend`. New poses must keep hands
+    out of the head and torso — check them from front, side, back and 45° in
+    the showcase, at every transition (the `reel` action plays them all).
+12. **Merge multi-part props into one draw.** The bow and the quiver (with
+    its arrows) are one vertex-coloured mesh each, cached per look.
+13. **Menu characters spin by touch** through `Turntable.ts`: the yaw is added
+    to `rig.root.rotation.y` after `rig.update` (the skin sync is root-relative,
+    so this is safe). The gesture view goes above the GL canvas and under the
+    menu, whose wrapper is `pointerEvents="box-none"`.
+14. **Shop maps are dressed with Unity environment packs, never by hand.**
+    `scripts/unity/export-environments.cs` exports the props (flat-colour
+    packs baked to one colour per face, painted packs keep 512 px textures),
+    then `bun scripts/maps/optimize.ts` caps each prop's triangles; both write
+    the gitignored `assets/licensed/maps/` (steps in docs/ASSETS.md).
+    `mapProps.ts` merges light props per material and instances heavy ones.
+    Layout lives in the `build<Map>` methods of Arena.ts: only low dressing
+    (grass, stones, snow) in front of z = -5, nothing tall between the camera
+    and the arrows; building fronts face +z. Keep each map near the measured
+    budget (~80–130k triangles, ~50 draws, 59–60 fps on the Pixel 6a) and
+    keep the procedural fallback working (no licensed files → the map's
+    colours on the open landscape). Check layouts offline first with
+    `bun scripts/maps/shoot.ts <outDir> grove:aim valley:over snow:wide`
+    (`kit:<pack>` lines up a pack's props), then on the phone.
 
 ## Game logic
 
@@ -93,6 +124,10 @@ here (in the right section) in the same change that applies it.
    (`zone`, `hp`, `shield`) is authoritative.
 3. Input feel: smooth the aim toward the finger every frame, fire the raw value;
    animations ease (exponential, frame-rate independent) rather than snap.
+4. The map rides in the match seed's low two bits (`seedWithMap`,
+   `mapOfSeed` in `src/game/maps.ts`): create every match/room seed with
+   `randomSeed(equippedMap)`, never `Math.random()` directly, and only
+   append to `MAPS` (its index is what the seed carries).
 
 ## Assets
 
@@ -103,8 +138,23 @@ here (in the right section) in the same change that applies it.
 2. Launch trailer lives in `docs/trailer/` and is rendered in code from
    `archer-boys.pdf` plus our own audio: no video generators, no scraped footage
    or music. Rebuild with `docs/trailer/tools/build.sh`; edit shots in
-   `tools/shots.py`. `build/` and `out/` are gitignored. PDF page 4 is Mobile and
-   page 6 is The Fade (see `src/game/faces.ts`).
+   `tools/shots.py`. `build/` and `out/` are gitignored.
+3. `archer-boys.pdf` pages are the heroes, in order: 1 Akshay, 2 Beeman,
+   3 Chase, 4 M-it, 5 Mert, 6 Tolly (`FACES[id].page` in `src/game/faces.ts`).
+   Hero ids are the names (`akshay` … `tolly`; skins `hero_<id>`). The
+   trailer's own crops (`docs/trailer/refs`) still use the old nicknames:
+   mobile = page 4, fade = page 6.
+
+## Shop
+
+1. The shop sells the six heroes (`SHOP_SKINS`), one paid skin each, and
+   the three environment maps (`SHOP_MAPS`, Maps tab; Classic is free), in
+   SOL or SKR. Maps were added at the user's request on 2026-10-05. There
+   are no other cosmetics: no hats, bows, trails or coin unlocks. "Choose your style" only switches between the classic
+   archer and the heroes you own; a locked hero links to the shop. Keep `supabase/functions/verify-purchase` PRICES
+   equal to the hero skins in `skins.ts` and the maps in `maps.ts` (map
+   purchases use the map id, e.g. `map_snow`, in the same purchases table); old `bro_*` purchase ids map to
+   the heroes through `canonicalSkinId`.
 
 ## Working with other agents and git
 
