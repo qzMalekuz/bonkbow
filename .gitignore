@@ -49,3 +49,7 @@ example
 
 # Unity Asset Store files: allowed in the APK, not in a public repo
 assets/licensed/
+
+# Trailer build intermediates and rendered video (rebuild with docs/trailer/tools/build-animatic.sh)
+docs/trailer/build/
+docs/trailer/out/
