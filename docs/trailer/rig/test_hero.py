@@ -35,7 +35,7 @@ w.node_tree.nodes['Background'].inputs[1].default_value = 0.8
 
 cam = bpy.data.objects.new('cam', bpy.data.cameras.new('cam'))
 sc.collection.objects.link(cam)
-sc.camera = cam
+sc.camera = cam; ga.bind_camera(cam)
 cam.data.lens = 50
 angles = {'front': 0, 'front34': 35, 'right': 90, 'back': 180, 'left': -90, 'back34': 145}
 for v in views:

@@ -10,7 +10,11 @@ import bpy
 import numpy as np
 from mathutils import Matrix, Quaternion, Vector
 
-from common import ASSETS, hexc, link, mesh_object, new_collection, principled, three_to_blender
+from common import ASSETS, RIG, hexc, link, mesh_object, new_collection, principled, three_to_blender
+
+# The trailer's own snapshot of the 3D heroes (taken from the game repo's assets/heroes), so
+# the film does not change when the game's hero pipeline does.
+HERO_DIR = os.path.join(RIG, 'assets', 'heroes')
 
 HEROES = ['akshay', 'beeman', 'chase', 'mit', 'mert', 'tolly']
 NAMES = {'akshay': 'AKSHAY', 'beeman': 'BEEMAN', 'chase': 'CHASE', 'mit': 'M-IT', 'mert': 'MERT', 'tolly': 'TOLLY'}
@@ -114,7 +118,7 @@ def head_material(hero, baked, expressions):
     links.new(negx.outputs[0], az.inputs[0]); links.new(negy.outputs[0], az.inputs[1])
     uvn = nodes.new('ShaderNodeUVMap'); uvn.uv_map = 'UVMap'
     views = []  # (azimuth, colour socket)
-    tex_dir = os.path.join(ASSETS, 'heroes')
+    tex_dir = HERO_DIR
     # front = expressions mixed by object props expr_<name>
     front_imgs = []
     for e in expressions:
@@ -220,19 +224,27 @@ def set_expression(head_obj, name, t=None, fade=0.18):
             n.outputs[0].keyframe_insert('default_value', frame=frame(t + fade))
 
 
-def drive_camera_into(mat):
-    """Point the head shader's CamPos node at the active scene camera (drivers)."""
-    n = mat.node_tree.nodes.get('CamPos')
-    if not n:
-        return
-    for i, axis in enumerate('xyz'):
-        fc = n.inputs[i].driver_add('default_value')
-        d = fc.driver
-        d.type = 'SCRIPTED'
-        v = d.variables.new(); v.name = 'c'; v.type = 'SINGLE_PROP'
-        v.targets[0].id_type = 'SCENE'; v.targets[0].id = bpy.context.scene
-        v.targets[0].data_path = 'camera.matrix_world.translation.%s' % axis
-        d.expression = 'c'
+def bind_camera(cam):
+    """Point every head shader's CamPos node at camera object `cam` (world location drivers).
+    Call once per shot, after the camera exists."""
+    for mat in bpy.data.materials:
+        if not mat.name.startswith('head_') or not mat.node_tree:
+            continue
+        n = mat.node_tree.nodes.get('CamPos')
+        if not n:
+            continue
+        for i, axis in enumerate('XYZ'):
+            try:
+                n.inputs[i].driver_remove('default_value')
+            except Exception:
+                pass
+            fc = n.inputs[i].driver_add('default_value')
+            d = fc.driver
+            d.type = 'AVERAGE'
+            v = d.variables.new(); v.name = 'c'; v.type = 'TRANSFORMS'
+            v.targets[0].id = cam
+            v.targets[0].transform_type = 'LOC_' + axis
+            v.targets[0].transform_space = 'WORLD_SPACE'
 
 
 # ---- hero ------------------------------------------------------------------------------------
@@ -257,7 +269,7 @@ def build_hero(hero, col=None, name=None):
     (Blender front). Returns a dict with the objects and useful bone names."""
     col = col or new_collection('heroes')
     name = name or hero
-    hdir = os.path.join(ASSETS, 'heroes')
+    hdir = HERO_DIR
     body = json.load(open(os.path.join(hdir, '%s_body.json' % hero)))
     baked = json.load(open(os.path.join(hdir, '%s.json' % hero)))
 
@@ -355,7 +367,6 @@ def build_hero(hero, col=None, name=None):
     head.rotation_euler = (math.radians(-90), 0, 0)  # bone Y-up -> object Z-up
     hmat = head_material(hero, baked, baked['expressions'])
     head.data.materials.append(hmat)
-    drive_camera_into(hmat)
 
     # --- quiver (all but Beeman) on the back
     from props import build_quiver, build_bow, build_spare_arrows
@@ -372,10 +383,15 @@ def build_hero(hero, col=None, name=None):
     bow.parent = arm; bow.parent_type = 'BONE'; bow.parent_bone = 'LeftHand'
     bow.location = (0, 0.05 - 0.1, 0)
     bow['hero'] = hero
+    from props import build_arrow, ARROW_LEN as AL
+    nk = build_arrow(name + '_nocked', col, white=(hero == 'beeman'))
+    nk.parent = bpy.data.objects[bow['nock']]
+    nk.location = (AL, 0, 0)  # nock end on the string, tip toward the target
+    nk.scale = (0, 0, 0)
     arm['hero'] = hero
     arm['head'] = head.name
     arm['bow'] = bow.name
-    return {'arm': arm, 'suit': suit, 'head': head, 'bow': bow, 'quiver': quiver, 'hero': hero}
+    return {'arm': arm, 'suit': suit, 'head': head, 'bow': bow, 'quiver': quiver, 'hero': hero, 'nocked': nk}
 
 
 # ---- licensed environment kits -------------------------------------------------------------------

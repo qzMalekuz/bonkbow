@@ -188,33 +188,47 @@ def P_idle(bow_down=True):
                 foot_L=(0.17, 0.0, 0), foot_R=(-0.17, 0.02, 0), head=(0, 0, 0))
 
 
-def P_aim(dir=(0, -1, 0), draw=1.0, crouch=0.0):
-    """Sheet AIMING / CROUCH AIM: side-on to the target, bow arm straight out, draw hand at the cheek."""
-    d = Vector(dir).normalized()
-    side = Vector((d.y, -d.x, 0))  # the archer's left when facing d... we face along d, body turned side-on
-    sh = Vector((0, 0, SHOULDER - crouch * 0.42))
-    bow_hand = sh + d * (ARM * 0.95) + Vector((0, 0, 0.1 - crouch * 0.05))
-    draw_hand = sh - d * 0.02 + Vector((0, 0, 0.17)) + side * 0.0
-    # keep the draw hand just outside the big head: push it sideways toward the camera side
+AIM_Y = -0.2      # the bow plane sits in front of the chest, clear of the big head
+AIM_Z = 1.40      # arrow line: just under the chin
+GRIP_X = 0.84     # bow hand, straight left arm
+REST_STRING = 0.14
+FULL_DRAW = 0.62  # nock this far behind the grip at full draw
+
+
+def P_aim(draw=1.0, pitch=0.0, crouch=0.0, head_yaw=78):
+    """Sheet AIMING / CROUCH AIM. The archer aims along his own LEFT (+X): chest to the
+    camera at -Y, bow arm straight out, draw hand under the chin, feet wide on the aim line.
+    Turn the whole character (face()) to aim anywhere; `pitch` degrees tilts the shot up."""
+    drop = crouch * 0.40
+    sh = Vector((0.3, 0, 1.38 - drop))
+    a = math.radians(pitch)
+    d = Vector((math.cos(a), 0, math.sin(a)))
+    pivot = Vector((0.0, AIM_Y, AIM_Z - drop))
+    bow_hand = pivot + d * GRIP_X
+    nock = bow_hand - d * (REST_STRING + (FULL_DRAW - REST_STRING) * draw)
     hr = _hand_rot('L', d)
-    hips = (0, 0, HIP - crouch * 0.40)
-    fL = Vector(d) * 0.28 + Vector((0.16, 0, 0))
-    fR = -Vector(d) * 0.18 + Vector((-0.16, 0, 0))
-    if crouch > 0.5:
-        fR = -Vector(d) * 0.42 + Vector((-0.2, 0, 0))
-    return Pose(hand_L=tuple(bow_hand), hand_rot_L=hr, hand_R=tuple(draw_hand), hand_rot_R=hr,
-                elbow_R=tuple(sh - d * 0.5 + Vector((0, 0, 0.45))), elbow_L=tuple(sh + d * 0.3 + Vector((0, 0, -0.5))),
-                foot_L=tuple(fL), foot_R=tuple(fR), hips=hips, hips_rot=(crouch * 12, 0, 0),
-                head=(-4 - crouch * 6, 0, 0), spine=(0, 0, 0), draw=draw,
-                knee_R=tuple(-Vector(d) * 0.3 + Vector((-0.2, 0, HIP * 0.5 + 0.3 * crouch))) if crouch > 0.5 else None)
+    hips = (0.0, 0.02, HIP - 0.05 - drop)
+    fL, fR = (0.3, 0.0, 0), (-0.3, 0.03, 0)
+    kL = kR = None
+    hips_rot = (0, 0, 0)
+    if crouch > 0.5:  # sheet CROUCH AIM: front knee up, back knee on the ground
+        fL, fR = (0.34, -0.05, 0), (-0.42, 0.1, 0.0)
+        kL, kR = (0.5, -0.9, 0.6), (-0.3, -0.5, -0.2)
+        hips = (-0.02, 0.05, HIP - 0.05 - drop)
+        hips_rot = (6, 0, 0)
+    return Pose(hand_L=tuple(bow_hand), hand_rot_L=hr, hand_R=tuple(nock), hand_rot_R=hr,
+                elbow_L=(0.5, 0.6, 0.6 - drop), elbow_R=(-1.2, 0.5, 1.5 - drop),
+                foot_L=fL, foot_R=fR, knee_L=kL, knee_R=kR, hips=hips, hips_rot=hips_rot,
+                foot_rot_L=(0, 0, 55), foot_rot_R=(0, 0, 10),
+                spine=(0, 0, 8), head=(-pitch * 0.3, 0, head_yaw), draw=draw)
 
 
-def P_shoot(dir=(0, -1, 0)):
-    """The frame after release: bow arm steady, draw hand flung back past the ear."""
-    p = P_aim(dir, draw=0.0)
-    d = Vector(dir).normalized()
-    sh = Vector((0, 0, SHOULDER))
-    p.hand_R = tuple(sh - d * 0.42 + Vector((0, 0, 0.26)))
+def P_shoot(pitch=0.0, crouch=0.0, head_yaw=78):
+    """Just after release: bow arm steady, string hand flung back past the ear."""
+    p = P_aim(0.0, pitch, crouch, head_yaw)
+    drop = crouch * 0.40
+    p.hand_R = (-0.1, AIM_Y + 0.04, AIM_Z + 0.12 - drop)
+    p.elbow_R = (-1.2, 0.6, 1.7 - drop)
     return p
 
 
@@ -315,10 +329,21 @@ def move(h, t0, t1, p0, p1, yaw=None, ease_fn=None):
         linear_all(arm)
 
 
-def draw_sequence(h, t0, t_full, t_release, dir=(0, -1, 0), crouch=0.0, hold_after=0.25):
-    """Idle -> draw to full by t_full -> hold -> release at t_release -> shoot pose."""
-    apply(h, P_aim(dir, draw=0.0, crouch=crouch), t0)
-    apply(h, P_aim(dir, draw=1.0, crouch=crouch), t_full)
-    apply(h, P_aim(dir, draw=1.0, crouch=crouch), t_release - 1 / FPS)
-    apply(h, P_shoot(dir), t_release + 2 / FPS, interp='LINEAR')
-    apply(h, P_shoot(dir), t_release + hold_after)
+def draw_sequence(h, t0, t_full, t_release, pitch=0.0, crouch=0.0, hold_after=0.3, head_yaw=78):
+    """Raise and draw to full by t_full, hold, release at t_release, follow through.
+    Returns t_release so the caller can launch the arrow on the same frame."""
+    apply(h, P_aim(0.0, pitch, crouch, head_yaw), t0)
+    apply(h, P_aim(1.0, pitch, crouch, head_yaw), t_full)
+    apply(h, P_aim(1.0, pitch, crouch, head_yaw), t_release - 1 / FPS)
+    apply(h, P_shoot(pitch, crouch, head_yaw), t_release + 1 / FPS, interp='LINEAR')
+    apply(h, P_shoot(pitch, crouch, head_yaw), t_release + hold_after)
+    nocked(h, t0, True)
+    nocked(h, t_release, False)
+    return t_release
+
+
+def nocked(h, t, show):
+    """Show/hide the arrow on the string at time t (constant interpolation)."""
+    a = h['nocked']
+    from common import key_scale
+    key_scale(a, t, 1.0 if show else 0.0, interp='CONSTANT')

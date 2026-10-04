@@ -92,7 +92,7 @@ def draw_string(bow, t, draw):
     """Keyframe the string's middle point at draw 0..1 (0 = rest 0.14 m, 1 = full 0.62 m) at time t."""
     from common import frame
     st = bpy.data.objects[bow['string']]
-    x = -(0.14 + 0.48 * draw)
+    x = -(0.14 + 0.48 * draw)  # REST_STRING .. FULL_DRAW
     sp = st.data.splines[0]
     sp.points[1].co = (x, 0, 0, 1)
     sp.points[1].keyframe_insert('co', frame=frame(t))
