@@ -13,7 +13,7 @@ import { haptic } from '@/game/haptics';
 import { playSfx } from '@/audio/sound';
 import { COLORS } from '@/game/constants';
 import { CLUSTER, shortAddress } from '@/solana/config';
-import { LEGAL_URLS, SUPPORT_EMAIL } from '@/utils/legal';
+import { LEGAL_URLS, SUPPORT_URL } from '@/utils/legal';
 import { isSupabaseConfigured, supabase } from '@/utils/supabase';
 
 export default function SettingsScreen() {
@@ -143,7 +143,7 @@ export default function SettingsScreen() {
           <Divider />
           <MenuRow label="Terms & Conditions" onPress={() => openUrl(LEGAL_URLS.terms)} />
           <Divider />
-          <MenuRow label="Get Help" onPress={() => openUrl(`mailto:${SUPPORT_EMAIL}`)} />
+          <MenuRow label="Get Help" onPress={() => openUrl(SUPPORT_URL)} />
           <Divider />
           <MenuRow label="Check for Updates" onPress={checkForUpdateAndReload} />
           {hasSession && (

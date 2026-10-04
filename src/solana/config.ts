@@ -29,7 +29,8 @@ export const CLUSTER = {
 // Shown in the wallet's approval sheet (Seed Vault, Phantom, Solflare). `uri`
 // must be https and `icon` is resolved relative to it — host a real icon at
 // this path before shipping. Also the SIWS domain Supabase validates against.
-export const APP_URI = 'https://stickchers.bitwise.app';
+// The site is the repo's GitHub Pages; the trailing slash keeps `icon` under it.
+export const APP_URI = 'https://qzmalekuz.github.io/stickchers/';
 export const APP_IDENTITY: AppIdentity = {
   name: 'Stickchers',
   uri: APP_URI,

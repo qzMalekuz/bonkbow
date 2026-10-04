@@ -21,12 +21,13 @@ up yet. Until these are done a build signs in to nothing and sells nothing.
       Without the treasury the shop says "Shop not configured"; without
       Supabase, sign-in is a bare wallet connect.
 - [ ] **EAS project.** `app.json` has no `extra.eas.projectId`; run
-      `eas init` (owner `bit-wise-llc`) before `npm run build:apk`.
-- [ ] **App domain.** `stickchers.bitwise.app` is not ours: it redirects to an
-      unrelated Facebook page. It is the wallet-sheet identity and the SIWS
-      domain (`src/solana/config.ts`) and the privacy/terms links
-      (`src/utils/legal.ts`). Pick a domain we control, host an icon,
-      `/privacy` and `/terms` there, and change both files.
+      `eas init` before `npm run build:apk`.
+- [ ] **App site.** The wallet-sheet identity, the SIWS domain
+      (`src/solana/config.ts`) and the privacy/terms links
+      (`src/utils/legal.ts`) point at `https://qzmalekuz.github.io/stickchers/`,
+      which does not exist yet. Publish GitHub Pages for the repo with
+      `favicon.ico`, `/privacy` and `/terms` (or change both files to another
+      site we control), and add the URL to Supabase's allowed URLs.
 - [ ] **GitHub.** The repo is private and `main` is 9 commits ahead of
       `origin`; the `3d-landscape` branch (the current game) is not pushed.
       Push, then either make the repo public or install the Radiants Align

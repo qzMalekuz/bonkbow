@@ -13,7 +13,7 @@ verified on-chain before anything unlocks.
 Stack: three.js through `@react-three/fiber` on `expo-gl` (one fixed-step
 simulation, rendered in 3D), `@wallet-ui/react-native-kit` + `@solana/kit`
 (MWA), Supabase (auth, rooms, realtime, purchases, edge functions), PostHog,
-Sentry, EAS Build/Update, from the Bitwise Expo boilerplate.
+Sentry, EAS Build/Update.
 
 ## Hackathon facts (verified 2026-09-29)
 
@@ -178,7 +178,7 @@ loses; a disconnect forfeits.
    key. Needs a mainnet Solana keypair with a little SOL.
 4. **Publish**: `npm run publish:dapp-store -- --apk-file ./app.apk --keypair ./dapp-store/publisher-keypair.json --whats-new "v1"`
 5. Publish `https://<domain>/privacy` and `/terms`; set `DOMAIN` and
-   `SUPPORT_EMAIL` in `src/utils/legal.ts`; host an icon at
+   `SUPPORT_URL` in `src/utils/legal.ts`; host an icon at
    `APP_IDENTITY.uri` (`src/solana/config.ts`); switch cluster + RPC to
    mainnet; set real prices; set `TREASURY_ADDRESS` to a wallet you control.
 
@@ -191,7 +191,7 @@ https://docs.solanamobile.com/dapp-store/build-and-sign-an-apk
 |---|---|
 | Supabase | Create project → `EXPO_PUBLIC_SUPABASE_URL/KEY`. Run `supabase/schema.sql`. **Auth → Providers → enable Web3 Wallet**; add the app identity URL to allowed URLs. `supabase functions deploy verify-purchase delete-account`. `supabase secrets set SOLANA_RPC_URL=… TREASURY_ADDRESS=…`. |
 | Solana | `EXPO_PUBLIC_SOLANA_CLUSTER`, `EXPO_PUBLIC_SOLANA_RPC_URL` (dedicated RPC for mainnet), `EXPO_PUBLIC_TREASURY_ADDRESS`, `EXPO_PUBLIC_SKR_MINT` (devnet test mint; blank on mainnet). Edge function secrets: `SOLANA_RPC_URL`, `TREASURY_ADDRESS`, `SKR_MINT`. |
-| Sentry | `EXPO_PUBLIC_SENTRY_DSN`; `eas secret:create --name SENTRY_AUTH_TOKEN`; org/project in app.json (`bitwise` / `stickchers`). |
+| Sentry | `EXPO_PUBLIC_SENTRY_DSN`; `eas secret:create --name SENTRY_AUTH_TOKEN`; project in app.json (`stickchers`); set `SENTRY_ORG` to your org at build time. |
 | PostHog | `EXPO_PUBLIC_POSTHOG_KEY`. Events: `game_started`, `game_over`, `skin_equipped`, `purchase_*`. |
 | EAS | `eas init`; set every `EXPO_PUBLIC_*` as an EAS env var (cloud builds don't read `.env.local`); `eas update:configure` for OTA. |
 | GitHub Actions | repo secret `EXPO_TOKEN`, plus the API key read by the PR review workflow (see `.github/workflows/`). |

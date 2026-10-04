@@ -14,7 +14,7 @@
       "fallbackToCacheTimeout": 0
     },
     "android": {
-      "package": "com.bitwise.stickchers",
+      "package": "com.stickchers.app",
       "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#0B0B0F",
@@ -33,7 +33,7 @@
       ]
     },
     "ios": {
-      "bundleIdentifier": "com.bitwise.stickchers",
+      "bundleIdentifier": "com.stickchers.app",
       "supportsTablet": false
     },
     "web": {
@@ -55,7 +55,6 @@
         "@sentry/react-native",
         {
           "url": "https://sentry.io/",
-          "organization": "bitwise",
           "project": "stickchers"
         }
       ],
