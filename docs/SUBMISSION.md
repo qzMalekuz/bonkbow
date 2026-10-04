@@ -9,30 +9,29 @@ behind every item: [HACKATHON.md](./HACKATHON.md).
 The wallet code is wired correctly (see below), but nothing it talks to is set
 up yet. Until these are done a build signs in to nothing and sells nothing.
 
-- [ ] **Supabase project.** None exists for Stickchers. Create it, apply
+- [ ] **Supabase project.** None exists for Stickchers, and creating one was
+      refused on 2026-10-05: the account is at Supabase's limit of two active
+      free projects. Free a slot or use a paid org, then create it, apply
       `supabase/schema.sql`, enable Auth → Web3 Wallet and anonymous sign-in,
       add the app URL to the allowed URLs, deploy `verify-purchase` and
       `delete-account`, set secrets `SOLANA_RPC_URL`, `TREASURY_ADDRESS`,
       `SKR_MINT`.
-- [ ] **Env vars.** There is no `.env.local` and no EAS env. Set
-      `EXPO_PUBLIC_SUPABASE_URL/KEY`, `EXPO_PUBLIC_SOLANA_CLUSTER`,
-      `EXPO_PUBLIC_SOLANA_RPC_URL`, `EXPO_PUBLIC_TREASURY_ADDRESS` (and
-      `EXPO_PUBLIC_SKR_MINT` on devnet) locally **and** as EAS env vars.
-      Without the treasury the shop says "Shop not configured"; without
+- [ ] **Env vars.** `EXPO_PUBLIC_TREASURY_ADDRESS` is set in EAS (all
+      environments) and in `.env.local`. Still missing in both:
+      `EXPO_PUBLIC_SUPABASE_URL/KEY`, and for a mainnet build
+      `EXPO_PUBLIC_SOLANA_CLUSTER` + `EXPO_PUBLIC_SOLANA_RPC_URL` (unset means
+      devnet; `EXPO_PUBLIC_SKR_MINT` is needed for SKR on devnet). Without
       Supabase, sign-in is a bare wallet connect.
-- [ ] **EAS project.** `app.json` has no `extra.eas.projectId`; run
-      `eas init` before `npm run build:apk`.
+- [x] **EAS project.** `@qzmalekuz/stickchers`, linked in `app.json`.
 - [ ] **App site.** The wallet-sheet identity, the SIWS domain
       (`src/solana/config.ts`) and the privacy/terms links
       (`src/utils/legal.ts`) point at `https://qzmalekuz.github.io/stickchers/`,
       which does not exist yet. Publish GitHub Pages for the repo with
       `favicon.ico`, `/privacy` and `/terms` (or change both files to another
       site we control), and add the URL to Supabase's allowed URLs.
-- [ ] **GitHub.** The repo is private and `main` is 9 commits ahead of
-      `origin`; the `3d-landscape` branch (the current game) is not pushed.
-      Push, then either make the repo public or install the Radiants Align
-      GitHub app on it before submitting. Judges only see commits pushed
-      before the deadline.
+- [ ] **GitHub.** `main` is pushed and current, but the repo is private.
+      Make it public or install the Radiants Align GitHub app on it before
+      submitting. Judges only see commits pushed before the deadline.
 - [ ] **End-to-end test on the phone** once the above exist: sign in with
       Solflare, buy one item in SOL and one in SKR on devnet, restore after
       reinstall, play one room between two phones.
