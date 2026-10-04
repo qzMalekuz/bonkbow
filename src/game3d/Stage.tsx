@@ -249,9 +249,16 @@ function perform(s: Slot, t: number): RigPose {
   let ready = false;
   let draw = 0;
   let angle = a.facing === 1 ? 0.15 : Math.PI - 0.15;
+  // Looping emotes run on one continuous clock (their motion is periodic), so
+  // nothing restarts mid-swing. One-shot moves (bow, yawn) repeat with a
+  // short pause in which the rig eases back to standing.
   const loop = (g: Gesture) => {
     gesture = g;
-    gestureT = lt % GESTURE_SECONDS[g];
+    gestureT = lt;
+    if (g === 'bow' || g === 'yawn') {
+      gestureT = lt % (GESTURE_SECONDS[g] + 0.8);
+      if (gestureT > GESTURE_SECONDS[g]) gesture = null;
+    }
   };
   switch (a.performance) {
     case 'ready':

@@ -154,6 +154,15 @@ export default function SettingsScreen() {
           )}
         </View>
 
+        {__DEV__ && (
+          <>
+            <Text style={styles.section}>Developer</Text>
+            <View style={styles.group}>
+              <MenuRow label="Character showcase" onPress={() => router.push('/showcase')} />
+            </View>
+          </>
+        )}
+
         <Text style={styles.version}>
           v{Application.nativeApplicationVersion ?? '1.0.0'} ({Application.nativeBuildVersion ?? 'dev'})
         </Text>

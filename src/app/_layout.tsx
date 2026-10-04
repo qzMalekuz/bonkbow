@@ -110,6 +110,7 @@ function RootLayout() {
                 <Stack.Screen name="shop" />
                 <Stack.Screen name="leaderboard" />
                 <Stack.Screen name="settings" options={{ presentation: 'modal' }} />
+                <Stack.Screen name="showcase" />
               </Stack>
             )}
             {booting && <LoadingScreen variant={boot.variant} progress={progress} look={lookFor(loadout)} />}

@@ -1,15 +1,15 @@
 // Hero characters: real-person likenesses (Solana / Seeker community
-// figures) built as chibi archers on the stickman rig. Each one has a
-// 2048×1536 texture atlas cut from its archer-boys.pdf character sheet:
-// ten 512² tiles, four across by three down —
+// figures) built as chibi archers on the stickman rig. In 3D each one is a
+// sculpted head (game3d/HeroHead.ts) described by its entry in
+// game3d/heroSpecs.ts — hair, beard, glasses, colours — on the shared body.
+// Each also has a 2048×1536 atlas cut from its archer-boys.pdf character
+// sheet (ten 512² tiles, four across by three down), which the UI uses for
+// thumbnails (ui/FaceThumb.tsx):
 //   row 0: smile, neutral, angry, laugh (eyes shut)
 //   row 1: shock, right side, back, left side
 //   row 2: front 3/4, back 3/4 (both with the face turned to image-right)
-// The rig draws the head as a card that always faces the camera and shows
-// the sheet view matching the viewing angle, with the front views swapping
-// expression to the archer's mood — the sheet art itself, not a projection
-// of it onto a ball. Each hero is locked behind its own paid skin bundle
-// (skins.ts) — there is no free or coin path to one.
+// Each hero is locked behind its own paid skin bundle (skins.ts) — there is
+// no free or coin path to one.
 //
 // NOTE: these are likenesses of real people. Get each person's OK before
 // mainnet; swap the texture (and the name) here if anyone declines.

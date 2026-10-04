@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Extracts the raw files (PNG, WAV, OGG, MP3, TTF...) from a Unity .unitypackage
+# Extracts the raw files (PNG, WAV, OGG, MP3, TTF, FBX models...) from a Unity .unitypackage
 # without needing the Unity Editor, into assets/licensed/<package-name>/.
 #
 # A .unitypackage is a gzipped tar. Each entry is a folder holding `asset`
@@ -24,7 +24,7 @@ for d in "$tmp"/*/; do
   [ -f "$d/asset" ] && [ -f "$d/pathname" ] || continue
   rel="$(head -n1 "$d/pathname" | tr -d '\r')"
   case "$rel" in
-    *.png|*.PNG|*.jpg|*.jpeg|*.wav|*.WAV|*.ogg|*.mp3|*.ttf|*.otf|*.json) ;;
+    *.png|*.PNG|*.jpg|*.jpeg|*.wav|*.WAV|*.ogg|*.mp3|*.ttf|*.otf|*.json|*.fbx|*.FBX|*.obj|*.glb) ;;
     *) continue ;; # skip .cs scripts, .prefab, .mat, .anim and other Unity-only data
   esac
   rel="${rel#Assets/}"

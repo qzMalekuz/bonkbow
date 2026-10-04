@@ -18,6 +18,33 @@ particles, screen shake, hit flashes, animated bow draw. See
 `src/game/scenery.tsx` and `src/game/GameCanvas.tsx`. This keeps the APK small
 and lets every piece animate; image assets below are optional upgrades.
 
+## The archer body: Unity "Free Pack - Stick Man" (2026-10-02)
+
+The 3D archers' body is the PolyOne Studio "Free Pack - Stick Man" (Unity
+Asset Store, free, Standard EULA) from the owner's Unity account: its skinned
+mesh (1,286 verts, 21-bone Humanoid rig) and its Walk clip. It is exported
+from Unity to `assets/licensed/stickman/stickman.json` (gitignored — the EULA
+allows shipping it inside the app, not publishing it in this public repo) and
+rendered by `src/game3d/StickmanBody.ts`, posed every frame from the rig in
+`Stickman3D.ts`. Without the file, Metro resolves the import to an empty
+module (`metro.config.js`) and the archers fall back to the capsule body, so a
+plain clone still builds.
+
+Recreate the file (Unity CLI from Unity Hub, signed in; any Unity 6 Editor):
+
+```bash
+unity projects create StickmanSource --path ~/UnityProjects --template com.unity.template.urp-blank
+unity pipeline install --project-path ~/UnityProjects/StickmanSource
+cd ~/UnityProjects/StickmanSource && unity open .
+# download the pack from your account (no Package Manager clicks needed)
+unity command eval -- --code "$(cat ~/Developer/stickchers/scripts/unity/fetch-stickman.cs)"
+# import it, then export mesh + skeleton + Walk clip for three.js
+unity command eval -- --code 'UnityEditor.AssetDatabase.ImportPackage(System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile) + "/Library/Unity/Asset Store-5.x/PolyOne Studio/3D ModelsCharacters/Free Pack - Stick Man.unitypackage", false); return "ok";'
+unity command eval -- --code "$(cat ~/Developer/stickchers/scripts/unity/export-stickman.cs)" --timeout 300000
+```
+
+Restart Metro with `--clear` after adding or removing the file.
+
 ## How to use Unity Asset Store packs
 
 Unity Asset Store downloads require a signed-in Unity ID, so they can't be

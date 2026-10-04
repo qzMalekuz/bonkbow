@@ -2,10 +2,14 @@ import * as THREE from 'three';
 import { ARM_REACH, ARROW_LEN, BODY, HIP_Y } from '@/game3d/world';
 import type { Death, Gesture, Mood } from '@/game3d/sim';
 import type { Look } from '@/game/cosmetics';
-import { ATLAS_COLS, ATLAS_ROWS, FACES, TILE, type FaceId } from '@/game/faces';
+import { HeroHead } from '@/game3d/HeroHead';
+import { HERO_SPECS } from '@/game3d/heroSpecs';
+import { STICKMAN_DATA, StickmanBody, WALK_STRIDE, type BodyTargets } from '@/game3d/StickmanBody';
 
-// Procedural 3D stickman: matte-black capsule limbs, a big head with white
-// cartoon eyes, built from three.js primitives. The loadout (cosmetics.ts)
+// 3D stickman: a big head with white cartoon eyes on a black body. The body
+// is the Unity Asset Store "Free Pack - Stick Man" skinned mesh
+// (StickmanBody.ts) when its licensed export is present, else capsule limbs
+// built from three.js primitives. Either way the pose comes from here. The loadout (cosmetics.ts)
 // adds glossy headgear, a themed bow and the trail colour on top — the body
 // itself is always black, like the reference game. Driven imperatively every
 // frame (no React re-render): `update()` takes the sim's state and places
@@ -50,12 +54,15 @@ function cached<T extends THREE.BufferGeometry>(key: string, make: () => T): T {
   return g as T;
 }
 
-// Capsule lying along +x from the origin, total length `len`.
-function boneGeo(len: number, r: number) {
-  return cached(`bone:${len.toFixed(3)}:${r}`, () => {
-    const g = new THREE.CapsuleGeometry(r, Math.max(0.001, len - r * 2), 4, 8);
+// Capsule along +x whose round ends are centred on the joints at 0 and
+// `len`, so two bones meeting at a joint share one ball and bend without a
+// pinch or a gap. `tip` = false ends flush at `len` (feet, hands).
+function boneGeo(len: number, r: number, tip = true) {
+  return cached(`bone:${len.toFixed(3)}:${r}:${tip ? 1 : 0}`, () => {
+    const span = tip ? len : len - r;
+    const g = new THREE.CapsuleGeometry(r, Math.max(0.001, span), 4, 10);
     g.rotateZ(-Math.PI / 2);
-    g.translate(len / 2, 0, 0);
+    g.translate(span / 2, 0, 0);
     return g;
   });
 }
@@ -80,81 +87,8 @@ function glossy(color: string, opts: { metal?: number; rough?: number; glow?: nu
 
 const WHITE = new THREE.MeshBasicMaterial({ color: '#FFFFFF' });
 
-// Hero atlases, one per FaceId, shared by every rig on screen.
-// @react-three/fiber/native patches TextureLoader to accept a require()'d
-// asset module, so this works on device and on web alike.
-const faceTextures = new Map<FaceId, THREE.Texture>();
-function faceTexture(id: FaceId) {
-  let tex = faceTextures.get(id);
-  if (!tex) {
-    tex = new THREE.TextureLoader().load(FACES[id].image as unknown as string);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    tex.anisotropy = 4;
-    faceTextures.set(id, tex);
-  }
-  return tex;
-}
-
-// Hero head: a card at the head centre, as big as a figurine head, that
-// turns to face whichever camera is drawing it and shows the sheet view
-// for that angle. Views with the face turned to image-right are mirrored
-// (flipped U) when the character's forward points to the camera's left.
-const HERO_HEAD = 1.5; // card half-size vs the plain stickman's head radius
-const _fwd = new THREE.Vector3();
-const _toCam = new THREE.Vector3();
-const _pos = new THREE.Vector3();
-const _camPos = new THREE.Vector3();
-const _q = new THREE.Quaternion();
-const _m = new THREE.Matrix4();
-const _up = new THREE.Vector3(0, 1, 0);
-// A unit quad addressing one atlas tile, optionally mirrored.
-function heroCardGeo(tile: number, flip: boolean) {
-  return cached(`heroCard:${tile}:${flip ? 'f' : 'n'}`, () => {
-    const g = new THREE.PlaneGeometry(1, 1);
-    const uv = g.attributes.uv as THREE.BufferAttribute;
-    const tx = tile % ATLAS_COLS;
-    const ty = Math.floor(tile / ATLAS_COLS);
-    for (let i = 0; i < uv.count; i++) {
-      const u = flip ? 1 - uv.getX(i) : uv.getX(i);
-      uv.setXY(i, (tx + u) / ATLAS_COLS, (ATLAS_ROWS - 1 - ty + uv.getY(i)) / ATLAS_ROWS);
-    }
-    uv.needsUpdate = true;
-    return g;
-  });
-}
-// The view for a signed yaw between the head's forward and the camera
-// (0 = camera straight ahead of the face, π = behind). `moodTile` is the
-// front expression. Returns [tile, mirrored].
-function heroView(yaw: number, moodTile: number): [number, boolean] {
-  const a = Math.abs(yaw);
-  const right = yaw > 0; // forward points to the camera's right
-  if (a < 0.4) return [moodTile, false];
-  if (a < 1.15) return [TILE.front34, !right];
-  if (a < 1.95) return [right ? TILE.right : TILE.left, false];
-  if (a < 2.75) return [TILE.back34, !right];
-  return [TILE.back, false];
-}
-// Which atlas tile a mood wears.
-function heroTile(mood: Mood): number {
-  switch (mood) {
-    case 'happy':
-    case 'smug':
-      return TILE.smile;
-    case 'laugh':
-    case 'wink':
-    case 'sleepy':
-    case 'dead':
-      return TILE.laugh;
-    case 'angry':
-    case 'hurt':
-      return TILE.angry;
-    case 'shock':
-    case 'scared':
-      return TILE.shock;
-    default:
-      return TILE.neutral;
-  }
-}
+// Hero characters get a sculpted 3D head (HeroHead.ts) on the plain stickman body.
+const HERO_HEAD = 1.75; // hero skull radius vs the plain stickman's head
 const BLACK = new THREE.MeshBasicMaterial({ color: BODY_BLACK });
 
 // An arrow whose TIP is at the local origin, pointing along +x. Shaft, head
@@ -222,30 +156,39 @@ function mergeColored(parts: [THREE.BufferGeometry, string][]) {
   return out;
 }
 
-// One cartoon eye: white sclera with black lids above and below that slide
-// and tilt to make expressions, plus an X for dead.
+// One cartoon eye: white sclera with black lids above and below that close
+// and tilt to make expressions, plus an X for dead. The lids are curved caps
+// hugging the eyeball (in the eyeball's own squashed space), so they never
+// stick out of the head's silhouette; they ease between expressions.
+const LID_R = 0.064; // just outside the 0.06 sclera
 class Eye {
   readonly group = new THREE.Group();
   private sclera: THREE.Mesh;
+  private lids = new THREE.Group(); // scaled like the sclera
+  private upperTilt = new THREE.Group();
   private upper: THREE.Mesh;
   private lower: THREE.Mesh;
   private x: THREE.Group;
   private inner: 1 | -1; // which way (z) the nose is
+  private cur = { up: 0.085, low: -0.11, tilt: 0.32, size: 1 };
 
   constructor(inner: 1 | -1, scale: number) {
     this.inner = inner;
     this.sclera = mesh(cached('eye', () => new THREE.SphereGeometry(0.06, 14, 10)), WHITE);
     this.sclera.scale.set(0.35, 1, 0.82);
-    const lidGeo = cached('lid', () => new THREE.BoxGeometry(0.05, 0.08, 0.16));
-    this.upper = mesh(lidGeo, BLACK);
-    this.lower = mesh(lidGeo, BLACK);
+    const dome = (upper: boolean) =>
+      cached(`lidDome${upper ? 'U' : 'L'}`, () => new THREE.SphereGeometry(LID_R, 16, 6, 0, Math.PI * 2, upper ? 0 : Math.PI / 2, Math.PI / 2));
+    this.upper = mesh(dome(true), BLACK);
+    this.lower = mesh(dome(false), BLACK);
+    this.upperTilt.add(this.upper);
+    this.lids.add(this.upperTilt, this.lower);
     this.x = new THREE.Group();
     for (const r of [0.78, -0.78]) {
       const bar = mesh(cached('xbar', () => new THREE.BoxGeometry(0.02, 0.11, 0.022)), WHITE);
       bar.rotation.x = r;
       this.x.add(bar);
     }
-    this.group.add(this.sclera, this.upper, this.lower, this.x);
+    this.group.add(this.sclera, this.lids, this.x);
     this.group.scale.setScalar(scale);
   }
 
@@ -255,7 +198,7 @@ class Eye {
 
   // Lid positions in sclera units: upper drops from 0.11 (open) toward 0;
   // tilt > 0 lowers the inner corner (angry), < 0 the outer (sad).
-  set(mood: Mood, t: number, winkEye = false) {
+  set(mood: Mood, t: number, winkEye = false, dt = 1 / 60) {
     let up = 0.085;
     let tilt = 0.32;
     let low = -0.11;
@@ -319,13 +262,23 @@ class Eye {
         break;
     }
     this.sclera.visible = !dead;
-    this.upper.visible = !dead;
-    this.lower.visible = !dead;
+    this.lids.visible = !dead;
     this.x.visible = dead;
-    this.sclera.scale.set(0.35, size, 0.82 * size);
-    this.upper.position.set(0.01, up + 0.04, 0);
-    this.upper.rotation.x = tilt * this.inner;
-    this.lower.position.set(0.01, low - 0.04, 0);
+    // Ease toward the expression; lids close faster than they open (blinks).
+    const c = this.cur;
+    const k = 1 - Math.exp(-dt * 16);
+    c.up += (up - c.up) * (up < c.up ? Math.min(1, k * 2.5) : k);
+    c.low += (low - c.low) * k;
+    c.tilt += (tilt - c.tilt) * k;
+    c.size += (size - c.size) * k;
+    this.sclera.scale.set(0.35, c.size, 0.82 * c.size);
+    this.lids.scale.set(0.35, c.size, 0.82 * c.size);
+    // Each cap swings about the eye's horizontal axis until its front edge
+    // sits at the lid height (in the eyeball's unscaled units).
+    const edge = (h: number) => Math.asin(Math.max(-1, Math.min(1, h / c.size / LID_R)));
+    this.upper.rotation.z = edge(c.up);
+    this.upperTilt.rotation.x = c.tilt * this.inner;
+    this.lower.rotation.z = edge(c.low);
   }
 }
 
@@ -349,6 +302,22 @@ export class StickmanRig {
   private stringGeo = new THREE.BufferGeometry();
   private nocked: THREE.Group;
   private bodyMat: THREE.MeshLambertMaterial;
+  // The Unity stickman mesh, driven from this rig's joints (null without the licensed file).
+  private skin: StickmanBody | null = null;
+  private skinMat: THREE.MeshPhongMaterial | null = null;
+  private sticks: THREE.Mesh[] = []; // capsule body, hidden while the skin is on
+  private targets: BodyTargets | null = null;
+  // Continuity across state changes: the walk phase and emote clock hold
+  // while their blends ease out; the death landing settles instead of
+  // snapping; hand targets have a top speed.
+  private walkBlend = new Blend(8);
+  private walkPhase = 0;
+  private clipPhase = 0; // Walk clip cycles, from distance walked
+  private deathRot = 0;
+  private land = new Blend(10);
+  private prevBow: V2 | null = null;
+  private prevDraw: V2 | null = null;
+  private heroClear: { center: THREE.Vector3; radius: number } | null = null;
   private headMat: THREE.MeshPhongMaterial;
   private cosmetics = new THREE.Group();
   private eyes: Eye[] = [];
@@ -361,12 +330,20 @@ export class StickmanRig {
   private lookKey = '';
   private trail = '#FFFFFF';
   // Hero character (real-face chibi): the front patch swaps with the mood.
-  private hero: { card: THREE.Mesh; mood: number; tile: number; flip: boolean } | null = null;
+  private hero: HeroHead | null = null;
   // Smoothed blends so every state change eases instead of snapping.
-  private aimBlend = 0;
-  private gestBlend = 0;
-  private lastGesture: Gesture | null = null;
-  private sadBlend = 0;
+  private aimBlend = new Blend(12);
+  private gestBlend = new Blend(10);
+  // Emote clock and crossfade: the clock keeps running while an emote eases
+  // out, and a new or restarted emote fades in over the old one.
+  private gest: Gesture | null = null;
+  private gestT = 0;
+  private prevGest: Gesture | null = null;
+  private prevGestT = 0;
+  private xfade = 1;
+  private fx: GestureFx = newFx();
+  private fxPrev: GestureFx = newFx();
+  private sadBlend = new Blend(6);
   // Arrows stuck in this body are parented here so they tumble with it.
   readonly stuckMount = new THREE.Group();
 
@@ -387,15 +364,15 @@ export class StickmanRig {
       [this.thighB, this.shinB, -0.07],
     ] as const) {
       th.position.z = z;
-      th.add(mesh(boneGeo(thigh, limbR), this.bodyMat));
+      th.add(this.stick(boneGeo(thigh, limbR)));
       sh.position.x = thigh;
-      sh.add(mesh(boneGeo(shin + 0.02, limbR), this.bodyMat));
+      sh.add(this.stick(boneGeo(shin + 0.02, limbR, false)));
       th.add(sh);
       this.hips.add(th);
     }
 
     // Torso, neck, head
-    this.torso.add(mesh(boneGeo(torso + neck, torsoR), this.bodyMat));
+    this.torso.add(this.stick(boneGeo(torso + neck, torsoR)));
     this.hips.add(this.torso);
     this.head.position.x = torso + neck + headR * 0.92;
     this.head.rotation.z = -Math.PI / 2;
@@ -430,22 +407,40 @@ export class StickmanRig {
     this.face.add(this.mouthOpen, this.mouthLine);
 
     // Arms (2D-placed segments in the arms group)
-    const armSeg = (len: number) => mesh(boneGeo(len, limbR * 0.95), this.bodyMat);
+    const armSeg = (len: number, tip = true) => this.stick(boneGeo(len, limbR * 0.95, tip));
     this.upperBow.add(armSeg(upperArm));
-    this.foreBow.add(armSeg(foreArm));
+    this.foreBow.add(armSeg(foreArm, false));
     this.upperDraw.add(armSeg(upperArm));
-    this.foreDraw.add(armSeg(foreArm));
+    this.foreDraw.add(armSeg(foreArm, false));
     this.upperBow.position.z = 0.06;
     this.foreBow.position.z = 0.06;
     this.upperDraw.position.z = -0.06;
     this.foreDraw.position.z = -0.06;
     this.arms.add(this.upperBow, this.foreBow, this.upperDraw, this.foreDraw, this.bow);
 
+    // Smooth skinned body from the Unity asset, when it ships with this build.
+    if (STICKMAN_DATA) {
+      this.skinMat = new THREE.MeshPhongMaterial({ color: BODY_BLACK, shininess: 45, specular: new THREE.Color(0x3a3a3a) });
+      this.skin = new StickmanBody(STICKMAN_DATA, this.skinMat);
+      this.root.add(this.skin.group);
+      for (const m of this.sticks) m.visible = false;
+      const v = () => new THREE.Vector3();
+      this.targets = {
+        hips: new THREE.Matrix4(),
+        spine: v(),
+        legs: [0, 1].map(() => ({ ankle: v() })),
+        arms: [0, 1].map(() => ({ shoulder: v(), elbow: v(), hand: v(), spread: 1, hang: 1 })),
+        head: v(),
+        headR: BODY.headR,
+        walk: 0,
+        walkPhase: 0,
+      };
+    }
+
     // Bowstring (tip → nock → tip)
     this.stringGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9), 3));
     const str = new THREE.Line(this.stringGeo, new THREE.LineBasicMaterial({ color: '#F2F2F2', transparent: true, opacity: 0.9 }));
     str.frustumCulled = false;
-    str.position.z = 0.06;
     this.arms.add(str);
 
     this.nocked = makeArrow(look.trail);
@@ -479,6 +474,12 @@ export class StickmanRig {
     this.setLook(look);
   }
 
+  private stick(geo: THREE.BufferGeometry) {
+    const m = mesh(geo, this.bodyMat);
+    this.sticks.push(m);
+    return m;
+  }
+
   get trailColor() {
     return this.trail;
   }
@@ -490,9 +491,9 @@ export class StickmanRig {
     this.cosmetics.clear();
     this.flutter = [];
     this.buildBow(look);
-    this.buildQuiver(look);
     this.buildHat(look);
     this.buildHero(look);
+    this.buildQuiver(look);
     // A hero head replaces the cartoon eyes and mouth entirely.
     this.face.visible = look.hat !== 'face';
     const glow = look.eyes ? new THREE.MeshBasicMaterial({ color: look.eyes }) : null;
@@ -525,7 +526,7 @@ export class StickmanRig {
   private buildQuiver(look: Look) {
     this.torso.children.filter((c) => c.userData.quiver).forEach((c) => this.torso.remove(c));
     const quiver = new THREE.Group();
-    quiver.add(mesh(cached('quiver', () => new THREE.CylinderGeometry(0.075, 0.06, 0.5, 10)), glossy('#3A2A1E', { rough: 0.7 })));
+    quiver.add(mesh(cached('quiver', () => new THREE.CylinderGeometry(0.075, 0.06, 0.5, 10)), glossy(look.hat === 'face' ? '#7A4B2A' : '#3A2A1E', { rough: 0.7 })));
     const band = mesh(cached('qband', () => new THREE.CylinderGeometry(0.079, 0.079, 0.05, 10)), glossy(look.banner));
     band.position.y = 0.15;
     quiver.add(band);
@@ -541,106 +542,29 @@ export class StickmanRig {
     this.torso.add(quiver);
   }
 
-  // Dress the rig as a hero: chibi head wrapped in its atlas, mitten hands,
-  // chunky boots and a chest strap, like the character sheets. Everything
-  // added here carries userData.hero so the next look can strip it.
+  // A hero is the plain black stickman with a sculpted head (HeroHead.ts):
+  // the body, limbs and joints are exactly the ones every archer has.
   private buildHero(look: Look) {
-    const { torso, neck, headR, shin, foreArm, torsoR } = BODY;
-    const strip = (g: THREE.Object3D) => g.children.filter((c) => c.userData.hero).forEach((c) => g.remove(c));
-    const limbGroups = [this.thighF, this.shinF, this.thighB, this.shinB, this.upperBow, this.foreBow, this.upperDraw, this.foreDraw];
-    for (const g of [this.head, this.torso, ...limbGroups]) strip(g);
-    // The plain stick limbs come back when the hero comes off.
-    for (const g of [this.torso, ...limbGroups]) g.children.forEach((c) => (c.visible = true));
+    const { torso, neck, headR } = BODY;
+    this.hero?.dispose();
     this.hero = null;
+    this.heroClear = null;
     this.head.position.x = torso + neck + headR * 0.92;
     this.head.children.forEach((c) => {
       c.visible = true;
     });
     if (look.hat !== 'face' || !look.face) return;
 
-    const face = look.face;
     const R = headR * HERO_HEAD;
-    this.head.position.x = torso + neck + R * 0.62;
-    const tag = (o: THREE.Object3D) => {
-      o.userData.hero = true;
-      return o;
-    };
-    const skin = new THREE.MeshBasicMaterial({ map: faceTexture(face), alphaTest: 0.4, side: THREE.DoubleSide });
-    const card = tag(mesh(heroCardGeo(TILE.neutral, false), skin)) as THREE.Mesh;
-    card.scale.setScalar(R * 2.5);
-    card.position.y = -R * 0.08;
-    card.frustumCulled = false;
-    const hero: { card: THREE.Mesh; mood: number; tile: number; flip: boolean } = { card, mood: TILE.neutral, tile: TILE.neutral, flip: false };
-    this.hero = hero;
-    card.onBeforeRender = (_r, _s, camera) => {
-      // Yaw from the head's world forward (+x in head space) to the camera.
-      card.getWorldPosition(_pos);
-      _fwd.set(1, 0, 0).transformDirection(this.head.matrixWorld);
-      _fwd.y = 0;
-      _fwd.normalize();
-      camera.getWorldPosition(_camPos);
-      _toCam.subVectors(_camPos, _pos);
-      _toCam.y = 0;
-      _toCam.normalize();
-      const yaw = Math.atan2(_fwd.x * _toCam.z - _fwd.z * _toCam.x, _fwd.dot(_toCam));
-      const [tile, flip] = heroView(yaw, hero.mood);
-      if (tile !== hero.tile || flip !== hero.flip) {
-        hero.tile = tile;
-        hero.flip = flip;
-        card.geometry = heroCardGeo(tile, flip);
-      }
-      // Face the camera, upright, regardless of how the head is posed:
-      // world look-at, then expressed in the head's local frame.
-      _m.lookAt(_camPos, _pos, _up);
-      card.quaternion.setFromRotationMatrix(_m);
-      card.quaternion.premultiply(this.head.getWorldQuaternion(_q).invert());
-    };
-    this.head.add(card);
-    // Hide the black skull: the card is the whole head.
+    this.head.position.x = torso + neck + R * 0.86;
+    this.hero = new HeroHead(HERO_SPECS[look.face], R);
+    const b = this.hero.bounds;
+    this.heroClear = b.radius * 0.88 > R ? { center: b.center, radius: b.radius * 0.88 } : { center: new THREE.Vector3(), radius: R };
+    this.head.add(this.hero.group);
+    // Hide the black skull and cartoon face: the hero head replaces them.
     this.head.children.forEach((c) => {
-      if (!c.userData.hero && c !== this.face && c !== this.cosmetics) c.visible = false;
+      if (c !== this.hero?.group && c !== this.face && c !== this.cosmetics) c.visible = false;
     });
-
-    // Body: the figurine build from the sheets — a rounded torso and thick
-    // soft limbs replace the sticks, then mitten hands, chunky boots and a
-    // leather chest strap.
-    const black = glossy('#18181C', { rough: 0.92 });
-    const { thigh, upperArm, limbR } = BODY;
-    const thick = (g: THREE.Object3D, len: number, r: number) => {
-      g.children.forEach((c) => {
-        if (!c.userData.hero) c.visible = false;
-      });
-      g.add(tag(mesh(boneGeo(len, r), black)));
-    };
-    thick(this.thighF, thigh, limbR * 1.45);
-    thick(this.thighB, thigh, limbR * 1.45);
-    thick(this.shinF, shin + 0.02, limbR * 1.35);
-    thick(this.shinB, shin + 0.02, limbR * 1.35);
-    thick(this.upperBow, upperArm, limbR * 1.25);
-    thick(this.upperDraw, upperArm, limbR * 1.25);
-    thick(this.foreBow, foreArm, limbR * 1.15);
-    thick(this.foreDraw, foreArm, limbR * 1.15);
-    this.torso.children.forEach((c) => {
-      if (!c.userData.hero && !c.userData.quiver && c !== this.head) c.visible = false;
-    });
-    const chest = tag(mesh(boneGeo(torso + neck * 0.5, torsoR * 2.1), black));
-    chest.scale.set(1, 1, 1.1);
-    this.torso.add(chest);
-    for (const fore of [this.foreBow, this.foreDraw]) {
-      const hand = tag(mesh(cached('heroHand', () => new THREE.SphereGeometry(0.052, 10, 8)), black));
-      hand.position.x = foreArm;
-      fore.add(hand);
-    }
-    for (const sh of [this.shinF, this.shinB]) {
-      const boot = tag(mesh(cached('heroBoot', () => new THREE.SphereGeometry(0.075, 12, 8)), black));
-      boot.scale.set(0.9, 1.25, 1.1);
-      boot.position.set(shin + 0.01, 0.03, 0);
-      sh.add(boot);
-    }
-    const strap = tag(mesh(cached('heroStrap', () => new THREE.TorusGeometry(torsoR * 1.25, 0.014, 6, 28)), glossy('#5A3A22', { rough: 0.8 })));
-    strap.rotation.set(0, Math.PI / 2, 0.55);
-    strap.position.x = torso * 0.55;
-    this.torso.add(strap);
   }
 
   private buildHat(look: Look) {
@@ -805,30 +729,60 @@ export class StickmanRig {
     const d = p.death;
     this.root.rotation.y = f === 1 ? 0 : Math.PI;
     const limp = d ? Math.min(1, d.t * 3) : 0;
-    const k = 1 - Math.exp(-dt * 8);
 
     // Blends: aim raises the bow; gestures and defeat take over the arms.
     const aiming = p.ready || p.draw > 0.02;
-    this.aimBlend += ((aiming ? 1 : 0) - this.aimBlend) * k;
-    if (p.gesture) this.lastGesture = p.gesture;
-    this.gestBlend += ((p.gesture ? 1 : 0) - this.gestBlend) * k;
-    this.sadBlend += ((p.mood === 'sad' && !p.gesture ? 1 : 0) - this.sadBlend) * k;
-    const g = this.gestBlend;
-    const gt = p.gestureT;
-    const gesture = p.gesture ?? this.lastGesture;
+    this.aimBlend.to(aiming ? 1 : 0, dt);
+    if (p.gesture) {
+      const restart = p.gesture !== this.gest || p.gestureT < this.gestT - 0.05;
+      if (restart && this.gest && this.gestBlend.v > 0.02) {
+        this.prevGest = this.gest;
+        this.prevGestT = this.gestT;
+        this.xfade = 0;
+      }
+      this.gest = p.gesture;
+      this.gestT = p.gestureT;
+    } else this.gestT += dt;
+    this.gestBlend.to(p.gesture ? 1 : 0, dt);
+    this.sadBlend.to(p.mood === 'sad' && !p.gesture ? 1 : 0, dt);
+    const g = this.gestBlend.v;
+    const fx = this.fx;
+    if (this.gest) gestureFx(this.gest, this.gestT, fx);
+    if (this.prevGest) {
+      this.prevGestT += dt;
+      this.xfade = Math.min(1, this.xfade + dt / XFADE);
+      gestureFx(this.prevGest, this.prevGestT, this.fxPrev);
+      mixFx(this.fxPrev, fx, this.xfade * this.xfade * (3 - 2 * this.xfade), fx);
+      if (this.xfade >= 1) this.prevGest = null;
+    }
+    // Same for the walk: the legs settle out of the stride they were in.
+    this.walkBlend.to(p.walk > 0 && !d ? 1 : 0, dt);
+    if (p.walk > 0) {
+      this.walkPhase = p.stepT;
+      this.clipPhase = -p.walk / WALK_STRIDE;
+    }
+    const walking = this.walkBlend.v;
+    // Death: follow the sim's tumble in the air, then ease onto the ground.
+    if (d) {
+      if (!d.landed) {
+        this.deathRot = d.rot;
+        this.land.set(0);
+      } else {
+        this.land.to(1, dt);
+        this.deathRot += (d.rot - this.deathRot) * Math.min(1, this.land.v * 1.5);
+      }
+    } else this.land.set(0);
+    const land = this.land.v;
 
     // Root / tumble / walk-in / drop
     const walkOff = -f * p.walk;
     let bounce = 0;
-    if (p.walk > 0) bounce = Math.abs(Math.sin(p.stepT * Math.PI)) * 0.05;
-    if (gesture === 'cheer') bounce += g * Math.abs(Math.sin(gt * 7)) * 0.32;
-    if (gesture === 'laugh') bounce += g * Math.abs(Math.sin(gt * 14)) * 0.04;
-    if (gesture === 'dance') bounce += g * Math.abs(Math.sin(gt * 6)) * 0.12;
-    if (gesture === 'flex') bounce += g * Math.max(0, Math.sin(gt * 5)) * 0.03;
+    bounce = Math.abs(Math.sin(this.walkPhase * Math.PI)) * 0.05 * walking;
+    bounce += g * fx.bounce;
     if (d) {
-      this.root.position.set(d.x, d.y - (HIP_Y - 0.1) * Math.abs(Math.sin(d.rot)) * (d.landed ? 1 : 0.4), 0);
-      // World spin d.rot, expressed in the (possibly flipped) root frame.
-      this.body.rotation.z = d.rot * f;
+      this.root.position.set(d.x, d.y - (HIP_Y - 0.1) * Math.abs(Math.sin(this.deathRot)) * (0.4 + 0.6 * land), 0);
+      // World spin, expressed in the (possibly flipped) root frame.
+      this.body.rotation.z = this.deathRot * f;
     } else {
       // Hit stagger: a small shove back that springs out.
       const shove = -f * p.flinch * 0.12;
@@ -842,6 +796,7 @@ export class StickmanRig {
     // Hit flash and shield shimmer
     this.bodyMat.emissive.setRGB(p.flash * 0.9, p.flash * 0.25, p.flash * 0.25);
     this.headMat.emissive.copy(this.bodyMat.emissive);
+    this.skinMat?.emissive.copy(this.bodyMat.emissive);
     const sb = this.shieldBubble.material as THREE.MeshBasicMaterial;
     sb.opacity = p.shieldFlash * 0.55;
     this.shieldBubble.visible = p.shieldFlash > 0.01;
@@ -849,75 +804,46 @@ export class StickmanRig {
     this.shieldBubble.scale.set(0.75 + (1 - p.shieldFlash) * 0.25, 1.2 + (1 - p.shieldFlash) * 0.3, 0.75 + (1 - p.shieldFlash) * 0.25);
 
     // Legs: planted stance, walk cycle, stomp, loose flail while dead
-    const flail = (n: number) => (d && !d.landed ? Math.sin(d.t * 14 + n) * 0.9 : 0);
-    const splay = d && d.landed ? 0.5 : 0;
-    const walking = p.walk > 0 ? 1 : 0;
-    const stride = Math.sin(p.stepT * Math.PI * 2) * 0.55 * walking;
-    const stomp = gesture === 'stomp' ? g * Math.max(0, Math.sin(gt * 9)) * 0.8 : gesture === 'dance' ? g * Math.max(0, Math.sin(gt * 6)) * 0.5 : 0;
-    const cheerKick = gesture === 'cheer' ? g * Math.max(0, Math.sin(gt * 7)) * 0.4 : 0;
+    const flail = (n: number) => (d ? Math.sin(d.t * 14 + n) * 0.9 * (1 - land) : 0);
+    // Lying still: which way is the ground, along the body's own +x? On its
+    // back (ground behind) the front knee lifts; face down a heel lifts. No
+    // limb may bend toward the ground.
+    const groundAhead = -Math.sin(this.body.rotation.z) > 0;
+    const kneeUp = groundAhead ? 0 : 0.4 * land;
+    const heelUp = (groundAhead ? 0.7 : 0.55) * land;
+    const stride = Math.sin(this.walkPhase * Math.PI * 2) * 0.55 * walking;
+    const stomp = g * fx.stomp;
+    const cheerKick = g * fx.kick;
     this.hips.rotation.y = -YAW * (1 - limp);
-    this.thighF.rotation.z = -Math.PI / 2 + 0.3 * (1 - walking) + stride + flail(0) * limp + splay + stomp + cheerKick;
-    this.shinF.rotation.z = -0.12 - Math.max(0, -stride) * 0.8 - stomp * 0.9 - cheerKick + Math.abs(flail(1)) * 0.5 * limp;
-    this.thighB.rotation.z = -Math.PI / 2 - 0.26 * (1 - walking) - stride + flail(2) * limp - splay - cheerKick;
-    this.shinB.rotation.z = -0.28 - Math.max(0, stride) * 0.8 - cheerKick + Math.abs(flail(3)) * 0.5 * limp;
+    // Standing stance fades out as the body lies down.
+    const stance = (1 - walking) * (1 - land);
+    this.thighF.rotation.z = -Math.PI / 2 + 0.3 * stance + stride + flail(0) * limp + kneeUp + stomp + cheerKick;
+    this.shinF.rotation.z = -0.12 * (1 - land) - Math.max(0, -stride) * 0.8 - stomp * 0.9 - cheerKick + Math.abs(flail(1)) * 0.5 * limp - heelUp;
+    this.thighB.rotation.z = -Math.PI / 2 - 0.26 * stance - stride + flail(2) * limp - cheerKick;
+    this.shinB.rotation.z = -0.28 * (1 - land) - Math.max(0, stride) * 0.8 - cheerKick + Math.abs(flail(3)) * 0.5 * limp;
 
     // Torso lean: breathe, lean into the draw, recoil on hit, emote lean
     const breathe = d ? 0 : Math.sin(t * 2.1) * 0.025;
-    let gLean = 0;
-    let headTilt = 0;
-    if (gesture === 'laugh') {
-      gLean = -0.25 - Math.sin(gt * 14) * 0.08;
-      headTilt = 0.35;
-    } else if (gesture === 'facepalm' || gesture === 'cry') {
-      gLean = 0.2;
-      headTilt = -0.3 + Math.sin(gt * (gesture === 'cry' ? 22 : 6)) * 0.08;
-    } else if (gesture === 'cheer') {
-      gLean = -0.1;
-      headTilt = 0.3;
-    } else if (gesture === 'stomp') {
-      gLean = 0.12;
-      headTilt = -0.1;
-    } else if (gesture === 'shrug') {
-      headTilt = Math.sin(gt * 3) * 0.15;
-    } else if (gesture === 'bow') {
-      // Fold forward, hold, rise.
-      const k = Math.sin(Math.min(1, gt / 2.0) * Math.PI);
-      gLean = 0.9 * Math.min(1, k * 1.6);
-      headTilt = -0.2 * k;
-    } else if (gesture === 'flex') {
-      gLean = -0.08;
-      headTilt = 0.15 + Math.sin(gt * 5) * 0.05;
-    } else if (gesture === 'think') {
-      gLean = 0.06;
-      headTilt = 0.25 + Math.sin(gt * 1.6) * 0.12;
-    } else if (gesture === 'salute') {
-      gLean = -0.05;
-    } else if (gesture === 'dance') {
-      gLean = Math.sin(gt * 6) * 0.14;
-      headTilt = Math.sin(gt * 6 + 1) * 0.3;
-    } else if (gesture === 'yawn') {
-      const k = Math.sin((gt / 2.4) * Math.PI);
-      gLean = -0.18 * k;
-      headTilt = 0.5 * k;
-    }
+    const gLean = fx.lean;
+    const headTilt = fx.tilt;
     // Sad (defeat): head hangs, shoulders slump.
-    const sad = this.sadBlend;
+    const sad = this.sadBlend.v;
     const lean =
       (p.draw * 0.12 + p.flinch * 0.45 + breathe) * (1 - g) +
       gLean * g +
       sad * 0.22 +
-      flail(4) * 0.3 * limp +
-      (p.walk > 0 ? -0.06 : 0);
+      flail(4) * 0.3 * limp -
+      0.06 * walking;
     // lean > 0 tips the spine backward (+x toward the archer's back).
     this.torso.rotation.z = Math.PI / 2 + lean;
     const idleLook = d ? 0 : Math.sin(t * 0.7) * 0.05 + Math.sin(t * 1.9) * 0.02;
     this.head.rotation.z = -Math.PI / 2 - lean * 0.3 + idleLook * (1 - g) + headTilt * g - sad * 0.55 - p.flinch * 0.3;
 
     // Face
-    this.eyes.forEach((e, i) => e.set(p.mood, t, i === 0));
-    const mouthOpen = p.mood === 'laugh' ? 1 + Math.sin(t * 18) * 0.25 : p.mood === 'shock' ? 0.6 : p.mood === 'hurt' ? 0.5 : p.mood === 'happy' ? 0.55 : p.mood === 'scared' ? 0.45 + Math.sin(t * 26) * 0.08 : p.mood === 'wink' ? 0.35 : p.gesture === 'yawn' ? Math.max(0, Math.sin((p.gestureT / 2.4) * Math.PI)) * 1.3 : 0;
+    this.eyes.forEach((e, i) => e.set(p.mood, t, i === 0, dt));
+    const mouthOpen = p.mood === 'laugh' ? 1 + Math.sin(t * 18) * 0.25 : p.mood === 'shock' ? 0.6 : p.mood === 'hurt' ? 0.5 : p.mood === 'happy' ? 0.55 : p.mood === 'scared' ? 0.45 + Math.sin(t * 26) * 0.08 : p.mood === 'wink' ? 0.35 : fx.yawn * g * 1.3;
     this.mouthOpen.visible = mouthOpen > 0;
-    if (this.hero) this.hero.mood = heroTile(p.mood);
+    this.hero?.update(p.mood, t, dt, d ? 0 : this.aimBlend.v * p.draw, p.flash);
     this.mouthOpen.scale.set(1, mouthOpen, 1);
     this.mouthLine.visible = p.mood === 'angry' || p.mood === 'sad' || p.mood === 'smug' || p.mood === 'sleepy';
     this.mouthLine.rotation.x = p.mood === 'sad' ? 0.25 : p.mood === 'smug' ? -0.28 : 0;
@@ -934,46 +860,99 @@ export class StickmanRig {
     // Release follow-through: the bow arm kicks up and settles.
     const rc = p.recoil * p.recoil;
     a += rc * 0.22;
-    if (d) a = -1.2 + flail(5) * 0.6;
+    // Dead: arms flop toward the feet, settling on the side away from the ground.
+    if (d) a = -1.2 + flail(5) * 0.6 - (groundAhead ? 0.7 : 0) * land;
     const cosA = Math.cos(a);
     const sinA = Math.sin(a);
     const aimHand = { x: cosA * ARM_REACH, y: sinA * ARM_REACH };
+    // Hands work in the aim plane; with the Unity body it sits out at the front
+    // shoulder, further for a big hero head.
+    const aimZ = this.skin ? 0.2 + Math.max(0, this.headClear().radius - BODY.headR) * 0.4 : 0.06;
     const pull = STRING_REST + p.draw * 0.62;
     const lift = p.draw * 0.06;
-    const aimNock = { x: aimHand.x - cosA * pull - sinA * lift, y: aimHand.y - sinA * pull + cosA * lift };
+    let aimNock = { x: aimHand.x - cosA * pull - sinA * lift, y: aimHand.y - sinA * pull + cosA * lift };
+    // Anchor point: the drawing hand stops at the face instead of inside it
+    // (a big chibi head would swallow it), pushed straight out of the head
+    // so it moves continuously. Visual only — the shot is the sim's.
+    {
+      const hc = this.headClear();
+      const Lh = this.head.position.x + hc.center.x;
+      const cx = Math.cos(sAng) * Lh * Math.cos(this.hips.rotation.y) - sx;
+      const cy = Math.sin(sAng) * Lh - (sy + sad * 0.05);
+      const r2 = (hc.radius + 0.04) ** 2 - aimZ * aimZ;
+      const dx = aimNock.x - cx;
+      const dy = aimNock.y - cy;
+      const dd = Math.hypot(dx, dy);
+      if (r2 > 0 && dd * dd < r2 && dd > 1e-4) {
+        const r = Math.sqrt(r2);
+        aimNock = { x: cx + (dx / dd) * r, y: cy + (dy / dd) * r };
+      }
+    }
     // Relaxed: bow held low and forward, other hand hanging.
     const relaxBow = { x: 0.16, y: -0.48 + Math.sin(t * 2.1) * 0.01 };
     const relaxDraw = { x: -0.06, y: -0.52 };
-    const ab = d ? 0 : this.aimBlend;
-    let bowHand = lerp2(relaxBow, aimHand, ab);
+    const ab = d ? 0 : this.aimBlend.v;
+    // Hand blends swing around the shoulder (angle + reach), like a real arm,
+    // rather than cutting straight through it.
+    let bowHand = swing(relaxBow, aimHand, ab);
     // After a release the string hand flows back past the chin.
     const follow = { x: -0.22, y: 0.1 };
-    let drawHand = lerp2(relaxDraw, lerp2(aimNock, follow, rc), ab);
-    if (p.walk > 0) {
+    let drawHand = swing(relaxDraw, lerp2(aimNock, follow, rc), ab);
+    if (walking > 0.001) {
       bowHand = { x: bowHand.x - stride * 0.15, y: bowHand.y };
       drawHand = { x: drawHand.x + stride * 0.15, y: drawHand.y };
     }
-    if (g > 0.001 && gesture && !d) {
-      const gp = gesturePose(gesture, gt);
-      bowHand = lerp2(bowHand, gp.bow, g);
-      drawHand = lerp2(drawHand, gp.draw, g);
+    if (g > 0.001 && this.gest && !d) {
+      bowHand = swing(bowHand, fx.bow, g);
+      drawHand = swing(drawHand, fx.draw, g);
     }
     if (sad > 0.001 && !d) {
-      bowHand = lerp2(bowHand, { x: 0.05, y: -0.55 }, sad);
-      drawHand = lerp2(drawHand, { x: -0.02, y: -0.56 }, sad);
+      bowHand = swing(bowHand, { x: 0.05, y: -0.55 }, sad);
+      drawHand = swing(drawHand, { x: -0.02, y: -0.56 }, sad);
+    }
+
+    // Top hand speed (shoulder-relative): normal motion is far below it; a
+    // pose that would jump (a looped emote restarting, a cut between
+    // performances) sweeps across in a few frames instead. Off while dead.
+    if (d) this.prevBow = this.prevDraw = null;
+    else {
+      bowHand = capStep(this.prevBow, bowHand, HAND_SPEED * dt);
+      drawHand = capStep(this.prevDraw, drawHand, HAND_SPEED * dt);
+      this.prevBow = bowHand;
+      this.prevDraw = drawHand;
     }
 
     // Bow arm: elbow bends down/out; draw arm: elbow up/behind when drawing.
     ik(this.upperBow, this.foreBow, sx, sy, sx + bowHand.x, sy + bowHand.y, BODY.upperArm, BODY.foreArm, -1);
     ik(this.upperDraw, this.foreDraw, sx, sy, sx + drawHand.x, sy + drawHand.y, BODY.upperArm, BODY.foreArm, -1);
-    const hx = sx + bowHand.x;
-    const hy = sy + bowHand.y;
-    const nx = sx + drawHand.x;
-    const ny = sy + drawHand.y;
+    let hx = sx + bowHand.x;
+    let hy = sy + bowHand.y;
+    let hz = 0.06;
+    let nx = sx + drawHand.x;
+    let ny = sy + drawHand.y;
+    let nz = -0.06;
+
+    // With the Unity body, pose it now and hang the bow and string on its
+    // real hands. While aiming both hands work in one plane, a little in
+    // front of a big hero head so the string never cuts through the face.
+    if (this.skin && this.targets) {
+      const aimW = ab * (1 - g) * (1 - sad);
+      // Hanging (not aiming, not emoting): arms rest at their full length.
+      const hang = (1 - ab) * (1 - g);
+      this.syncSkin(this.skin, this.targets, 1 - aimW, hang, aimZ, d ? 0 : walking);
+      this.skin.grip(0, _grip).applyMatrix4(_armsInv);
+      hx = _grip.x;
+      hy = _grip.y;
+      hz = _grip.z;
+      this.skin.grip(1, _grip).applyMatrix4(_armsInv);
+      nx = _grip.x;
+      ny = _grip.y;
+      nz = _grip.z;
+    }
 
     // Bow: perpendicular to the aim when raised, limbs vertical when held low.
     const bowRot = lerpAngle(-0.25, a, ab);
-    this.bow.position.set(hx, hy, 0.06);
+    this.bow.position.set(hx, hy, hz);
     this.bow.rotation.z = bowRot;
     const cosB = Math.cos(bowRot);
     const sinB = Math.sin(bowRot);
@@ -987,20 +966,20 @@ export class StickmanRig {
     const drawn = p.draw > 0.01 && !d && ab > 0.5;
     // Twang: the released string vibrates around its rest line.
     const twang = Math.sin(t * 75) * 0.05 * rc;
-    pos.setXYZ(0, tx(tipBack, tipUp), ty(tipBack, tipUp), 0);
-    pos.setXYZ(1, drawn ? nx : tx(tipBack + twang, 0), drawn ? ny : ty(tipBack + twang, 0), 0);
-    pos.setXYZ(2, tx(tipBack, -tipUp), ty(tipBack, -tipUp), 0);
+    pos.setXYZ(0, tx(tipBack, tipUp), ty(tipBack, tipUp), hz);
+    pos.setXYZ(1, drawn ? nx : tx(tipBack + twang, 0), drawn ? ny : ty(tipBack + twang, 0), drawn ? nz : hz);
+    pos.setXYZ(2, tx(tipBack, -tipUp), ty(tipBack, -tipUp), hz);
     pos.needsUpdate = true;
 
     // Nocked arrow sits on the string
     this.nocked.visible = p.showNocked && !d && ab > 0.6;
-    this.nocked.position.set(nx + cosA * ARROW_LEN, ny + sinA * ARROW_LEN, 0.06);
+    this.nocked.position.set(nx + cosA * ARROW_LEN, ny + sinA * ARROW_LEN, hz);
     this.nocked.rotation.z = a;
 
     // Surrender flag rides the draw hand
-    this.flagProp.visible = gesture === 'flag' && g > 0.3 && !d;
+    this.flagProp.visible = this.gest === 'flag' && g > 0.3 && !d;
     if (this.flagProp.visible) {
-      this.flagProp.position.set(nx, ny - 0.3, -0.06);
+      this.flagProp.position.set(nx, ny - 0.3, nz);
       const cloth = this.flagProp.children[1];
       cloth.rotation.y = Math.sin(t * 8) * 0.4;
     }
@@ -1015,9 +994,185 @@ export class StickmanRig {
       if (o.userData.wing) o.rotation.x = o.userData.wing * (0.6 + Math.sin(t * 3) * 0.2);
     }
   }
+
+  // The sphere hands must stay out of, in head-group space: the hero's head
+  // and most of its hair (hands may brush the fringe of a big hairdo).
+  private headClear() {
+    return this.heroClear ?? PLAIN_HEAD;
+  }
+
+  // Report this frame's joints (in root space) and bend the Unity skeleton to
+  // them. `spread` 0..1: hands from the aim plane (z = aimZ) out to the
+  // asset's shoulder planes.
+  private syncSkin(skin: StickmanBody, tg: BodyTargets, spread: number, hang: number, aimZ: number, walk: number) {
+    this.root.updateMatrixWorld(true);
+    _rootInv.copy(this.root.matrixWorld).invert();
+    const rel = (o: THREE.Object3D) => _rel.multiplyMatrices(_rootInv, o.matrixWorld);
+    const at = (o: THREE.Object3D, x: number, out: THREE.Vector3) => out.set(x, 0, 0).applyMatrix4(rel(o));
+    tg.hips.copy(rel(this.hips));
+    tg.spine.set(1, 0, 0).transformDirection(rel(this.torso));
+    const { shin, foreArm, upperArm } = BODY;
+    at(this.shinF, shin + 0.02, tg.legs[0].ankle);
+    at(this.shinB, shin + 0.02, tg.legs[1].ankle);
+    for (const [i, up, fore] of [
+      [0, this.upperBow, this.foreBow],
+      [1, this.upperDraw, this.foreDraw],
+    ] as const) {
+      const arm = tg.arms[i];
+      at(up, 0, arm.shoulder);
+      at(up, upperArm, arm.elbow);
+      // Aim for the wrist so the asset's palm (grip) lands on the rig's hand.
+      at(fore, foreArm - 0.05, arm.hand);
+      arm.hand.z = aimZ;
+      arm.spread = spread;
+      arm.hang = hang;
+    }
+    const hc = this.headClear();
+    tg.head.copy(hc.center).applyMatrix4(rel(this.head));
+    tg.headR = hc.radius + 0.06; // + the hand's own thickness
+    tg.walk = walk;
+    tg.walkPhase = this.clipPhase;
+    skin.update(tg);
+    _armsInv.copy(rel(this.arms)).invert();
+  }
 }
 
+// A 0..1 blend that eases like a critically damped spring: it leaves at rest
+// (no jolt on the first frame, unlike exponential easing), arrives without
+// overshoot, and stays stable at low frame rates.
+class Blend {
+  v = 0;
+  private vel = 0;
+  constructor(private w: number) {}
+  to(target: number, dt: number) {
+    const h = Math.min(dt, 0.05);
+    const a = this.w * this.w * (target - this.v) - 2 * this.w * this.vel;
+    this.vel += a * h;
+    this.v = Math.min(1, Math.max(0, this.v + this.vel * h));
+    if ((this.v === 0 || this.v === 1) && this.v === target) this.vel = 0;
+  }
+  set(v: number) {
+    this.v = v;
+    this.vel = 0;
+  }
+}
+
+const PLAIN_HEAD = { center: new THREE.Vector3(), radius: BODY.headR };
+const HAND_SPEED = 4.5; // m/s — above any aim drag the sim produces (~3.3 m/s)
+const _grip = new THREE.Vector3();
+const _armsInv = new THREE.Matrix4();
+
+// Move from `prev` toward `next`, at most `max` metres.
+function capStep(prev: V2 | null, next: V2, max: number): V2 {
+  if (!prev) return next;
+  const dx = next.x - prev.x;
+  const dy = next.y - prev.y;
+  const len = Math.hypot(dx, dy);
+  return len <= max ? next : { x: prev.x + (dx / len) * max, y: prev.y + (dy / len) * max };
+}
+
+const _rootInv = new THREE.Matrix4();
+const _rel = new THREE.Matrix4();
+
 type V2 = { x: number; y: number };
+
+// Everything an emote does at its local time t: hand targets (relative to
+// the shoulder, local frame), spine lean, head tilt, hop height, leg kicks and
+// yawn. Every curve is periodic or holds its end pose, so an emote may run
+// past its length while it eases out.
+type GestureFx = { bow: V2; draw: V2; lean: number; tilt: number; bounce: number; stomp: number; kick: number; yawn: number };
+const XFADE = 0.35; // seconds to crossfade between emotes
+
+function newFx(): GestureFx {
+  return { bow: { x: 0, y: 0 }, draw: { x: 0, y: 0 }, lean: 0, tilt: 0, bounce: 0, stomp: 0, kick: 0, yawn: 0 };
+}
+
+function mixFx(a: GestureFx, b: GestureFx, k: number, out: GestureFx) {
+  const m = (x: number, y: number) => x + (y - x) * k;
+  out.bow = swing(a.bow, b.bow, k);
+  out.draw = swing(a.draw, b.draw, k);
+  out.lean = m(a.lean, b.lean);
+  out.tilt = m(a.tilt, b.tilt);
+  out.bounce = m(a.bounce, b.bounce);
+  out.stomp = m(a.stomp, b.stomp);
+  out.kick = m(a.kick, b.kick);
+  out.yawn = m(a.yawn, b.yawn);
+}
+
+function gestureFx(g: Gesture, t: number, out: GestureFx) {
+  const hands = gesturePose(g, t);
+  out.bow = hands.bow;
+  out.draw = hands.draw;
+  out.lean = 0;
+  out.tilt = 0;
+  out.bounce = 0;
+  out.stomp = 0;
+  out.kick = 0;
+  out.yawn = 0;
+  switch (g) {
+    case 'laugh':
+      out.lean = -0.25 - Math.sin(t * 14) * 0.08;
+      out.tilt = 0.35;
+      out.bounce = Math.abs(Math.sin(t * 14)) * 0.04;
+      break;
+    case 'facepalm':
+    case 'cry':
+      out.lean = 0.2;
+      out.tilt = -0.3 + Math.sin(t * (g === 'cry' ? 22 : 6)) * 0.08;
+      break;
+    case 'cheer':
+      out.lean = -0.1;
+      out.tilt = 0.3;
+      out.bounce = Math.abs(Math.sin(t * 7)) * 0.32;
+      out.kick = Math.max(0, Math.sin(t * 7)) * 0.4;
+      break;
+    case 'stomp':
+      out.lean = 0.12;
+      out.tilt = -0.1;
+      out.stomp = Math.max(0, Math.sin(t * 9)) * 0.8;
+      break;
+    case 'shrug':
+      out.tilt = Math.sin(t * 3) * 0.15;
+      break;
+    case 'bow': {
+      // Fold forward, hold, rise.
+      const k = Math.sin(Math.min(1, t / 2.0) * Math.PI);
+      out.lean = 0.9 * Math.min(1, k * 1.6);
+      out.tilt = -0.2 * k;
+      break;
+    }
+    case 'flex':
+      out.lean = -0.08;
+      out.tilt = 0.15 + Math.sin(t * 5) * 0.05;
+      out.bounce = Math.max(0, Math.sin(t * 5)) * 0.03;
+      break;
+    case 'think':
+      out.lean = 0.06;
+      out.tilt = 0.25 + Math.sin(t * 1.6) * 0.12;
+      break;
+    case 'salute':
+      out.lean = -0.05;
+      break;
+    case 'dance':
+      out.lean = Math.sin(t * 6) * 0.14;
+      out.tilt = Math.sin(t * 6 + 1) * 0.3;
+      out.bounce = Math.abs(Math.sin(t * 6)) * 0.12;
+      out.stomp = Math.max(0, Math.sin(t * 6)) * 0.5;
+      break;
+    case 'yawn': {
+      const k = yawnK(t);
+      out.lean = -0.18 * k;
+      out.tilt = 0.5 * k;
+      out.yawn = Math.max(0, k);
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+// Yawn: stretch up and back down once, then hold still.
+const yawnK = (t: number) => Math.sin(Math.min(1, t / 2.4) * Math.PI);
 
 // Hand targets (relative to the shoulder, local frame) for each emote.
 function gesturePose(g: Gesture, t: number): { bow: V2; draw: V2 } {
@@ -1035,8 +1190,8 @@ function gesturePose(g: Gesture, t: number): { bow: V2; draw: V2 } {
       return { bow: { x: 0.2, y: 0.28 + Math.sin(t * 22) * 0.01 }, draw: { x: 0.18, y: 0.3 } };
     case 'shrug':
       return { bow: { x: 0.36, y: 0.02 + Math.sin(t * 3) * 0.04 }, draw: { x: -0.32, y: 0.02 + Math.sin(t * 3) * 0.04 } };
-    case 'wave':
-      return { bow: { x: 0.14, y: -0.48 }, draw: { x: 0.12 + Math.sin(t * 12) * 0.14, y: 0.5 } };
+    case 'wave': // hand up in front of the face, where it reads
+      return { bow: { x: 0.14, y: -0.48 }, draw: { x: 0.3 + Math.sin(t * 12) * 0.12, y: 0.42 } };
     case 'stomp':
       return { bow: { x: 0.18, y: -0.4 - Math.max(0, Math.sin(t * 9)) * 0.1 }, draw: { x: -0.12, y: -0.38 - Math.max(0, Math.sin(t * 9)) * 0.1 } };
     case 'thumbs':
@@ -1059,7 +1214,7 @@ function gesturePose(g: Gesture, t: number): { bow: V2; draw: V2 } {
         draw: { x: -0.12 - Math.sin(t * 6) * 0.12, y: 0.42 - Math.sin(t * 12) * 0.1 },
       };
     case 'yawn': {
-      const k = Math.sin((t / 2.4) * Math.PI);
+      const k = yawnK(t);
       return { bow: { x: 0.34, y: 0.1 + k * 0.5 }, draw: { x: -0.26, y: 0.1 + k * 0.5 } };
     }
   }
@@ -1067,6 +1222,15 @@ function gesturePose(g: Gesture, t: number): { bow: V2; draw: V2 } {
 
 function lerp2(a: V2, b: V2, k: number): V2 {
   return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k };
+}
+
+// Shoulder-relative blend: reach and angle separately, along the short arc.
+function swing(a: V2, b: V2, k: number): V2 {
+  if (k <= 0) return a;
+  if (k >= 1) return b;
+  const r = Math.hypot(a.x, a.y) * (1 - k) + Math.hypot(b.x, b.y) * k;
+  const ang = lerpAngle(Math.atan2(a.y, a.x), Math.atan2(b.y, b.x), k);
+  return { x: Math.cos(ang) * r, y: Math.sin(ang) * r };
 }
 
 function lerpAngle(a: number, b: number, k: number) {
