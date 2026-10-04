@@ -483,6 +483,7 @@ const ART: Record<EmoteId, (p: ArtProps) => ReactNode> = {
 // Rounded grey card with the animated stickman emote inside.
 export function EmoteArt({ id, size, animate = true }: { id: EmoteId; size: number; animate?: boolean }) {
   const Art = ART[id];
+  if (!Art) return null; // an emote id this build has no art for (e.g. from a newer opponent)
   return (
     <View style={[styles.card, { width: size, height: size, borderRadius: size * 0.14 }]}>
       {/* key: restart the entrance animations when the emote changes. */}
