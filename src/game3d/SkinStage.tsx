@@ -48,6 +48,8 @@ class StageView {
   private t = 0;
   private yaw = SIDE.front;
   private yawVel = 0;
+  private snap = 0; // swipe offset, eased to whole quarter turns
+  private snapVel = 0;
   private label = '';
   private stepFn: ((label: string) => void) | undefined;
   private pose: RigPose = {
@@ -126,15 +128,21 @@ class StageView {
       this.stepFn?.(step.label);
     }
     // The turn follows each step's angle on a critically damped spring.
-    const w = 3.2;
+    const w = 5.5;
     // Turn the short way round (left side and front are a quarter turn apart).
     let target = step.yaw;
     while (target - this.yaw > Math.PI) target -= Math.PI * 2;
     while (target - this.yaw < -Math.PI) target += Math.PI * 2;
     this.yawVel += (w * w * (target - this.yaw) - 2 * w * this.yawVel) * h;
     this.yaw += this.yawVel * h;
+    // A swipe turns the hero, but only ever to one of the four sides the
+    // sheet drew: the stage springs to the quarter turn nearest the swipe.
     this.spinner.frame(h);
-    this.spin.rotation.y = this.yaw + this.spinner.yaw;
+    const Q = Math.PI / 2;
+    const snap = Math.round(this.spinner.yaw / Q) * Q;
+    this.snapVel += (w * w * (snap - this.snap) - 2 * w * this.snapVel) * h;
+    this.snap += this.snapVel * h;
+    this.spin.rotation.y = this.yaw + this.snap;
     this.rig.update(this.pose, this.t, h);
   }
 }

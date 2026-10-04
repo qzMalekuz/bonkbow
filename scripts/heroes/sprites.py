@@ -18,7 +18,7 @@ import numpy as np
 from scipy import ndimage as ndi
 
 sys.path.insert(0, os.path.dirname(__file__))
-import project as P  # noqa: E402  (calibration, view cutting, tile registration)
+import sheets as P  # noqa: E402  (calibration, view cutting, tile registration)
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 T = 512  # tile size

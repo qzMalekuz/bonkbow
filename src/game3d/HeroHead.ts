@@ -10,8 +10,9 @@ import type { StickmanData } from '@/game3d/StickmanBody';
 // side — front once per facial expression, then right, back, left — into an
 // atlas of tiles that all share one head frame (eyes, axis and scale line
 // up). Here that atlas goes on an upright card that turns to face the
-// camera and shows the tile for the side the head is seen from; switching
-// side or expression crossfades two tiles, so nothing ever snaps. One draw.
+// camera and shows the tile for the side the head is seen from. Changing
+// expression crossfades two tiles; changing side flips the card (edge-on,
+// swap, back), so there is never a see-through double head. One draw.
 //
 // Head space (units of the head, the sheet's eye gap = 0.76): +x = face
 // forward, +y = up, +z = the archer's right; `chin` is the chin's height.
@@ -94,6 +95,7 @@ void main() {
 }`;
 
 const FADE_SECONDS = 0.16;
+const FLIP_SECONDS = 0.14;
 const _cam = new THREE.Vector3();
 const _inv = new THREE.Matrix4();
 
@@ -110,6 +112,8 @@ export class HeroHead {
   private from = 0; // tile shown at k = 0
   private to = 0; // tile shown at k = 1
   private fade = 1;
+  private flip = 1; // 0..1: side change in progress (the card turns edge-on, swaps, turns back)
+  private flipTo = -1;
 
   // Sphere the hands keep out of, in the head group's parent space.
   readonly bounds: { center: THREE.Vector3; radius: number };
@@ -166,6 +170,8 @@ export class HeroHead {
     _cam.setFromMatrixPosition(camera.matrixWorld).applyMatrix4(_inv);
     const az = Math.atan2(_cam.z, _cam.x); // 0 = camera in front of the face
     this.turn.rotation.y = Math.PI / 2 - az; // the card's +z toward the camera
+    // This frame's draw uses the matrix three is about to read: update it now.
+    this.turn.updateMatrixWorld(true);
     const a = Math.abs(az);
     // A little hysteresis so a camera sitting right on 45° doesn't flicker.
     const h = 0.06;
@@ -178,7 +184,15 @@ export class HeroHead {
 
   private show() {
     const want = this.sheet.index[this.side === 'front' ? this.face : this.side];
-    if (want === undefined || want === this.to) return;
+    if (want === undefined || want === this.to || want === this.flipTo) return;
+    // A different side has a different outline: crossfading the two would
+    // show a see-through double head, so the card flips instead.
+    const sideOf = (i: number) => (['right', 'back', 'left'].includes(this.sheet.meta.tiles[i]) ? this.sheet.meta.tiles[i] : 'front');
+    if (sideOf(want) !== sideOf(this.to)) {
+      this.flipTo = want;
+      this.flip = 0;
+      return;
+    }
     if (want === this.from && this.fade < 1) {
       this.from = this.to;
       this.fade = 1 - this.fade;
@@ -200,6 +214,17 @@ export class HeroHead {
   update(mood: Mood, _t: number, dt: number, focus = 0, flash = 0) {
     this.face = this.pick(mood === 'neutral' && focus > 0.75 ? 'focus' : mood);
     this.show();
+    if (this.flip < 1) {
+      const was = this.flip;
+      this.flip = Math.min(1, this.flip + dt / FLIP_SECONDS);
+      if (was < 0.5 && this.flip >= 0.5 && this.flipTo >= 0) {
+        this.from = this.to = this.flipTo; // swap while edge-on
+        this.flipTo = -1;
+        this.fade = 1;
+        this.setTiles();
+      }
+    }
+    this.card.scale.x = Math.max(0.02, Math.abs(Math.cos(this.flip * Math.PI)));
     if (this.fade < 1) this.fade = Math.min(1, this.fade + dt / FADE_SECONDS);
     const k = this.fade;
     this.mat.uniforms.k.value = k * k * (3 - 2 * k);

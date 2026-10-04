@@ -63,19 +63,16 @@ here (in the right section) in the same change that applies it.
    (fps, sim ms, render ms, draw calls, slow frames). Target 60 fps with
    0–2 slow frames per 3 s on the Pixel 6a. Turn `PERF_LOG` off for shipping.
 
-9. **Hero heads come from the character sheets, not from sculpting.**
-   `scripts/heroes/build.sh [id]` rebuilds them from `archer-boys.pdf`: the
-   head volume is what every turnaround view's silhouette agrees on, the
-   3/4 views' real angles are fitted, and the sheet's own art is projected
-   back onto the mesh, one texture per sheet expression
-   (`assets/heroes/<id>_<expr>.jpg`); `HeroHead.ts` crossfades between them
-   when the mood changes. Calibration (pupils, chin, expression strip) for
-   each page lives in `HEROES` in `scripts/heroes/project.py`. Commit the
-   outputs; never edit them by hand. One mesh (~10k triangles) and one draw
-   per head. Check every change against the PDF from front, 3/4, side and
-   back and every expression, before the phone (offline harness: bun build
-   + headless Brave with `--allow-file-access-from-files`), then in
-   Settings → Character showcase.
+9. **Hero heads are the sheet's own drawings, shown from four sides.**
+   Heroes are seen only from the front, right, back and left (stages and
+   showcase turn between those; a swipe snaps to the nearest quarter turn).
+   `scripts/heroes/build.sh [id]` cuts each side, plus the front once per
+   sheet expression, out of `archer-boys.pdf` into one registered atlas
+   (`assets/heroes/<id>_heads.png` + `.json`); `HeroHead.ts` puts it on a
+   camera-facing card, crossfades expressions and flips the card for a side
+   change (never crossfade two outlines: that ghosts). Page calibration is in
+   `HEROES` in `scripts/heroes/sheets.py`. Don't reintroduce 3D head
+   reconstruction from the sheets: its in-between angles always smear.
 
 10. **Bodies are skinned meshes posed by the rig.** Plain archers wear the
     Unity Stick Man asset; heroes wear their baked chibi suit. Both go

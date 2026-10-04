@@ -51,12 +51,13 @@ The six shop heroes (Akshay, Beeman, Chase, M-it, Mert, Tolly, PDF pages
 1–6) are built from the character sheets themselves:
 
 ```bash
-scripts/heroes/build.sh            # all heroes (≈2 min)
+scripts/heroes/build.sh            # all heroes (≈40 s)
 scripts/heroes/build.sh chase      # one hero
 ```
 
-Each head is the shape every turnaround view agrees on, painted with the
-sheet's art (one texture per expression); each chibi suit is sculpted in
+Each head is the sheet's own drawings, cut into one atlas: the front once
+per expression, then the right, back and left views (heroes are shown from
+those four sides only); each chibi suit is sculpted in
 code (`scripts/heroes/body.ts`) and skinned to a skeleton with the Unity
 body's bone names, so `StickmanBody.ts` drives it. Outputs in
 `assets/heroes/` are committed. Needs `pdftoppm`, Python 3 with numpy,
