@@ -3,6 +3,7 @@ import { StyleSheet, View, type ViewStyle } from 'react-native';
 import { Canvas, useFrame, useThree } from '@react-three/fiber/native';
 import * as THREE from 'three';
 import { StickmanRig, makeArrow, type RigPose } from '@/game3d/Stickman3D';
+import { SIDE, reelPose } from '@/game3d/heroReel';
 import { ARM_REACH, PHYS, SHOULDER_Y } from '@/game3d/world';
 import type { Death, Mood } from '@/game3d/sim';
 import type { Look } from '@/game/cosmetics';
@@ -11,8 +12,8 @@ import type { Look } from '@/game/cosmetics';
 // can be swapped, turned, zoomed and put through every pose the rig has.
 // Reached from Settings in dev builds only (src/app/showcase.tsx).
 
-export type ShowAction = 'idle' | 'aim' | 'shoot' | 'walk' | 'hit' | 'win' | 'lose' | 'death';
-export type ShowAngle = 'spin' | 'front' | 'front34' | 'side' | 'back';
+export type ShowAction = 'reel' | 'idle' | 'aim' | 'shoot' | 'walk' | 'run' | 'crouch' | 'lookback' | 'hit' | 'win' | 'lose' | 'death';
+export type ShowAngle = 'front' | 'side' | 'back' | 'left';
 export type ShowState = { look: Look; action: ShowAction; mood: Mood | 'auto'; angle: ShowAngle; zoom: number; wire: boolean };
 
 export function Showcase({ state, style }: { state: ShowState; style?: ViewStyle }) {
@@ -34,14 +35,8 @@ function Scene({ view }: { view: ShowcaseView }) {
   return null;
 }
 
-// The body is already turned 0.42 rad toward the camera (YAW in the rig).
-const BODY_YAW = 0.42;
-const ANGLES: Record<Exclude<ShowAngle, 'spin'>, number> = {
-  front: BODY_YAW - Math.PI / 2,
-  front34: BODY_YAW - Math.PI / 4,
-  side: BODY_YAW,
-  back: BODY_YAW + Math.PI / 2,
-};
+// Heroes are shown square-on from the four sides their sheet drew.
+const ANGLES: Record<ShowAngle, number> = { front: SIDE.front, side: SIDE.right, back: SIDE.back, left: SIDE.left };
 
 class ShowcaseView {
   private root = new THREE.Group();
@@ -53,7 +48,7 @@ class ShowcaseView {
   private t = 0;
   private actT = 0;
   private fired = false;
-  private yaw = ANGLES.front34;
+  private yaw = ANGLES.front;
   private death: Death | null = null;
   private wire = false;
   private pose: RigPose = {
@@ -136,8 +131,29 @@ class ShowcaseView {
     p.walk = 0;
     p.mood = 'neutral';
     p.gesture = null;
+    p.run = 0;
+    p.crouch = 0;
+    p.look = 0;
     p.recoil = Math.max(0, p.recoil - dt * 2.5);
     switch (s.action) {
+      case 'reel': // the character-sheet reel the shop plays
+        reelPose(a, p);
+        break;
+      case 'run':
+        p.walk = 1;
+        p.x = 1;
+        p.stepT = a * 2.6;
+        p.run = 1;
+        break;
+      case 'crouch': // drop to a knee and aim
+        p.crouch = 1;
+        p.ready = true;
+        p.angle = 0.2 + Math.sin(this.t * 0.8) * 0.3;
+        p.draw = Math.min(1, a / 0.9);
+        break;
+      case 'lookback':
+        p.look = Math.sin(a * 0.9) > 0 ? 1 : -1;
+        break;
       case 'aim': // sweep the aim up and down at full draw
         p.ready = true;
         p.angle = 0.25 + Math.sin(this.t * 0.8) * 0.45;
@@ -217,8 +233,10 @@ class ShowcaseView {
       if (sh.t > 0.9) sh.live = false;
     }
 
-    if (s.angle === 'spin') this.yaw += dt * 0.7;
-    else this.yaw += (ANGLES[s.angle] - this.yaw) * (1 - Math.exp(-dt * 6));
+    let target = ANGLES[s.angle];
+    while (target - this.yaw > Math.PI) target -= Math.PI * 2;
+    while (target - this.yaw < -Math.PI) target += Math.PI * 2;
+    this.yaw += (target - this.yaw) * (1 - Math.exp(-dt * 6));
     this.turn.rotation.y = this.yaw;
 
     // Zoomed in, the camera rises to frame the head.

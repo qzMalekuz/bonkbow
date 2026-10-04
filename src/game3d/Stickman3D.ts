@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { ARM_REACH, ARROW_LEN, BODY, HIP_Y } from '@/game3d/world';
 import type { Death, Gesture, Mood } from '@/game3d/sim';
 import type { Look } from '@/game/cosmetics';
-import { HeroHead } from '@/game3d/HeroHead';
+import { HeroHead, heroBody } from '@/game3d/HeroHead';
 import { HERO_SPECS } from '@/game3d/heroSpecs';
 import { STICKMAN_DATA, StickmanBody, WALK_STRIDE, type BodyTargets } from '@/game3d/StickmanBody';
 
@@ -36,6 +36,12 @@ export type RigPose = {
   gestureT: number;
   recoil: number; // 1 → 0 after a release
   showNocked: boolean;
+  // Character-sheet actions layered on top (each eases in and out): run
+  // turns a walk into a sprint, crouch drops to one knee to shoot, look
+  // turns the head back over the shoulder (−1..1, + = over the right).
+  run?: number;
+  crouch?: number;
+  look?: number;
 };
 
 const BODY_BLACK = '#0E0E10';
@@ -43,6 +49,69 @@ const YAW = 0.42; // turn the body toward the camera for a 3/4 view
 const STRING_REST = 0.14;
 const BOW_R = 0.55;
 const BOW_HALF = 0.72;
+// Where the string is nocked on the upper limb (bow space: +x toward the
+// target, grip at the origin); the lower limb mirrors it.
+const BOW_TIP = { x: -BOW_R + BOW_R * Math.cos(BOW_HALF), y: BOW_R * Math.sin(BOW_HALF) };
+const _up = new THREE.Vector3(0, 1, 0);
+const _qdir = new THREE.Vector3();
+
+// Upper recurve limb: from the grip back toward the archer, out to the nock,
+// then a short flick forward. Wide and flat, tapering to the tip.
+function recurveGeo() {
+  const T = BOW_TIP;
+  const pts = [
+    [0, 0.06],
+    [-0.01, 0.12],
+    [-0.045, 0.2],
+    [-0.095, 0.27],
+    [-0.135, 0.32],
+    [T.x, T.y],
+    [T.x + 0.035, T.y + 0.035],
+  ].map(([x, y]) => new THREE.Vector3(x, y, 0));
+  const curve = new THREE.CatmullRomCurve3(pts);
+  const SEG = 28;
+  const RAD = 8;
+  const g = new THREE.TubeGeometry(curve, SEG, 1, RAD, false);
+  const pos = g.getAttribute('position');
+  const c = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    const t = Math.min(1, Math.floor(i / (RAD + 1)) / SEG);
+    curve.getPointAt(t, c);
+    const r = 0.024 * (1 - 0.55 * t);
+    pos.setXYZ(i, c.x + (pos.getX(i) - c.x) * r * 0.7, c.y + (pos.getY(i) - c.y) * r * 0.7, c.z + (pos.getZ(i) - c.z) * r * 1.5);
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
+const QUIVER_MAT = new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 18, specular: new THREE.Color(0x222222), side: THREE.DoubleSide });
+
+// A mirrored copy turns its triangles inside out: swap two corners of each.
+function flipWinding(g: THREE.BufferGeometry) {
+  const idx = g.getIndex();
+  if (idx) {
+    for (let i = 0; i < idx.count; i += 3) {
+      const a = idx.getX(i + 1);
+      idx.setX(i + 1, idx.getX(i + 2));
+      idx.setX(i + 2, a);
+    }
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
+// Leather-wrapped grip: a fat cylinder with wrap ridges.
+function gripGeo() {
+  const g = new THREE.CylinderGeometry(0.032, 0.032, 0.16, 12, 16);
+  const pos = g.getAttribute('position');
+  for (let i = 0; i < pos.count; i++) {
+    const k = 1 + 0.08 * Math.abs(Math.sin(pos.getY(i) * 110));
+    pos.setX(i, pos.getX(i) * k);
+    pos.setZ(i, pos.getZ(i) * k);
+  }
+  g.computeVertexNormals();
+  return g;
+}
 
 const geoCache = new Map<string, THREE.BufferGeometry>();
 function cached<T extends THREE.BufferGeometry>(key: string, make: () => T): T {
@@ -88,7 +157,8 @@ function glossy(color: string, opts: { metal?: number; rough?: number; glow?: nu
 const WHITE = new THREE.MeshBasicMaterial({ color: '#FFFFFF' });
 
 // Hero characters get a sculpted 3D head (HeroHead.ts) on the plain stickman body.
-const HERO_HEAD = 1.75; // hero skull radius vs the plain stickman's head
+const HERO_HEAD = 2.05; // hero head unit vs the plain stickman's head radius (chibi-big)
+const COLLAR_TOP = 0.0; // where a hero's chin sits, along the spine past the torso
 const BLACK = new THREE.MeshBasicMaterial({ color: BODY_BLACK });
 
 // An arrow whose TIP is at the local origin, pointing along +x. Shaft, head
@@ -131,7 +201,8 @@ export function makeArrow(fletch: string, shaft = '#D9C39A') {
 }
 
 // Concatenate geometries into one non-indexed geometry with per-part colours.
-function mergeColored(parts: [THREE.BufferGeometry, string][]) {
+// With `keep`, parts that already have vertex colours keep them.
+function mergeColored(parts: [THREE.BufferGeometry, string][], keep = false) {
   const flat = parts.map(([g, c]) => {
     const n = g.index ? g.toNonIndexed() : g;
     if (!n.getAttribute('normal')) n.computeVertexNormals();
@@ -146,7 +217,9 @@ function mergeColored(parts: [THREE.BufferGeometry, string][]) {
     const n = g.getAttribute('position').count;
     pos.set(g.getAttribute('position').array as Float32Array, o * 3);
     nor.set(g.getAttribute('normal').array as Float32Array, o * 3);
-    for (let i = 0; i < n; i++) col.set([c.r, c.g, c.b], (o + i) * 3);
+    const own = keep ? g.getAttribute('color') : null;
+    if (own) col.set(own.array as Float32Array, o * 3);
+    else for (let i = 0; i < n; i++) col.set([c.r, c.g, c.b], (o + i) * 3);
     o += n;
   }
   const out = new THREE.BufferGeometry();
@@ -288,6 +361,7 @@ export class StickmanRig {
   private hips = new THREE.Group(); // yawed toward camera
   private torso = new THREE.Group(); // +x along the spine
   private head = new THREE.Group(); // upright frame at the head centre
+  private headYaw = new THREE.Group(); // turns the head about its own up axis (look back)
   private face = new THREE.Group();
   private arms = new THREE.Group(); // not yawed: arms aim in the duel plane
   private thighF = new THREE.Group();
@@ -302,11 +376,16 @@ export class StickmanRig {
   private stringGeo = new THREE.BufferGeometry();
   private nocked: THREE.Group;
   private bodyMat: THREE.MeshLambertMaterial;
-  // The Unity stickman mesh, driven from this rig's joints (null without the licensed file).
+  // The skinned body driven from this rig's joints: a hero's chibi suit, or
+  // the Unity stickman (null without the licensed file, then capsules).
   private skin: StickmanBody | null = null;
+  private stickSkin: StickmanBody | null = null;
+  private heroSkin: StickmanBody | null = null;
+  private heroSkinId = '';
   private skinMat: THREE.MeshPhongMaterial | null = null;
-  private sticks: THREE.Mesh[] = []; // capsule body, hidden while the skin is on
-  private targets: BodyTargets | null = null;
+  private suitMat = new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 30, specular: new THREE.Color(0x2c2c30) });
+  private sticks: THREE.Mesh[] = []; // capsule body, hidden while a skin is on
+  private targets: BodyTargets;
   // Continuity across state changes: the walk phase and emote clock hold
   // while their blends ease out; the death landing settles instead of
   // snapping; hand targets have a top speed.
@@ -324,6 +403,8 @@ export class StickmanRig {
   private mouthOpen: THREE.Mesh;
   private mouthLine: THREE.Mesh;
   private flagProp: THREE.Group;
+  // Spare arrows in the draw hand for a hero with no quiver (Beeman's sheet).
+  private heldArrows: THREE.Group | null = null;
   private shieldBubble: THREE.Mesh;
   private shadow: THREE.Mesh;
   private flutter: THREE.Object3D[] = [];
@@ -344,6 +425,10 @@ export class StickmanRig {
   private fx: GestureFx = newFx();
   private fxPrev: GestureFx = newFx();
   private sadBlend = new Blend(6);
+  private runBlend = new Blend(7);
+  private crouchBlend = new Blend(7);
+  private lookBlend = new Blend(5);
+  private lookSide = 1;
   // Arrows stuck in this body are parented here so they tumble with it.
   readonly stuckMount = new THREE.Group();
 
@@ -377,7 +462,8 @@ export class StickmanRig {
     this.head.position.x = torso + neck + headR * 0.92;
     this.head.rotation.z = -Math.PI / 2;
     const skull = mesh(cached('head', () => new THREE.SphereGeometry(headR, 22, 16)), this.headMat);
-    this.head.add(skull, this.face, this.cosmetics);
+    this.head.add(this.headYaw);
+    this.headYaw.add(skull, this.face, this.cosmetics);
     this.torso.add(this.head);
 
     // Face: eyes sit on the front of the head, turned with its surface.
@@ -418,24 +504,23 @@ export class StickmanRig {
     this.foreDraw.position.z = -0.06;
     this.arms.add(this.upperBow, this.foreBow, this.upperDraw, this.foreDraw, this.bow);
 
-    // Smooth skinned body from the Unity asset, when it ships with this build.
+    // Smooth skinned body from the Unity asset, when it ships with this build
+    // (setLook swaps in a hero's suit instead).
     if (STICKMAN_DATA) {
       this.skinMat = new THREE.MeshPhongMaterial({ color: BODY_BLACK, shininess: 45, specular: new THREE.Color(0x3a3a3a) });
-      this.skin = new StickmanBody(STICKMAN_DATA, this.skinMat);
-      this.root.add(this.skin.group);
-      for (const m of this.sticks) m.visible = false;
-      const v = () => new THREE.Vector3();
-      this.targets = {
-        hips: new THREE.Matrix4(),
-        spine: v(),
-        legs: [0, 1].map(() => ({ ankle: v() })),
-        arms: [0, 1].map(() => ({ shoulder: v(), elbow: v(), hand: v(), spread: 1, hang: 1 })),
-        head: v(),
-        headR: BODY.headR,
-        walk: 0,
-        walkPhase: 0,
-      };
+      this.stickSkin = new StickmanBody(STICKMAN_DATA, this.skinMat);
     }
+    const v = () => new THREE.Vector3();
+    this.targets = {
+      hips: new THREE.Matrix4(),
+      spine: v(),
+      legs: [0, 1].map(() => ({ ankle: v() })),
+      arms: [0, 1].map(() => ({ shoulder: v(), elbow: v(), hand: v(), spread: 1, hang: 1 })),
+      head: v(),
+      headR: BODY.headR,
+      walk: 0,
+      walkPhase: 0,
+    };
 
     // Bowstring (tip → nock → tip)
     this.stringGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9), 3));
@@ -493,6 +578,7 @@ export class StickmanRig {
     this.buildBow(look);
     this.buildHat(look);
     this.buildHero(look);
+    this.useBody(look);
     this.buildQuiver(look);
     // A hero head replaces the cartoon eyes and mouth entirely.
     this.face.visible = look.hat !== 'face';
@@ -507,62 +593,131 @@ export class StickmanRig {
 
   private buildBow(look: Look) {
     this.bow.clear();
-    const limbGeo = cached('bowArc', () => {
-      const g = new THREE.TorusGeometry(BOW_R, 0.022, 6, 24, BOW_HALF * 2);
-      g.rotateZ(-BOW_HALF);
-      g.translate(-BOW_R, 0, 0);
-      return g;
+    // A recurve: limbs curve back toward the archer and flick forward at the
+    // tips, string nocked where they turn (BOW_TIP); wrapped grip with metal
+    // ferrules either side, as on the character sheets. One merged,
+    // vertex-coloured mesh per look (one draw call).
+    const key = `bow|${look.bowColor}|${look.bowAccent}`;
+    const geo = cached(key, () => {
+      const limb = recurveGeo();
+      const lower = limb.clone().scale(1, -1, 1);
+      const ferrules = [1, -1].map((s) => new THREE.CylinderGeometry(0.03, 0.03, 0.025, 10).translate(-0.004, s * 0.085, 0));
+      const nocks = [1, -1].map((s) => new THREE.SphereGeometry(0.016, 8, 6).translate(BOW_TIP.x, s * BOW_TIP.y, 0));
+      return mergeColored([
+        [limb, look.bowColor],
+        [flipWinding(lower), look.bowColor],
+        [ferrules[0], '#B9B6AE'],
+        [ferrules[1], '#B9B6AE'],
+        [nocks[0], look.bowAccent],
+        [nocks[1], look.bowAccent],
+        [gripGeo(), look.bowAccent],
+      ]);
     });
-    const metal = look.bowColor === '#C9A227' ? 0.8 : 0.1;
-    this.bow.add(mesh(limbGeo, glossy(look.bowColor, { rough: 0.35, metal, glow: look.bowGlow ? 0.35 : 0 })));
-    this.bow.add(mesh(cached('bowGrip', () => new THREE.CylinderGeometry(0.03, 0.03, 0.14, 8)), glossy(look.bowAccent)));
-    for (const s of [1, -1]) {
-      const cap = mesh(cached('bowCap', () => new THREE.SphereGeometry(0.035, 8, 6)), glossy(look.bowAccent, { glow: look.bowGlow ? 1.2 : 0 }));
-      cap.position.set(-BOW_R + BOW_R * Math.cos(BOW_HALF), s * BOW_R * Math.sin(BOW_HALF), 0);
-      this.bow.add(cap);
-    }
+    const metal = look.bowColor === '#C9A227' ? 0.8 : 0.15;
+    const mat = new THREE.MeshPhongMaterial({
+      vertexColors: true,
+      shininess: 60,
+      specular: new THREE.Color(0xffffff).multiplyScalar(0.15 + metal * 0.6),
+      emissive: look.bowGlow ? new THREE.Color(look.bowAccent).multiplyScalar(0.35) : new THREE.Color(0x000000),
+    });
+    this.bow.add(mesh(geo, mat));
   }
 
   private buildQuiver(look: Look) {
     this.torso.children.filter((c) => c.userData.quiver).forEach((c) => this.torso.remove(c));
-    const quiver = new THREE.Group();
-    quiver.add(mesh(cached('quiver', () => new THREE.CylinderGeometry(0.075, 0.06, 0.5, 10)), glossy(look.hat === 'face' ? '#7A4B2A' : '#3A2A1E', { rough: 0.7 })));
-    const band = mesh(cached('qband', () => new THREE.CylinderGeometry(0.079, 0.079, 0.05, 10)), glossy(look.banner));
-    band.position.y = 0.15;
-    quiver.add(band);
-    for (let i = 0; i < 3; i++) {
-      const f = mesh(cached('qfl', () => new THREE.ConeGeometry(0.03, 0.12, 4)), glossy(look.trail, { rough: 0.6 }));
-      f.position.set((i - 1) * 0.035, 0.3, (i % 2) * 0.02);
-      quiver.add(f);
+    const hero = look.hat === 'face';
+    this.heldArrows?.removeFromParent();
+    this.heldArrows = null;
+    if (hero && look.face && !HERO_SPECS[look.face].outfit.quiver) {
+      // No quiver: he carries two spare arrows, tips down, in the draw hand.
+      const g = new THREE.Group();
+      for (const [dz, tilt] of [
+        [0.015, 0.06],
+        [-0.015, -0.05],
+      ]) {
+        const a = makeArrow(look.trail);
+        a.position.set(0, -0.55, dz);
+        a.rotation.z = -Math.PI / 2 + tilt; // makeArrow points +x at its tip
+        g.add(a);
+      }
+      this.heldArrows = g;
+      this.arms.add(g);
+      return;
     }
+    // Leather tube, trim bands and five arrows standing in it with their
+    // fletching fanned over the shoulder: one merged mesh (one draw).
+    const geo = cached(`quiver|${hero ? 'hero' : look.banner}|${look.trail}`, () => {
+      const parts: [THREE.BufferGeometry, string][] = [[new THREE.CylinderGeometry(0.085, 0.07, 0.56, 14), hero ? '#7A4527' : '#3A2A1E']];
+      for (const y of [0.25, -0.24]) parts.push([new THREE.CylinderGeometry(0.09, 0.09, 0.045, 14).translate(0, y, 0), hero ? '#4E2A15' : look.banner]);
+      const arrow = makeArrow(look.trail).children[0] as THREE.Mesh;
+      const m = new THREE.Matrix4();
+      for (let i = 0; i < 5; i++) {
+        const ang = (i / 5) * Math.PI * 2;
+        // makeArrow's tip is its origin, pointing +x: turn it tip-down.
+        m.compose(
+          new THREE.Vector3(Math.cos(ang) * 0.035, -0.24 + (i % 2) * 0.04, Math.sin(ang) * 0.035),
+          new THREE.Quaternion().setFromEuler(new THREE.Euler((i - 2) * 0.07, 0, -Math.PI / 2)),
+          new THREE.Vector3(1, 1, 1),
+        );
+        parts.push([arrow.geometry.clone().applyMatrix4(m), '#FFFFFF']);
+      }
+      return mergeColored(parts, true);
+    });
+    const quiver = mesh(geo, QUIVER_MAT);
     quiver.userData.quiver = true;
-    // Torso space: +x runs up the spine, +y points behind the archer.
-    quiver.rotation.set(0, 0, -Math.PI / 2 - 0.35);
-    quiver.position.set(BODY.torso * 0.62, 0.09, 0);
+    // Torso space: +x runs up the spine, +y points behind the archer, +z to
+    // their right. Slung across the back, top over the right shoulder.
+    quiver.quaternion.setFromUnitVectors(_up, _qdir.set(Math.cos(0.45), 0, Math.sin(0.45)));
+    // A hero's quiver rides lower and further back, clear of the big head.
+    quiver.position.set(BODY.torso * (hero ? 0.4 : 0.56), hero ? 0.27 : 0.09, 0);
     this.torso.add(quiver);
   }
 
-  // A hero is the plain black stickman with a sculpted head (HeroHead.ts):
-  // the body, limbs and joints are exactly the ones every archer has.
+  // The skinned body for this look: a hero wears their chibi suit
+  // (assets/heroes/<id>_body.json); everyone else the Unity stickman, or the
+  // capsule limbs when that file isn't in the build.
+  private useBody(look: Look) {
+    let next = this.stickSkin;
+    if (look.hat === 'face' && look.face) {
+      if (this.heroSkinId !== look.face) {
+        this.heroSkin?.group.removeFromParent();
+        this.heroSkin = new StickmanBody(heroBody(look.face), this.suitMat);
+        this.heroSkinId = look.face;
+      }
+      next = this.heroSkin;
+    }
+    if (next === this.skin) return;
+    this.skin?.group.removeFromParent();
+    this.skin = next;
+    if (next) this.root.add(next.group);
+    for (const m of this.sticks) m.visible = !next;
+    // Fresh body: no hand-speed history to sweep in from.
+    this.prevBow = this.prevDraw = null;
+  }
+
+  // A hero is a sculpted head (HeroHead.ts) on their suit: the limbs and
+  // joints are exactly the ones every archer has.
   private buildHero(look: Look) {
     const { torso, neck, headR } = BODY;
     this.hero?.dispose();
     this.hero = null;
     this.heroClear = null;
     this.head.position.x = torso + neck + headR * 0.92;
-    this.head.children.forEach((c) => {
+    this.headYaw.children.forEach((c) => {
       c.visible = true;
     });
     if (look.hat !== 'face' || !look.face) return;
 
     const R = headR * HERO_HEAD;
-    this.head.position.x = torso + neck + R * 0.86;
-    this.hero = new HeroHead(HERO_SPECS[look.face], R);
+    this.hero = new HeroHead(look.face, R);
+    // The sheet's chin rests on the suit's turtleneck collar; the head's own
+    // painted collar and neck run down inside it.
+    this.head.position.x = torso + COLLAR_TOP - this.hero.chin * R;
     const b = this.hero.bounds;
     this.heroClear = b.radius * 0.88 > R ? { center: b.center, radius: b.radius * 0.88 } : { center: new THREE.Vector3(), radius: R };
-    this.head.add(this.hero.group);
+    this.headYaw.add(this.hero.group);
     // Hide the black skull and cartoon face: the hero head replaces them.
-    this.head.children.forEach((c) => {
+    this.headYaw.children.forEach((c) => {
       if (c !== this.hero?.group && c !== this.face && c !== this.cosmetics) c.visible = false;
     });
   }
@@ -762,6 +917,13 @@ export class StickmanRig {
       this.clipPhase = -p.walk / WALK_STRIDE;
     }
     const walking = this.walkBlend.v;
+    this.runBlend.to(p.run && p.walk > 0 && !d ? p.run : 0, dt);
+    this.crouchBlend.to(p.crouch && !d ? p.crouch : 0, dt);
+    if (p.look) this.lookSide = p.look < 0 ? -1 : 1;
+    this.lookBlend.to(p.look && !d ? Math.abs(p.look) : 0, dt);
+    const run = this.runBlend.v * walking;
+    const crouch = this.crouchBlend.v;
+    const look = this.lookBlend.v * this.lookSide;
     // Death: follow the sim's tumble in the air, then ease onto the ground.
     if (d) {
       if (!d.landed) {
@@ -777,7 +939,7 @@ export class StickmanRig {
     // Root / tumble / walk-in / drop
     const walkOff = -f * p.walk;
     let bounce = 0;
-    bounce = Math.abs(Math.sin(this.walkPhase * Math.PI)) * 0.05 * walking;
+    bounce = Math.abs(Math.sin(this.walkPhase * Math.PI)) * (0.05 + 0.035 * run) * walking - crouch * 0.32;
     bounce += g * fx.bounce;
     if (d) {
       this.root.position.set(d.x, d.y - (HIP_Y - 0.1) * Math.abs(Math.sin(this.deathRot)) * (0.4 + 0.6 * land), 0);
@@ -791,12 +953,13 @@ export class StickmanRig {
     }
     this.body.position.y = HIP_Y + bounce;
     this.shadow.visible = !d || d.landed;
-    this.shadow.scale.setScalar(1 - Math.min(0.5, bounce));
+    this.shadow.scale.setScalar(1 - Math.min(0.5, Math.max(0, bounce)));
 
     // Hit flash and shield shimmer
     this.bodyMat.emissive.setRGB(p.flash * 0.9, p.flash * 0.25, p.flash * 0.25);
     this.headMat.emissive.copy(this.bodyMat.emissive);
     this.skinMat?.emissive.copy(this.bodyMat.emissive);
+    this.suitMat.emissive.copy(this.bodyMat.emissive);
     const sb = this.shieldBubble.material as THREE.MeshBasicMaterial;
     sb.opacity = p.shieldFlash * 0.55;
     this.shieldBubble.visible = p.shieldFlash > 0.01;
@@ -811,16 +974,23 @@ export class StickmanRig {
     const groundAhead = -Math.sin(this.body.rotation.z) > 0;
     const kneeUp = groundAhead ? 0 : 0.4 * land;
     const heelUp = (groundAhead ? 0.7 : 0.55) * land;
-    const stride = Math.sin(this.walkPhase * Math.PI * 2) * 0.55 * walking;
+    const stride = Math.sin(this.walkPhase * Math.PI * 2) * (0.55 + 0.32 * run) * walking;
     const stomp = g * fx.stomp;
     const cheerKick = g * fx.kick;
-    this.hips.rotation.y = -YAW * (1 - limp);
+    // Looking back twists the hips a little toward the look.
+    this.hips.rotation.y = -YAW * (1 - limp) - look * 0.3;
     // Standing stance fades out as the body lies down.
     const stance = (1 - walking) * (1 - land);
-    this.thighF.rotation.z = -Math.PI / 2 + 0.3 * stance + stride + flail(0) * limp + kneeUp + stomp + cheerKick;
-    this.shinF.rotation.z = -0.12 * (1 - land) - Math.max(0, -stride) * 0.8 - stomp * 0.9 - cheerKick + Math.abs(flail(1)) * 0.5 * limp - heelUp;
-    this.thighB.rotation.z = -Math.PI / 2 - 0.26 * stance - stride + flail(2) * limp - cheerKick;
-    this.shinB.rotation.z = -0.28 * (1 - land) - Math.max(0, stride) * 0.8 - cheerKick + Math.abs(flail(3)) * 0.5 * limp;
+    const flex = 0.8 + 0.6 * run; // knees fold more in a sprint
+    const tF = -Math.PI / 2 + 0.3 * stance + stride + flail(0) * limp + kneeUp + stomp + cheerKick;
+    const sF = -0.12 * (1 - land) - Math.max(0, -stride) * flex - stomp * 0.9 - cheerKick + Math.abs(flail(1)) * 0.5 * limp - heelUp;
+    const tB = -Math.PI / 2 - 0.26 * stance - stride + flail(2) * limp - cheerKick;
+    const sB = -0.28 * (1 - land) - Math.max(0, stride) * flex - cheerKick + Math.abs(flail(3)) * 0.5 * limp;
+    // Crouch: front foot planted ahead under a bent knee, back knee down.
+    this.thighF.rotation.z = tF + (-0.25 - tF) * crouch;
+    this.shinF.rotation.z = sF + (-1.32 - sF) * crouch;
+    this.thighB.rotation.z = tB + (-1.92 - tB) * crouch;
+    this.shinB.rotation.z = sB + (-1.07 - sB) * crouch;
 
     // Torso lean: breathe, lean into the draw, recoil on hit, emote lean
     const breathe = d ? 0 : Math.sin(t * 2.1) * 0.025;
@@ -833,11 +1003,15 @@ export class StickmanRig {
       gLean * g +
       sad * 0.22 +
       flail(4) * 0.3 * limp -
-      0.06 * walking;
+      0.06 * walking -
+      0.32 * run -
+      0.1 * crouch;
     // lean > 0 tips the spine backward (+x toward the archer's back).
     this.torso.rotation.z = Math.PI / 2 + lean;
     const idleLook = d ? 0 : Math.sin(t * 0.7) * 0.05 + Math.sin(t * 1.9) * 0.02;
-    this.head.rotation.z = -Math.PI / 2 - lean * 0.3 + idleLook * (1 - g) + headTilt * g - sad * 0.55 - p.flinch * 0.3;
+    this.head.rotation.z = -Math.PI / 2 - lean * 0.3 + idleLook * (1 - g) + headTilt * g - sad * 0.55 - p.flinch * 0.3 + run * 0.12;
+    // Look back: the head turns about its own up axis, over the shoulder.
+    this.headYaw.rotation.y = -look * 1.5;
 
     // Face
     this.eyes.forEach((e, i) => e.set(p.mood, t, i === 0, dt));
@@ -901,6 +1075,13 @@ export class StickmanRig {
     if (walking > 0.001) {
       bowHand = { x: bowHand.x - stride * 0.15, y: bowHand.y };
       drawHand = { x: drawHand.x + stride * 0.15, y: drawHand.y };
+      // Sprinting: elbows bent, fists pumping at chest height.
+      if (run > 0.001 && ab < 0.999) {
+        const sw = Math.sin(this.walkPhase * Math.PI * 2);
+        const k = run * (1 - ab);
+        bowHand = swing(bowHand, { x: 0.12 - sw * 0.3, y: -0.26 + Math.max(0, -sw) * 0.2 }, k);
+        drawHand = swing(drawHand, { x: 0.12 + sw * 0.3, y: -0.26 + Math.max(0, sw) * 0.2 }, k);
+      }
     }
     if (g > 0.001 && this.gest && !d) {
       bowHand = swing(bowHand, fx.bow, g);
@@ -935,11 +1116,11 @@ export class StickmanRig {
     // With the Unity body, pose it now and hang the bow and string on its
     // real hands. While aiming both hands work in one plane, a little in
     // front of a big hero head so the string never cuts through the face.
-    if (this.skin && this.targets) {
+    if (this.skin) {
       const aimW = ab * (1 - g) * (1 - sad);
       // Hanging (not aiming, not emoting): arms rest at their full length.
       const hang = (1 - ab) * (1 - g);
-      this.syncSkin(this.skin, this.targets, 1 - aimW, hang, aimZ, d ? 0 : walking);
+      this.syncSkin(this.skin, this.targets, 1 - aimW, hang, aimZ, d ? 0 : walking * (1 - this.runBlend.v) * (1 - crouch));
       this.skin.grip(0, _grip).applyMatrix4(_armsInv);
       hx = _grip.x;
       hy = _grip.y;
@@ -958,8 +1139,8 @@ export class StickmanRig {
     const sinB = Math.sin(bowRot);
 
     // Bowstring through the nock while drawn, straight otherwise
-    const tipBack = -BOW_R + BOW_R * Math.cos(BOW_HALF);
-    const tipUp = BOW_R * Math.sin(BOW_HALF);
+    const tipBack = BOW_TIP.x;
+    const tipUp = BOW_TIP.y;
     const pos = this.stringGeo.getAttribute('position') as THREE.BufferAttribute;
     const tx = (lx: number, ly: number) => hx + lx * cosB - ly * sinB;
     const ty = (lx: number, ly: number) => hy + lx * sinB + ly * cosB;
@@ -982,6 +1163,12 @@ export class StickmanRig {
       this.flagProp.position.set(nx, ny - 0.3, nz);
       const cloth = this.flagProp.children[1];
       cloth.rotation.y = Math.sin(t * 8) * 0.4;
+    }
+
+    // Spare arrows ride the draw hand while the bow is down.
+    if (this.heldArrows) {
+      this.heldArrows.visible = !d && ab < 0.4 && g < 0.3;
+      this.heldArrows.position.set(nx, ny, nz);
     }
 
     // Cosmetic flutter

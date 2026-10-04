@@ -7,6 +7,7 @@ import { Arena } from '@/game3d/Arena';
 import { StickmanRig, type RigPose } from '@/game3d/Stickman3D';
 import { themeById, type Theme } from '@/game3d/themes';
 import { GESTURE_SECONDS, type Gesture, type Mood } from '@/game3d/sim';
+import type { Turntable } from '@/game3d/Turntable';
 import type { Look } from '@/game/cosmetics';
 
 // A small 3D set for non-gameplay screens (VS, loading art, win/lose, style
@@ -47,6 +48,7 @@ export type Actor = {
   facing: 1 | -1;
   performance: Performance;
   hidden?: boolean;
+  spin?: Turntable; // touch-driven yaw on top of the performance
 };
 
 export type StageCamera = { x: number; y: number; z: number; lookX: number; lookY: number; fov?: number; drift?: number };
@@ -177,6 +179,11 @@ class StageView {
       if (s.walk > 0) s.walk = Math.max(0, s.walk - dt * 2.2);
       if (s.drop > 0) s.drop = Math.max(0, s.drop - dt * (5 + (6 - s.drop) * 3));
       s.rig.update(perform(s, t), t + s.actor.x, dt);
+      const spin = s.actor.spin;
+      if (spin) {
+        spin.frame(dt);
+        s.rig.root.rotation.y += spin.yaw;
+      }
     }
     const c = this.cam;
     const drift = c.drift ?? 0.25;

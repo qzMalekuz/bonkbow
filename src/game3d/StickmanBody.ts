@@ -18,11 +18,12 @@ import * as THREE from 'three';
 export type StickmanData = {
   bones: { name: string; parent: number; p: number[]; q: number[] }[];
   inverses: number[][];
-  position: number[];
-  normal: number[];
-  skinIndex: number[];
-  skinWeight: number[];
-  index: number[];
+  position: ArrayLike<number>;
+  normal: ArrayLike<number>;
+  color?: ArrayLike<number>; // linear RGB per vertex (the heroes' suits)
+  skinIndex: ArrayLike<number>;
+  skinWeight: ArrayLike<number>;
+  index: ArrayLike<number>;
   clips: Record<string, { fps: number; length: number; frames: number[][] }>;
 };
 
@@ -138,9 +139,10 @@ export class StickmanBody {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(data.position, 3));
     geo.setAttribute('normal', new THREE.Float32BufferAttribute(data.normal, 3));
+    if (data.color) geo.setAttribute('color', new THREE.Float32BufferAttribute(data.color, 3));
     geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(data.skinIndex, 4));
     geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(data.skinWeight, 4));
-    geo.setIndex(data.index);
+    geo.setIndex(Array.isArray(data.index) ? data.index : new THREE.BufferAttribute(data.index as Uint16Array | Uint32Array, 1));
     const inverses = data.inverses.map((m) => new THREE.Matrix4().fromArray(m));
     this.mesh = new THREE.SkinnedMesh(geo, material);
     this.mesh.frustumCulled = false; // it tumbles far from its bind-pose bounds

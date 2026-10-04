@@ -1,10 +1,10 @@
 // "Choose your style": the stickman is always matte black; what you wear on
-// top is a loadout of three slots — headgear, bow, arrow trail. Items are
-// free, claimed with coins earned in matches (device-local), or unlocked by
-// owning a skin bundle from the shop (skins.ts, paid in SOL/SKR and verified
-// server-side) — so purchases stay keyed by skin id and the server never
-// needs to know about items.
-import { AI_SKIN, SKINS, isFreeSkin, type Skin } from '@/game/skins';
+// top is a loadout of three slots — headgear, bow, arrow trail. The only
+// things on offer are the hero characters: each hero's head is unlocked by
+// owning that hero's skin from the shop (skins.ts, paid in SOL/SKR and
+// verified server-side), and wearing it brings the sheet's recurve and red
+// fletching. Everyone else is the plain classic archer. No accessories.
+import { AI_SKIN, DEFAULT_SKIN_ID, SKINS, canonicalSkinId, isFreeSkin, type Skin } from '@/game/skins';
 import type { FaceId } from '@/game/faces';
 
 export type Hat =
@@ -20,58 +20,34 @@ export type Hat =
   | 'viking'
   | 'dragon'
   | 'bandana'
-  | 'face'; // printed-visor helmet, see faces.ts
+  | 'face'; // a hero's sculpted head, see faces.ts
 
 export type Rarity = 'common' | 'rare' | 'epic' | 'legendary';
 
-export type HeadItem = { id: string; name: string; hat: Hat; color: string; rarity: Rarity; bundle?: string; coins?: number; eyes?: string; face?: FaceId };
-export type BowItem = { id: string; name: string; color: string; accent: string; rarity: Rarity; bundle?: string; coins?: number; glow?: boolean };
-export type TrailItem = { id: string; name: string; color: string; rarity: Rarity; bundle?: string; coins?: number };
+export type HeadItem = { id: string; name: string; hat: Hat; color: string; rarity: Rarity; bundle?: string; eyes?: string; face?: FaceId };
+export type BowItem = { id: string; name: string; color: string; accent: string; rarity: Rarity; bundle?: string; glow?: boolean };
+export type TrailItem = { id: string; name: string; color: string; rarity: Rarity; bundle?: string };
 export type Item = HeadItem | BowItem | TrailItem;
 
-// `bundle` = the skin id that unlocks it; `coins` = claimable with coins;
-// neither = free for everyone.
+// `bundle` = the skin id that unlocks it; no bundle = free for everyone.
 export const HEADS: HeadItem[] = [
-  { id: 'bare', name: 'Bare', hat: 'none', color: '#FFFFFF', rarity: 'common' },
-  { id: 'headband', name: 'Headband', hat: 'headband', color: '#E63946', rarity: 'common' },
-  { id: 'helmet', name: 'Camo Helmet', hat: 'helmet', color: '#5B6B3A', rarity: 'rare', coins: 150 },
-  { id: 'hood', name: 'Ranger Hood', hat: 'hood', color: '#2D6A4F', rarity: 'rare', bundle: 'ranger' },
-  { id: 'cap', name: 'Street Cap', hat: 'cap', color: '#00F5D4', rarity: 'rare', bundle: 'street' },
-  { id: 'viking', name: 'Viking Helm', hat: 'viking', color: '#9AA4AE', rarity: 'epic', bundle: 'ranger' },
-  { id: 'crown', name: 'Royal Crown', hat: 'crown', color: '#F4D35E', rarity: 'epic', bundle: 'royal' },
-  { id: 'horns', name: 'Inferno Horns', hat: 'horns', color: '#E63946', rarity: 'epic', bundle: 'inferno', eyes: '#FF3B1F' },
-  { id: 'halo', name: 'Seraph Halo', hat: 'halo', color: '#FFFFFF', rarity: 'legendary', bundle: 'seraph', eyes: '#E0F7FF' },
-  { id: 'visor', name: 'Seeker Visor', hat: 'visor', color: '#14F195', rarity: 'legendary', bundle: 'seeker' },
-  { id: 'dragon', name: 'Dragon Mask', hat: 'dragon', color: '#6A3FB5', rarity: 'legendary', bundle: 'inferno', eyes: '#FF5AF1' },
-  // Solana bros: real faces on a helmet visor. Purchase-only, one bundle each.
-  { id: 'bro_smile', name: 'The Smile', hat: 'face', face: 'smile', color: '#14F195', rarity: 'legendary', bundle: 'bro_smile' },
-  { id: 'bro_shades', name: 'Shades', hat: 'face', face: 'shades', color: '#9945FF', rarity: 'legendary', bundle: 'bro_shades' },
-  { id: 'bro_curls', name: 'Curls', hat: 'face', face: 'curls', color: '#7FD8C8', rarity: 'legendary', bundle: 'bro_curls' },
-  { id: 'bro_fade', name: 'The Fade', hat: 'face', face: 'fade', color: '#19FB9B', rarity: 'legendary', bundle: 'bro_fade' },
-  { id: 'bro_mobile', name: 'Mobile', hat: 'face', face: 'mobile', color: '#00C2FF', rarity: 'legendary', bundle: 'bro_mobile' },
-  { id: 'bro_beard', name: 'The Beard', hat: 'face', face: 'beard', color: '#DC1FFF', rarity: 'legendary', bundle: 'bro_beard' },
+  { id: 'bare', name: 'Classic', hat: 'none', color: '#FFFFFF', rarity: 'common' },
+  // The heroes: purchase-only, one shop skin each.
+  ...SKINS.filter((s) => s.face).map(
+    (s): HeadItem => ({ id: s.id, name: s.name, hat: 'face', face: s.face, color: s.color, rarity: 'legendary', bundle: s.id }),
+  ),
 ];
 
+// Not picked by the player: the classic archer's bow and trail, and the
+// heroes' brown recurve and red fletching from the character sheets.
 export const BOWS: BowItem[] = [
   { id: 'oak', name: 'Oak Bow', color: '#8B5A2B', accent: '#E9D8A6', rarity: 'common' },
-  { id: 'hunter', name: 'Hunter Recurve', color: '#3B2A1E', accent: '#C1121F', rarity: 'common', coins: 60 },
-  { id: 'forest', name: 'Forest Longbow', color: '#6B4F2A', accent: '#52B788', rarity: 'rare', bundle: 'ranger' },
-  { id: 'neon', name: 'Neon Bow', color: '#3A0CA3', accent: '#00F5D4', rarity: 'rare', bundle: 'street', glow: true },
-  { id: 'gold', name: 'Golden Bow', color: '#C9A227', accent: '#FFF3B0', rarity: 'epic', bundle: 'royal' },
-  { id: 'ember', name: 'Ember Bow', color: '#8B2E2E', accent: '#FF7B54', rarity: 'epic', bundle: 'inferno', glow: true },
-  { id: 'frost', name: 'Frost Bow', color: '#8ECAE6', accent: '#FFFFFF', rarity: 'legendary', bundle: 'seraph', glow: true },
-  { id: 'circuit', name: 'Circuit Bow', color: '#0B7285', accent: '#14F195', rarity: 'legendary', bundle: 'seeker', glow: true },
+  { id: 'recurve', name: 'Hero Recurve', color: '#6E3B1F', accent: '#C9A26B', rarity: 'common' },
 ];
 
 export const TRAILS: TrailItem[] = [
   { id: 'white', name: 'Plain', color: '#FFFFFF', rarity: 'common' },
-  { id: 'sun', name: 'Sunstreak', color: '#FFB703', rarity: 'common', coins: 40 },
-  { id: 'leaf', name: 'Leaf', color: '#95D5B2', rarity: 'rare', bundle: 'ranger' },
-  { id: 'cyan', name: 'Neon', color: '#00F5D4', rarity: 'rare', bundle: 'street' },
-  { id: 'gold', name: 'Gilded', color: '#FFE8A3', rarity: 'epic', bundle: 'royal' },
-  { id: 'fire', name: 'Inferno', color: '#FF5A1F', rarity: 'epic', bundle: 'inferno' },
-  { id: 'holy', name: 'Holy Light', color: '#CDE7FF', rarity: 'legendary', bundle: 'seraph' },
-  { id: 'solana', name: 'Seeker', color: '#14F195', rarity: 'legendary', bundle: 'seeker' },
+  { id: 'red', name: 'Red Fletch', color: '#D62828', rarity: 'common' },
 ];
 
 export const RARITY_COLORS: Record<Rarity, { bg: string; glow: string; label: string }> = {
@@ -132,35 +108,35 @@ export const AI_LOOK: Look = {
   banner: AI_SKIN.color,
 };
 
-// Random rival outfits so every matchmade AI opponent looks different.
+// Random rival outfits so every matchmade AI opponent looks different: the
+// classic archer or one of the heroes, dressed as that skin would be.
 export function randomLoadout(rnd: () => number = Math.random): Loadout {
-  const pick = <T,>(a: T[]) => a[Math.floor(rnd() * a.length)];
-  return { head: pick(HEADS).id, bow: pick(BOWS).id, trail: pick(TRAILS).id };
+  const head = HEADS[Math.floor(rnd() * HEADS.length)];
+  return loadoutForSkin(head.bundle ?? DEFAULT_SKIN_ID) ?? DEFAULT_LOADOUT;
 }
 
-export function ownsItem(item: Item, ownedSkins: string[], ownedItems: string[]) {
-  if (item.bundle) return ownedSkins.includes(item.bundle);
-  if (item.coins) return ownedItems.includes(item.id);
-  return true;
+export function ownsItem(item: Item, ownedSkins: string[]) {
+  return item.bundle ? ownedSkins.includes(item.bundle) : true;
 }
 
-// The loadout a skin bundle dresses you in when equipped from the shop.
+// The loadout a skin dresses you in when equipped: a hero's head with the
+// sheet's recurve and red fletching, or the plain classic archer.
 export function loadoutForSkin(skinId: string): Loadout | null {
+  if (skinId === DEFAULT_SKIN_ID) return DEFAULT_LOADOUT;
   const head = HEADS.find((i) => i.bundle === skinId);
-  const bow = BOWS.find((i) => i.bundle === skinId);
-  const trail = TRAILS.find((i) => i.bundle === skinId);
-  if (!head && !bow && !trail) return null;
-  return { head: head?.id ?? 'bare', bow: bow?.id ?? 'oak', trail: trail?.id ?? 'white' };
+  return head ? { head: head.id, bow: 'recurve', trail: 'red' } : null;
 }
 
 export function bundleSkin(item: { bundle?: string }): Skin | undefined {
   return item.bundle ? SKINS.find((s) => s.id === item.bundle && !isFreeSkin(s)) : undefined;
 }
 
-// Remote loadouts come off the network: keep only ids we know.
+// Remote loadouts come off the network: keep only ids we know (older builds
+// still send the pre-rename hero ids).
 export function sanitizeLoadout(l: Partial<Loadout> | undefined): Loadout {
+  const head = l?.head ? canonicalSkinId(l.head) : undefined;
   return {
-    head: HEADS.some((i) => i.id === l?.head) ? l!.head! : DEFAULT_LOADOUT.head,
+    head: HEADS.some((i) => i.id === head) ? head! : DEFAULT_LOADOUT.head,
     bow: BOWS.some((i) => i.id === l?.bow) ? l!.bow! : DEFAULT_LOADOUT.bow,
     trail: TRAILS.some((i) => i.id === l?.trail) ? l!.trail! : DEFAULT_LOADOUT.trail,
   };

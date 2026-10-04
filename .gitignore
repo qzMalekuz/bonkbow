@@ -53,3 +53,9 @@ assets/licensed/
 # Trailer build intermediates and rendered video (rebuild with docs/trailer/tools/build-animatic.sh)
 docs/trailer/build/
 docs/trailer/out/
+
+# Hero build cache (scripts/heroes/build.sh)
+scripts/heroes/.cache/
+
+# Python bytecode
+__pycache__/

@@ -4,7 +4,7 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { HapticTouchable } from '@/components/haptic-touchable';
-import { lookFor } from '@/game/cosmetics';
+import { loadoutForSkin, lookFor } from '@/game/cosmetics';
 import { FACES, FACE_IDS, type FaceId } from '@/game/faces';
 import { Showcase, type ShowAction, type ShowAngle, type ShowState } from '@/game3d/Showcase';
 import type { Mood } from '@/game3d/sim';
@@ -13,20 +13,20 @@ import { FONT } from '@/ui/kit';
 // Developer-only character inspector (Settings → Character showcase in dev
 // builds): every hero on the shared rig, from any angle, in any pose.
 
-const ACTIONS: ShowAction[] = ['idle', 'aim', 'shoot', 'walk', 'hit', 'win', 'lose', 'death'];
-const ANGLES: ShowAngle[] = ['spin', 'front', 'front34', 'side', 'back'];
+const ACTIONS: ShowAction[] = ['reel', 'idle', 'aim', 'shoot', 'walk', 'run', 'crouch', 'lookback', 'hit', 'win', 'lose', 'death'];
+const ANGLES: ShowAngle[] = ['front', 'side', 'back', 'left'];
 const MOODS: (Mood | 'auto')[] = ['auto', 'neutral', 'happy', 'angry', 'shock', 'hurt', 'sad', 'laugh', 'wink', 'smug', 'scared', 'sleepy'];
 const ZOOMS = [2.2, 3.4, 4.8, 6.5];
 
 export default function ShowcaseScreen() {
   const [who, setWho] = useState<FaceId | 'stick'>(FACE_IDS[0]);
   const [action, setAction] = useState<ShowAction>('idle');
-  const [angle, setAngle] = useState<ShowAngle>('spin');
+  const [angle, setAngle] = useState<ShowAngle>('front');
   const [mood, setMood] = useState<Mood | 'auto'>('auto');
   const [zoom, setZoom] = useState(4.8);
   const [wire, setWire] = useState(false);
   const state = useMemo<ShowState>(
-    () => ({ look: lookFor({ head: who === 'stick' ? 'bare' : `bro_${who}`, bow: 'hunter', trail: 'fire' }), action, mood, angle, zoom, wire }),
+    () => ({ look: lookFor(who === 'stick' ? { head: 'bare', bow: 'hunter', trail: 'fire' } : loadoutForSkin(`hero_${who}`)!), action, mood, angle, zoom, wire }),
     [who, action, mood, angle, zoom, wire],
   );
   if (!__DEV__) return <Redirect href="/" />;
@@ -55,7 +55,7 @@ export default function ShowcaseScreen() {
           </Group>
           <Group label="View">
             {ANGLES.map((a) => (
-              <Chip key={a} label={a === 'front34' ? '45°' : a} on={angle === a} onPress={() => setAngle(a)} />
+              <Chip key={a} label={a} on={angle === a} onPress={() => setAngle(a)} />
             ))}
           </Group>
           <Group label="Zoom">

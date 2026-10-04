@@ -2,6 +2,7 @@ import { router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { GestureDetector } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withSequence, withTiming } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -13,6 +14,7 @@ import { levelOf, useGameStore } from '@/game/store';
 import { haptic } from '@/game/haptics';
 import { lookFor } from '@/game/cosmetics';
 import { Stage, type Actor, type StageCamera } from '@/game3d/Stage';
+import { Turntable, useSpinGesture } from '@/game3d/Turntable';
 import { FONT, GameButton, TIPS } from '@/ui/kit';
 
 // Big close-up of the player's stickman in the colosseum, running through a
@@ -31,7 +33,10 @@ export default function HomeScreen() {
   const loadout = useGameStore((s) => s.loadout);
   const look = useMemo(() => lookFor(loadout), [loadout]);
   const lvl = levelOf(xp);
-  const actors = useMemo<Actor[]>(() => [{ look, x: 0, facing: 1, performance: 'mixed' }], [look]);
+  // Drag anywhere off the menu to spin the archer.
+  const [spin] = useState(() => new Turntable());
+  const spinPan = useSpinGesture(spin);
+  const actors = useMemo<Actor[]>(() => [{ look, x: 0, facing: 1, performance: 'mixed', spin }], [look, spin]);
   const [tip] = useState(() => TIPS[Math.floor(Math.random() * TIPS.length)]);
 
   // Gentle pulse on the Play button so the primary action draws the eye.
@@ -65,8 +70,11 @@ export default function HomeScreen() {
         pointerEvents="none"
       />
       <LinearGradient colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.7)']} style={styles.bottomShade} pointerEvents="none" />
-      <SafeAreaView style={styles.safe} edges={['top', 'bottom', 'left', 'right']}>
-        <View style={styles.namePill}>
+      <GestureDetector gesture={spinPan}>
+        <View style={StyleSheet.absoluteFill} collapsable={false} />
+      </GestureDetector>
+      <SafeAreaView style={styles.safe} edges={['top', 'bottom', 'left', 'right']} pointerEvents="box-none">
+        <View style={styles.namePill} pointerEvents="none">
           <Text style={styles.nameText}>Player</Text>
         </View>
         <View style={styles.tipPill} pointerEvents="none">
