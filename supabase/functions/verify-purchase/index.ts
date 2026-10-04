@@ -17,33 +17,29 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-// MUST mirror src/game/skins.ts. SOL in lamports, SKR in base units (6 dp).
+// MUST mirror src/game/skins.ts (hero skins) and src/game/maps.ts (maps).
+// SOL in lamports, SKR in base units (6 dp).
 const PRICES_SOL: Record<string, number> = {
-  ranger: 20_000_000,
-  street: 30_000_000,
-  royal: 50_000_000,
-  inferno: 50_000_000,
-  seraph: 80_000_000,
-  bro_smile: 100_000_000,
-  bro_shades: 100_000_000,
-  bro_curls: 100_000_000,
-  bro_fade: 100_000_000,
-  bro_mobile: 100_000_000,
-  bro_beard: 100_000_000,
+  hero_akshay: 100_000_000,
+  hero_beeman: 100_000_000,
+  hero_chase: 100_000_000,
+  hero_mit: 100_000_000,
+  hero_mert: 100_000_000,
+  hero_tolly: 100_000_000,
+  map_grove: 50_000_000,
+  map_valley: 50_000_000,
+  map_snow: 50_000_000,
 }
 const PRICES_SKR: Record<string, number> = {
-  ranger: 400_000_000,
-  street: 600_000_000,
-  royal: 1_000_000_000,
-  inferno: 1_000_000_000,
-  seraph: 1_600_000_000,
-  seeker: 750_000_000,
-  bro_smile: 2_000_000_000,
-  bro_shades: 2_000_000_000,
-  bro_curls: 2_000_000_000,
-  bro_fade: 2_000_000_000,
-  bro_mobile: 2_000_000_000,
-  bro_beard: 2_000_000_000,
+  hero_akshay: 2_000_000_000,
+  hero_beeman: 2_000_000_000,
+  hero_chase: 2_000_000_000,
+  hero_mit: 2_000_000_000,
+  hero_mert: 2_000_000_000,
+  hero_tolly: 2_000_000_000,
+  map_grove: 1_000_000_000,
+  map_valley: 1_000_000_000,
+  map_snow: 1_000_000_000,
 }
 
 type Currency = 'SOL' | 'SKR'

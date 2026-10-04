@@ -16,7 +16,8 @@ import Animated, {
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { Stage, type Actor } from '@/game3d/Stage';
-import { themeFor } from '@/game3d/themes';
+import { arenaTheme } from '@/game3d/themes';
+import { randomSeed } from '@/game/maps';
 import { layoutFor } from '@/game3d/world';
 import { DEFAULT_LOADOUT, lookFor, randomLoadout, type Loadout } from '@/game/cosmetics';
 import { mulberry32 } from '@/game/rng';
@@ -56,7 +57,8 @@ export default function MatchScreen() {
 
   // Everything about the match is decided up front from one seed.
   const [match] = useState(() => {
-    const seed = params.seed ? Number(params.seed) : Math.floor(Math.random() * 2_147_483_647);
+    // The duel happens on my chosen map (online, the host's: it's in the room's seed).
+    const seed = params.seed ? Number(params.seed) : randomSeed(useGameStore.getState().equippedMap);
     const rnd = mulberry32(seed ^ 0xa11ce);
     // Online, the real opponent's style arrives over the room channel in-game.
     const rivalLoadout: Loadout = online ? DEFAULT_LOADOUT : randomLoadout(rnd);
@@ -70,7 +72,7 @@ export default function MatchScreen() {
     };
   });
   const rival = useMemo(() => lookFor(match.rivalLoadout), [match]);
-  const arena = themeFor(layoutFor(match.seed, 0).theme);
+  const arena = arenaTheme(match.seed, layoutFor(match.seed, 0).theme);
   const [found, setFound] = useState(false);
 
   useEffect(() => {

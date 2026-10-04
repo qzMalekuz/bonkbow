@@ -37,7 +37,12 @@ const isUserRejection = (msg: string) => /cancel|declin|reject|user denied|dismi
 // fetches the confirmed transaction from RPC, checks destination/amount/
 // signer/mint against ITS price table, and inserts the purchases row. The
 // client then refreshes ownership. Idempotent on signature (unique index).
-export async function buySkin(wallet: PaymentWallet | null, skin: Skin, currency: Currency): Promise<PurchaseResult> {
+// Anything the shop sells (hero skins, maps) is bought by id the same way.
+export async function buySkin(
+  wallet: PaymentWallet | null,
+  skin: Pick<Skin, 'id' | 'priceLamports' | 'priceSkr'>,
+  currency: Currency,
+): Promise<PurchaseResult> {
   if (!TREASURY_ADDRESS) return { ok: false, reason: 'no-treasury' };
   if (!wallet) return { ok: false, reason: 'no-wallet' };
   const price = currency === 'SKR' ? skin.priceSkr : skin.priceLamports;

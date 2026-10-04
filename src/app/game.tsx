@@ -12,6 +12,7 @@ import type { Theme } from '@/game3d/themes';
 import { HP } from '@/game3d/world';
 import { haptic } from '@/game/haptics';
 import { accuracyOf, useGameStore } from '@/game/store';
+import { randomSeed } from '@/game/maps';
 import { lookFor, sanitizeLoadout, DEFAULT_LOADOUT, type Loadout } from '@/game/cosmetics';
 import { HapticTouchable } from '@/components/haptic-touchable';
 import { useScreenMusic } from '@/audio/useScreenMusic';
@@ -73,7 +74,7 @@ export default function GameScreen() {
   const role: Role = params.role === 'guest' ? 'guest' : 'host';
   const code = mode === 'online' ? params.code : undefined;
   const online = mode === 'online';
-  const [fallbackSeed] = useState(() => Math.floor(Math.random() * 2_147_483_647));
+  const [fallbackSeed] = useState(() => randomSeed(useGameStore.getState().equippedMap));
   const seed = params.seed ? Number(params.seed) : fallbackSeed;
   const rivalName = params.rivalName || (online ? 'Opponent' : 'Rival');
 

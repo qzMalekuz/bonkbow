@@ -1,3 +1,5 @@
+import { mapOfSeed } from '@/game/maps';
+
 // Arena looks. Each round's seed picks one, so every duel travels somewhere
 // new and both multiplayer phones see the same place. One dominant hue per
 // arena with fog doing the painterly depth; the foreground stays dark so the
@@ -6,8 +8,9 @@
 export type Weather = 'pollen' | 'dust' | 'snow' | 'embers' | 'fireflies' | 'rain' | 'spores';
 
 // Which set dressing the map uses: hand-built set pieces (forest, town,
-// colosseum) or the open landscape (mountains, trees, clouds).
-export type Decor = 'forest' | 'town' | 'colosseum' | 'wild';
+// colosseum), the open landscape (mountains, trees, clouds), or one of the
+// shop maps dressed with a Unity environment pack (mapProps.ts).
+export type Decor = 'forest' | 'town' | 'colosseum' | 'wild' | 'grove' | 'valley' | 'village';
 
 export type Theme = {
   id: string;
@@ -315,5 +318,118 @@ export const THEMES: Theme[] = [
   },
 ];
 
+// The shop maps (game/maps.ts). Never in the seed rotation above: a duel is
+// on one of these only when its seed says so.
+export const MAP_THEMES: Theme[] = [
+  {
+    // Supercyan "Free Forest Sample": bright cartoon day, painted firs.
+    id: 'grove',
+    name: 'Elder Forest',
+    decor: 'grove',
+    ambience: 'forest',
+    ledgeTop: '#1C2A12',
+    ledgeLip: '#7DC242',
+    skyTop: '#2FA8EE',
+    skyHorizon: '#BFE8FF',
+    sun: '#FFF4D6',
+    sunDir: [-0.45, 0.8, 0.4],
+    sunIntensity: 2.3,
+    hemiSky: '#D8F0FF',
+    hemiGround: '#4E7A2C',
+    hemiIntensity: 1.35,
+    rim: '#FFFFFF',
+    fog: '#C6E6F6',
+    fogNear: 34,
+    fogFar: 200,
+    ground: '#5E9E34',
+    groundFar: '#86B85A',
+    rock: '#7C8796',
+    rockDark: '#1A2214',
+    mountains: ['#6E7F95', '#8B9BB0', '#AEBBCB'],
+    foliage: '#3E8A2E',
+    foliageDark: '#1F4A18',
+    trunk: '#5A3A22',
+    cloud: '#FFFFFF',
+    cloudOpacity: 0.95,
+    weather: 'pollen',
+    weatherColor: '#FFF6C8',
+    trees: 'pine',
+  },
+  {
+    // Sky Den "Low Poly Environment": farmland under a windmill.
+    id: 'valley',
+    name: 'Windmill Valley',
+    decor: 'valley',
+    ambience: 'forest',
+    ledgeTop: '#3A3026',
+    ledgeLip: '#9CC25A',
+    skyTop: '#5AA6E0',
+    skyHorizon: '#F4E6C8',
+    sun: '#FFE9C4',
+    sunDir: [0.5, 0.6, 0.45],
+    sunIntensity: 2.4,
+    hemiSky: '#E6F2FF',
+    hemiGround: '#6E7A3A',
+    hemiIntensity: 1.25,
+    rim: '#FFF0D0',
+    fog: '#E4E6D8',
+    fogNear: 40,
+    fogFar: 230,
+    ground: '#8DA548',
+    groundFar: '#B8BE70',
+    rock: '#8A8478',
+    rockDark: '#241E18',
+    mountains: ['#8E9AA8', '#A8B2BE', '#C6CCD4'],
+    foliage: '#7A9A3A',
+    foliageDark: '#3E5420',
+    trunk: '#5A3A22',
+    cloud: '#FFFFFF',
+    cloudOpacity: 0.95,
+    weather: 'pollen',
+    weatherColor: '#FFF2C0',
+    trees: 'round',
+  },
+  {
+    // HobiSoLoved "Cozy Snowy Environment": a village under fresh snow.
+    id: 'snow',
+    name: 'Snowfall Village',
+    decor: 'village',
+    ambience: 'forest',
+    ledgeTop: '#E8EFF6',
+    ledgeLip: '#FFFFFF',
+    skyTop: '#5F9BDA',
+    skyHorizon: '#EAF4FC',
+    sun: '#FFF4E6',
+    sunDir: [-0.35, 0.6, 0.55],
+    sunIntensity: 1.9,
+    hemiSky: '#E4F0FF',
+    hemiGround: '#9DB0C4',
+    hemiIntensity: 1.2,
+    rim: '#E6F4FF',
+    fog: '#DCE8F4',
+    fogNear: 40,
+    fogFar: 215,
+    ground: '#EEF3F8',
+    groundFar: '#C9D8E8',
+    rock: '#6E7C8E',
+    rockDark: '#2C3644',
+    mountains: ['#8EA4BE', '#A8BACE', '#C6D4E2'],
+    foliage: '#2F5A4A',
+    foliageDark: '#1E3C34',
+    trunk: '#4A3428',
+    cloud: '#FFFFFF',
+    cloudOpacity: 0.95,
+    weather: 'snow',
+    weatherColor: '#FFFFFF',
+    trees: 'pine',
+  },
+];
+
 export const themeFor = (n: number) => THEMES[((n % THEMES.length) + THEMES.length) % THEMES.length];
-export const themeById = (id: string) => THEMES.find((t) => t.id === id) ?? THEMES[0];
+// The arena a match seed lands on: its shop map when the seed carries one
+// (game/maps.ts), else the classic rotation from the layout.
+export const arenaTheme = (seed: number, layoutTheme: number) => {
+  const map = mapOfSeed(seed).theme;
+  return map ? themeById(map) : themeFor(layoutTheme);
+};
+export const themeById = (id: string) => THEMES.find((t) => t.id === id) ?? MAP_THEMES.find((t) => t.id === id) ?? THEMES[0];

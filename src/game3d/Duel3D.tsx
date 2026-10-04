@@ -7,7 +7,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber/native';
 import * as THREE from 'three';
 import { Arena } from '@/game3d/Arena';
 import { StickmanRig, makeArrow, type RigPose } from '@/game3d/Stickman3D';
-import { themeFor, type Theme } from '@/game3d/themes';
+import { arenaTheme, type Theme } from '@/game3d/themes';
 import { HEAD_Y, PHYS, handPoint } from '@/game3d/world';
 import {
   DuelSim,
@@ -254,7 +254,7 @@ class DuelView {
 
   constructor(sim: DuelSim, look: Look, opponentLook: Look) {
     this.sim = sim;
-    this.theme = themeFor(sim.layout.theme);
+    this.theme = arenaTheme(sim.seed, sim.layout.theme);
     this.colDust = new THREE.Color(this.theme.id === 'frost' ? '#FFFFFF' : '#C9B79C');
     this.arena = new Arena(this.theme, sim.seed, SPAN);
     this.player = new StickmanRig(look);

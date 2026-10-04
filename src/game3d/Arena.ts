@@ -2,11 +2,13 @@ import * as THREE from 'three';
 import { mulberry32 } from '@/game/rng';
 import { LEDGE_FRONT } from '@/game3d/world';
 import type { Theme } from '@/game3d/themes';
+import { PropKit, kitTexture } from '@/game3d/mapProps';
 
 // The 3D world around the duel, built imperatively from primitives and
 // animated from the render loop. Each archer stands on a black cliff ledge
 // with a banner; the map's set dressing (misty forest, rainy town,
-// colosseum, or open landscape) fills the background, with fog doing the
+// colosseum, open landscape, or a shop map dressed with a Unity environment
+// pack — mapProps.ts) fills the background, with fog doing the
 // painterly depth and the dark foreground making the stickmen read as
 // silhouettes — the look of the reference game, in 3D.
 //
@@ -175,26 +177,38 @@ export class Arena {
     this.group.add(this.hemi, sun, rim);
 
     const baker = new Baker();
-    this.buildGround();
-    switch (theme.decor) {
-      case 'forest':
-        this.buildForest(baker);
-        break;
-      case 'town':
-        this.buildTown(baker);
-        break;
-      case 'colosseum':
-        this.buildColosseum(baker);
-        break;
-      default:
-        this.buildMountains(baker);
-        this.buildWildTrees();
-        this.buildScatter(baker);
-        if (theme.lava) this.buildLava();
-        break;
+    // Shop maps: the pack's props, or the procedural landscape in the map's
+    // colours when this build has no licensed export.
+    const kitId = theme.decor === 'grove' ? 'grove' : theme.decor === 'valley' ? 'valley' : theme.decor === 'village' ? 'snow' : null;
+    const kit = kitId ? PropKit.load(kitId) : null;
+    this.buildGround(kit !== null);
+    if (kit) {
+      if (theme.decor === 'grove') this.buildGrove(kit, baker);
+      else if (theme.decor === 'valley') this.buildValley(kit, baker);
+      else this.buildVillage(kit, baker);
+      kit.flush(this.group);
+    } else {
+      switch (theme.decor) {
+        case 'forest':
+          this.buildForest(baker);
+          break;
+        case 'town':
+          this.buildTown(baker);
+          break;
+        case 'colosseum':
+          this.buildColosseum(baker);
+          break;
+        default:
+          this.buildMountains(baker);
+          this.buildWildTrees();
+          this.buildScatter(baker);
+          if (theme.lava) this.buildLava();
+          break;
+      }
     }
     baker.flush(this.group);
-    if (theme.decor !== 'colosseum') this.buildClouds();
+    if (theme.decor === 'village' && kit) this.buildKitClouds(kit);
+    else if (theme.decor !== 'colosseum') this.buildClouds();
     if (theme.decor !== 'colosseum' && theme.weather !== 'snow' && theme.weather !== 'embers') this.buildBirds();
     this.buildWeather();
   }
@@ -308,16 +322,20 @@ export class Arena {
   }
 
   // ---- terrain -------------------------------------------------------------------
-  private buildGround() {
+  // `dressed`: a shop map with its pack's props (the forest one tiles the
+  // pack's moss texture over the ground).
+  private buildGround(dressed = false) {
     const span = this.span;
     const t = this.theme;
+    const moss = dressed && t.decor === 'grove' ? kitTexture('grove_moss_light.jpg', [90, 42]) : null;
     const w = span.max - span.min + 400;
     const geo = new THREE.PlaneGeometry(w, 260, 100, 48);
     geo.rotateX(-Math.PI / 2);
     const pos = geo.getAttribute('position') as THREE.BufferAttribute;
     const colors = new Float32Array(pos.count * 3);
-    const near = new THREE.Color(t.ground);
-    const far = new THREE.Color(t.groundFar);
+    // A textured ground is tinted only lightly, from white toward the far colour.
+    const near = new THREE.Color(moss ? '#FFFFFF' : t.ground);
+    const far = new THREE.Color(moss ? '#C8E0B8' : t.groundFar);
     const c = new THREE.Color();
     const cx = (span.min + span.max) / 2;
     const flat = t.decor === 'colosseum' || t.decor === 'town';
@@ -341,7 +359,7 @@ export class Arena {
     }
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     geo.computeVertexNormals();
-    const ground = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: !flat }));
+    const ground = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: !flat && !moss, map: moss }));
     ground.matrixAutoUpdate = false;
     this.group.add(ground);
   }
@@ -629,6 +647,146 @@ export class Arena {
     }
   }
 
+  // ---- shop maps: Unity environment packs (mapProps.ts) ---------------------------
+  // Depth bands as in the hand-built maps: background from z = -5 back and
+  // only low dressing (grass, stones, snow) up to and in front of the duel
+  // strip, so nothing tall ever stands between the camera and the arrows.
+
+  // Random x across the scenery, past both ends of the duel.
+  private spanX(pad = 80) {
+    return this.span.min - pad + this.rnd() * (this.span.max - this.span.min + pad * 2);
+  }
+
+  // Places `n` props from `keys` across a depth band.
+  private strew(kit: PropKit, keys: string[], n: number, z: [number, number], s: [number, number], y = 0) {
+    for (let i = 0; i < n; i++) {
+      const key = keys[Math.floor(this.rnd() * keys.length)];
+      const sc = lerp(s[0], s[1], this.rnd());
+      kit.place(key, this.spanX(), y * sc, lerp(z[0], z[1], this.rnd()), this.rnd() * Math.PI * 2, sc);
+    }
+  }
+
+  // Lines of fence/wall segments laid end to end along x.
+  private fenceRuns(kit: PropKit, keys: string[], scale: number, z: number, runs: number) {
+    const len = kit.size(keys[0]).x * scale;
+    for (let r = 0; r < runs; r++) {
+      const x0 = this.spanX(40);
+      const n = 3 + Math.floor(this.rnd() * 4);
+      const zz = z - this.rnd() * 3;
+      for (let k = 0; k < n; k++) kit.place(keys[Math.floor(this.rnd() * keys.length)], x0 + k * len, 0, zz, 0, scale);
+    }
+  }
+
+  // Buildings in slots along x so they never overlap, fronts (+z in both
+  // packs) toward the camera.
+  private village(kit: PropKit, keys: string[], scale: number, z: [number, number], gap: [number, number], extras: (x: number, z: number) => void) {
+    let x = this.span.min - 90;
+    while (x < this.span.max + 90) {
+      const key = keys[Math.floor(this.rnd() * keys.length)];
+      const zz = lerp(z[0], z[1], this.rnd());
+      kit.place(key, x, 0, zz, (this.rnd() - 0.5) * 0.6, scale);
+      extras(x + gap[0] * 0.5, zz + 6);
+      x += lerp(gap[0], gap[1], this.rnd());
+    }
+  }
+
+  // Elder Forest: Supercyan's painted firs and round trees on a mossy
+  // meadow, a dirt road behind the ledges, grey peaks far off.
+  private buildGrove(kit: PropKit, baker: Baker) {
+    const { min, max } = this.span;
+    this.buildMountains(baker);
+    const width = max - min + 200;
+    const road = new THREE.Mesh(
+      new THREE.PlaneGeometry(width, 2.8),
+      new THREE.MeshLambertMaterial({ map: kitTexture('grove_road.jpg', [width / 2.8, 1]) }),
+    );
+    road.rotation.x = -Math.PI / 2;
+    road.position.set((min + max) / 2, 0.06, -3.6);
+    road.matrixAutoUpdate = false;
+    road.updateMatrix();
+    this.group.add(road);
+    const trees = ['tree_fir_tall', 'tree_fir_tall', 'tree_1_leaf_1'];
+    this.strew(kit, trees, 50, [-12, -30], [2.3, 3.0]);
+    this.strew(kit, trees, 40, [-32, -62], [2.8, 3.8]);
+    this.strew(kit, ['stone_large_1', 'stone_medium_1'], 26, [-5.5, -16], [2.4, 4.4]);
+    this.strew(kit, ['stone_medium_1'], 8, [3.6, 8], [1.6, 2.6]);
+    this.strew(kit, ['tree_stump_1'], 8, [-6, -18], [2, 2.6]);
+    this.strew(kit, ['foliage_mushroom_blue_big', 'foliage_mushroom_red_small'], 36, [-1.6, -12], [4, 7]);
+    this.strew(kit, ['foliage_mushroom_red_small'], 8, [3.5, 6], [4, 6]);
+    const grass = ['foliage_grasspatch_small_1', 'foliage_grasspatch_small_2'];
+    this.strew(kit, grass, 150, [-1.5, -18], [5, 8]);
+    this.strew(kit, grass, 90, [3.4, 11], [3, 4.5]);
+    kit.place('roadsign_westeast_1', (min + max) / 2 + 4, 0, -5.8, 0.25, 1.8);
+  }
+
+  // Windmill Valley: Sky Den's farmhouses, mill and watchtower between low
+  // cliffs, big low-poly mountains behind.
+  private buildValley(kit: PropKit, baker: Baker) {
+    const { min, max } = this.span;
+    const mid = (min + max) / 2;
+    this.strew(kit, ['mountain1', 'mountain2'], 10, [-125, -175], [2.2, 3.2]);
+    this.strew(kit, ['cliff4', 'cliff5'], 6, [-95, -120], [1.2, 1.6]);
+    this.strew(kit, ['cliff6', 'cliff7'], 6, [-56, -72], [0.7, 1]);
+    kit.place('mill', mid + 10, 0, -46, Math.PI + 0.35, 1.3);
+    kit.place('watchtower', mid - 60, 0, -82, Math.PI - 0.2, 1);
+    const yard = ['waterwell', 'cart01', 'tent2', 'doghouse', 'basket01'];
+    this.village(kit, ['house1', 'house2', 'house4', 'house5'], 0.85, [-32, -42], [20, 30], (x, z) => {
+      if (this.rnd() < 0.7) kit.place(yard[Math.floor(this.rnd() * yard.length)], x, 0, z, this.rnd() * Math.PI * 2, 0.9);
+    });
+    this.fenceRuns(kit, ['fence01', 'fence04'], 0.75, -9.5, 7);
+    this.strew(kit, ['tree1', 'tree2'], 16, [-11, -20], [0.7, 1]);
+    this.strew(kit, ['tree1', 'tree2'], 50, [-46, -80], [0.8, 1.2]);
+    this.strew(kit, ['rock1', 'rock2', 'rock3', 'rock4'], 18, [-5, -15], [0.14, 0.32]);
+    this.strew(kit, ['rock1', 'rock3'], 8, [3.6, 8], [0.06, 0.12]);
+    // The pack has no grass: short procedural blades in the meadow colour.
+    const grassMat = lambert(`#${new THREE.Color(this.theme.ground).multiplyScalar(1.15).getHexString()}`);
+    const blade = new THREE.ConeGeometry(0.06, 0.5, 4);
+    for (let i = 0; i < 200; i++) {
+      const s = 0.6 + this.rnd() * 0.9;
+      const z = this.rnd() < 0.4 ? 3.5 + this.rnd() * 7 : -1.2 - this.rnd() * 16;
+      baker.add(blade, grassMat, [this.spanX(), 0.2 * s, z], [(this.rnd() - 0.5) * 0.6, 0, (this.rnd() - 0.5) * 0.6], [s, s, s]);
+    }
+  }
+
+  // Snowfall Village: HobiSoLoved's cottages, pines and snowmen (the pack is
+  // modelled small, so everything is scaled up to the archers' size).
+  private buildVillage(kit: PropKit, baker: Baker) {
+    this.buildMountains(baker);
+    const pines = ['pine3', 'pine4', 'pine5', 'pine2'];
+    this.strew(kit, pines, 30, [-13, -30], [6, 8]);
+    this.strew(kit, pines, 38, [-34, -66], [7, 10]);
+    this.strew(kit, ['tree1', 'tree2'], 10, [-12, -40], [3.5, 4.5]);
+    this.strew(kit, ['deadtree'], 6, [-10, -30], [3.5, 4.5]);
+    const yard = ['well', 'sign1', 'sign2', 'snowman'];
+    this.village(kit, ['cottage1', 'cottage2', 'cottage3'], 4, [-18, -25], [18, 28], (x, z) => {
+      if (this.rnd() < 0.6) kit.place(yard[Math.floor(this.rnd() * yard.length)], x, 0, z, this.rnd() - 0.5, 3.4);
+    });
+    this.fenceRuns(kit, ['fence_1', 'fence_2'], 2, -10, 6);
+    this.fenceRuns(kit, ['wall1', 'wall3'], 2.4, -7.5, 3);
+    for (let i = 0; i < 4; i++) kit.place('snowman', this.spanX(), 0, -4.5 - this.rnd() * 7.5, (this.rnd() - 0.5) * 1.2, 3.2 + this.rnd() * 0.6);
+    this.strew(kit, ['stump1', 'stump2'], 10, [-5, -16], [3.5, 4.5]);
+    const piles = ['snow1', 'snow2', 'snow3', 'snow4', 'snow5'];
+    this.strew(kit, piles, 50, [-1.4, -16], [4, 7]);
+    this.strew(kit, piles, 26, [3.4, 10], [4, 7]);
+  }
+
+  // The snowy pack's own clouds, drifting like the procedural ones.
+  private buildKitClouds(kit: PropKit) {
+    const span = this.span;
+    const mat = new THREE.MeshLambertMaterial({ vertexColors: true, fog: false, emissive: '#FFFFFF', emissiveIntensity: 0.3 });
+    const width = span.max - span.min + 300;
+    for (let i = 0; i < 9; i++) {
+      const c = kit.mesh(`cloud${1 + Math.floor(this.rnd() * 5)}`, mat);
+      if (!c) return;
+      const base = new THREE.Vector3(span.min - 150 + this.rnd() * width, 30 + this.rnd() * 24, -90 - this.rnd() * 80);
+      c.position.copy(base);
+      c.scale.setScalar(1.6 + this.rnd() * 1.2);
+      c.rotation.y = this.rnd() * Math.PI * 2;
+      this.group.add(c);
+      this.clouds.push({ o: c, base, speed: 0.6 + this.rnd() * 1.2, phase: 0 });
+    }
+  }
+
   // ---- open landscape --------------------------------------------------------------
   private buildMountains(baker: Baker) {
     const span = this.span;
@@ -650,7 +808,7 @@ export class Arena {
         const z = L.z + (this.rnd() - 0.5) * 20;
         const ry = this.rnd() * Math.PI;
         baker.add(geo, mat, [x, h / 2 - 2, z], [0, ry, 0]);
-        if (this.theme.id === 'frost' || (li === 2 && this.theme.id === 'meadow')) {
+        if (this.theme.id === 'frost' || this.theme.id === 'snow' || (li === 2 && (this.theme.id === 'meadow' || this.theme.id === 'grove'))) {
           baker.add(new THREE.ConeGeometry(r * 0.32, h * 0.32, 6, 1), snow, [x, h - h * 0.16 - 1.8, z], [0, ry, 0]);
         }
       }

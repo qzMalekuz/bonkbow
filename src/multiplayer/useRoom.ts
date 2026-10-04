@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from '@/utils/supabase';
+import { randomSeed } from '@/game/maps';
+import { useGameStore } from '@/game/store';
 
 // Code-based 1v1 rooms over Supabase Realtime.
 //
@@ -45,7 +47,8 @@ export async function createRoom(): Promise<Room> {
   // Retry on code collision (1 in 1e9, but cheap to handle).
   for (let i = 0; i < 3; i++) {
     const code = makeRoomCode();
-    const seed = Math.floor(Math.random() * 2_147_483_647);
+    // The host's map rides in the seed (game/maps.ts), so the guest gets it too.
+    const seed = randomSeed(useGameStore.getState().equippedMap);
     const { data, error } = await supabase
       .from('rooms')
       .insert({ code, host_id: user.id, seed })
