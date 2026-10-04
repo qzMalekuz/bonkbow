@@ -1,5 +1,9 @@
 # Stickchers launch trailer
 
+> The 60-second heroic cut is scripted in [SCRIPT.md](SCRIPT.md) (six entrances,
+> dodge-and-answer duels, group volley). This file documents the 41-second
+> sprite build that exists today.
+
 A 41-second, 9:16 character short: six archers trying to outplay each other in a
 moonlit ruin. Rendered entirely in code from `archer-boys.pdf` and the game's own
 assets. No video generator, stock footage or third-party music is involved.
