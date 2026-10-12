@@ -2,16 +2,15 @@ import * as THREE from 'three';
 import { ARM_REACH, ARROW_LEN, BODY, HIP_Y } from '@/game3d/world';
 import type { Death, Gesture, Mood } from '@/game3d/sim';
 import type { Look } from '@/game/cosmetics';
-import { HeroHead, heroBody } from '@/game3d/HeroHead';
-import { HERO_SPECS } from '@/game3d/heroSpecs';
+import { DerpHead } from '@/game3d/DerpHead';
 import { STICKMAN_DATA, StickmanBody, WALK_STRIDE, type BodyTargets } from '@/game3d/StickmanBody';
 
-// 3D stickman: a big head with white cartoon eyes on a black body. The body
-// is the Unity Asset Store "Free Pack - Stick Man" skinned mesh
-// (StickmanBody.ts) when its licensed export is present, else capsule limbs
-// built from three.js primitives. Either way the pose comes from here. The loadout (cosmetics.ts)
-// adds glossy headgear, a themed bow and the trail colour on top — the body
-// itself is always black, like the reference game. Driven imperatively every
+// 3D derp: a hand-scrawled paper head (DerpHead.ts, drawn like the launch
+// videos) on a black stick body. The body is the Unity Asset Store "Free
+// Pack - Stick Man" skinned mesh (StickmanBody.ts) when its licensed export
+// is present, else capsule limbs built from three.js primitives. Either way
+// the pose comes from here. The loadout (cosmetics.ts) picks the head, the
+// hat drawn on it and the bow (or the shovel bow). Driven imperatively every
 // frame (no React re-render): `update()` takes the sim's state and places
 // every bone, blending between relaxed, aiming, walking, gesturing and dead.
 //
@@ -42,6 +41,8 @@ export type RigPose = {
   run?: number;
   crouch?: number;
   look?: number;
+  // 1 = turned round the wrong way (eases over); the aim is unaffected.
+  turn?: number;
 };
 
 const BODY_BLACK = '#0E0E10';
@@ -52,8 +53,6 @@ const BOW_HALF = 0.72;
 // Where the string is nocked on the upper limb (bow space: +x toward the
 // target, grip at the origin); the lower limb mirrors it.
 const BOW_TIP = { x: -BOW_R + BOW_R * Math.cos(BOW_HALF), y: BOW_R * Math.sin(BOW_HALF) };
-const _up = new THREE.Vector3(0, 1, 0);
-const _qdir = new THREE.Vector3();
 
 // Upper recurve limb: from the grip back toward the archer, out to the nock,
 // then a short flick forward. Wide and flat, tapering to the tip.
@@ -83,8 +82,6 @@ function recurveGeo() {
   g.computeVertexNormals();
   return g;
 }
-
-const QUIVER_MAT = new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 18, specular: new THREE.Color(0x222222), side: THREE.DoubleSide });
 
 // A mirrored copy turns its triangles inside out: swap two corners of each.
 function flipWinding(g: THREE.BufferGeometry) {
@@ -140,25 +137,6 @@ function mesh(geo: THREE.BufferGeometry, mat: THREE.Material) {
   return new THREE.Mesh(geo, mat);
 }
 
-// Phong (not PBR) keeps the glossy cosmetic look at a fraction of the
-// per-pixel cost on phone GPUs. Rougher = duller highlight; metal = brighter.
-function glossy(color: string, opts: { metal?: number; rough?: number; glow?: number } = {}) {
-  const c = new THREE.Color(color);
-  const rough = opts.rough ?? 0.32;
-  return new THREE.MeshPhongMaterial({
-    color: c,
-    shininess: Math.round(10 + (1 - rough) * 80),
-    specular: new THREE.Color(0xffffff).multiplyScalar(0.15 + (opts.metal ?? 0.15) * 0.6),
-    emissive: opts.glow ? c : new THREE.Color(0x000000),
-    emissiveIntensity: opts.glow ?? 0,
-  });
-}
-
-const WHITE = new THREE.MeshBasicMaterial({ color: '#FFFFFF' });
-
-// Hero characters get a sculpted 3D head (HeroHead.ts) on the plain stickman body.
-const HERO_HEAD = 2.05; // hero head unit vs the plain stickman's head radius (chibi-big)
-const COLLAR_TOP = 0.0; // where a hero's chin sits, along the spine past the torso
 const BLACK = new THREE.MeshBasicMaterial({ color: BODY_BLACK });
 
 // An arrow whose TIP is at the local origin, pointing along +x. Shaft, head
@@ -200,6 +178,41 @@ export function makeArrow(fletch: string, shaft = '#D9C39A') {
   return g;
 }
 
+// The shovel bow's projectile: a garden shovel, blade first. Like makeArrow
+// its TIP (the blade's edge) is the local origin, pointing along +x; one
+// merged mesh, shared.
+let shovelGeo: THREE.BufferGeometry | null = null;
+export const SHOVEL_LEN = 1.3;
+
+export function makeShovel() {
+  if (!shovelGeo) {
+    const blade = new THREE.BoxGeometry(0.3, 0.025, 0.24);
+    // Pointed spade: pull the two front corners in to a point.
+    const pos = blade.getAttribute('position');
+    for (let i = 0; i < pos.count; i++) {
+      if (pos.getX(i) > 0) pos.setZ(i, pos.getZ(i) * 0.35);
+    }
+    blade.computeVertexNormals();
+    blade.rotateX(Math.PI / 2);
+    blade.translate(-0.15, 0, 0);
+    const neck = new THREE.CylinderGeometry(0.03, 0.04, 0.12, 6).rotateZ(Math.PI / 2).translate(-0.34, 0, 0);
+    const handle = new THREE.CylinderGeometry(0.024, 0.024, SHOVEL_LEN - 0.52, 6).rotateZ(Math.PI / 2).translate(-0.4 - (SHOVEL_LEN - 0.52) / 2, 0, 0);
+    const grip = new THREE.TorusGeometry(0.07, 0.018, 5, 10).translate(-SHOVEL_LEN + 0.05, 0, 0);
+    shovelGeo = mergeColored([
+      [blade, '#9AA4AE'],
+      [neck, '#5E666E'],
+      [handle, '#A0703A'],
+      [grip, '#2B2B2B'],
+    ]);
+  }
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(shovelGeo, ARROW_MAT));
+  return g;
+}
+
+// What a look shoots: arrows, or shovels from the shovel bow.
+export const makeProjectile = (look: Pick<Look, 'bow' | 'trail'>) => (look.bow === 'shovel' ? makeShovel() : makeArrow(look.trail));
+
 // Concatenate geometries into one non-indexed geometry with per-part colours.
 // With `keep`, parts that already have vertex colours keep them.
 function mergeColored(parts: [THREE.BufferGeometry, string][], keep = false) {
@@ -229,140 +242,14 @@ function mergeColored(parts: [THREE.BufferGeometry, string][], keep = false) {
   return out;
 }
 
-// One cartoon eye: white sclera with black lids above and below that close
-// and tilt to make expressions, plus an X for dead. The lids are curved caps
-// hugging the eyeball (in the eyeball's own squashed space), so they never
-// stick out of the head's silhouette; they ease between expressions.
-const LID_R = 0.064; // just outside the 0.06 sclera
-class Eye {
-  readonly group = new THREE.Group();
-  private sclera: THREE.Mesh;
-  private lids = new THREE.Group(); // scaled like the sclera
-  private upperTilt = new THREE.Group();
-  private upper: THREE.Mesh;
-  private lower: THREE.Mesh;
-  private x: THREE.Group;
-  private inner: 1 | -1; // which way (z) the nose is
-  private cur = { up: 0.085, low: -0.11, tilt: 0.32, size: 1 };
-
-  constructor(inner: 1 | -1, scale: number) {
-    this.inner = inner;
-    this.sclera = mesh(cached('eye', () => new THREE.SphereGeometry(0.06, 14, 10)), WHITE);
-    this.sclera.scale.set(0.35, 1, 0.82);
-    const dome = (upper: boolean) =>
-      cached(`lidDome${upper ? 'U' : 'L'}`, () => new THREE.SphereGeometry(LID_R, 16, 6, 0, Math.PI * 2, upper ? 0 : Math.PI / 2, Math.PI / 2));
-    this.upper = mesh(dome(true), BLACK);
-    this.lower = mesh(dome(false), BLACK);
-    this.upperTilt.add(this.upper);
-    this.lids.add(this.upperTilt, this.lower);
-    this.x = new THREE.Group();
-    for (const r of [0.78, -0.78]) {
-      const bar = mesh(cached('xbar', () => new THREE.BoxGeometry(0.02, 0.11, 0.022)), WHITE);
-      bar.rotation.x = r;
-      this.x.add(bar);
-    }
-    this.group.add(this.sclera, this.lids, this.x);
-    this.group.scale.setScalar(scale);
-  }
-
-  setGlow(mat: THREE.Material | null) {
-    this.sclera.material = mat ?? WHITE;
-  }
-
-  // Lid positions in sclera units: upper drops from 0.11 (open) toward 0;
-  // tilt > 0 lowers the inner corner (angry), < 0 the outer (sad).
-  set(mood: Mood, t: number, winkEye = false, dt = 1 / 60) {
-    let up = 0.085;
-    let tilt = 0.32;
-    let low = -0.11;
-    let size = 1;
-    let dead = false;
-    switch (mood) {
-      case 'angry':
-        up = 0.055;
-        tilt = 0.6;
-        break;
-      case 'happy':
-        up = 0.12;
-        low = -0.035;
-        tilt = 0;
-        break;
-      case 'laugh':
-        up = 0.12;
-        low = -0.02 + Math.sin(t * 18) * 0.008;
-        tilt = 0;
-        break;
-      case 'hurt':
-        up = 0.03;
-        low = -0.06;
-        tilt = 0.45;
-        break;
-      case 'sad':
-        up = 0.06;
-        tilt = -0.55;
-        break;
-      case 'shock':
-        up = 0.14;
-        tilt = 0;
-        size = 1.25;
-        break;
-      case 'dead':
-        dead = true;
-        break;
-      case 'smug': // heavy lids, a touch of attitude
-        up = 0.035;
-        tilt = 0.18;
-        low = -0.075;
-        break;
-      case 'sleepy': // lids sink and drift open again
-        up = 0.012 + Math.max(0, Math.sin(t * 0.9)) * 0.03;
-        tilt = -0.2;
-        low = -0.05;
-        break;
-      case 'scared':
-        up = 0.14;
-        tilt = -0.35;
-        size = 1.3 + Math.sin(t * 30) * 0.03;
-        break;
-      case 'wink': // one eye shut (the front eye), the other happy
-        up = winkEye ? 0.0 : 0.11;
-        low = winkEye ? -0.01 : -0.04;
-        tilt = 0;
-        break;
-      default:
-        // Idle blink every few seconds.
-        if ((t % 4.3) < 0.12) up = 0.0;
-        break;
-    }
-    this.sclera.visible = !dead;
-    this.lids.visible = !dead;
-    this.x.visible = dead;
-    // Ease toward the expression; lids close faster than they open (blinks).
-    const c = this.cur;
-    const k = 1 - Math.exp(-dt * 16);
-    c.up += (up - c.up) * (up < c.up ? Math.min(1, k * 2.5) : k);
-    c.low += (low - c.low) * k;
-    c.tilt += (tilt - c.tilt) * k;
-    c.size += (size - c.size) * k;
-    this.sclera.scale.set(0.35, c.size, 0.82 * c.size);
-    this.lids.scale.set(0.35, c.size, 0.82 * c.size);
-    // Each cap swings about the eye's horizontal axis until its front edge
-    // sits at the lid height (in the eyeball's unscaled units).
-    const edge = (h: number) => Math.asin(Math.max(-1, Math.min(1, h / c.size / LID_R)));
-    this.upper.rotation.z = edge(c.up);
-    this.upperTilt.rotation.x = c.tilt * this.inner;
-    this.lower.rotation.z = edge(c.low);
-  }
-}
-
 export class StickmanRig {
   readonly root = new THREE.Group();
   private body = new THREE.Group(); // pivot at the hip; tumbles on death
   private hips = new THREE.Group(); // yawed toward camera
   private torso = new THREE.Group(); // +x along the spine
-  private head = new THREE.Group(); // upright frame at the head centre
+  private head = new THREE.Group(); // upright frame at the neck
   private headYaw = new THREE.Group(); // turns the head about its own up axis (look back)
-  private face = new THREE.Group();
+  private derp = new DerpHead();
   private arms = new THREE.Group(); // not yawed: arms aim in the duel plane
   private thighF = new THREE.Group();
   private shinF = new THREE.Group();
@@ -376,14 +263,11 @@ export class StickmanRig {
   private stringGeo = new THREE.BufferGeometry();
   private nocked: THREE.Group;
   private bodyMat: THREE.MeshLambertMaterial;
-  // The skinned body driven from this rig's joints: a hero's chibi suit, or
-  // the Unity stickman (null without the licensed file, then capsules).
+  // The skinned body driven from this rig's joints: the Unity stickman (null
+  // without the licensed file, then capsules).
   private skin: StickmanBody | null = null;
   private stickSkin: StickmanBody | null = null;
-  private heroSkin: StickmanBody | null = null;
-  private heroSkinId = '';
   private skinMat: THREE.MeshPhongMaterial | null = null;
-  private suitMat = new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 30, specular: new THREE.Color(0x2c2c30) });
   private sticks: THREE.Mesh[] = []; // capsule body, hidden while a skin is on
   private targets: BodyTargets;
   // Continuity across state changes: the walk phase and emote clock hold
@@ -396,22 +280,22 @@ export class StickmanRig {
   private land = new Blend(10);
   private prevBow: V2 | null = null;
   private prevDraw: V2 | null = null;
-  private heroClear: { center: THREE.Vector3; radius: number } | null = null;
-  private headMat: THREE.MeshPhongMaterial;
-  private cosmetics = new THREE.Group();
-  private eyes: Eye[] = [];
-  private mouthOpen: THREE.Mesh;
-  private mouthLine: THREE.Mesh;
+  private headClearance: { center: THREE.Vector3; radius: number } = PLAIN_HEAD;
   private flagProp: THREE.Group;
-  // Spare arrows in the draw hand for a hero with no quiver (Beeman's sheet).
-  private heldArrows: THREE.Group | null = null;
+  // The arrow he is eating (the 'eat' emote), held across the mouth.
+  private snack: THREE.Group;
   private shieldBubble: THREE.Mesh;
   private shadow: THREE.Mesh;
-  private flutter: THREE.Object3D[] = [];
   private lookKey = '';
   private trail = '#FFFFFF';
-  // Hero character (real-face chibi): the front patch swaps with the mood.
-  private hero: HeroHead | null = null;
+  private neckExtra = 0;
+  // Shovel bow: a giant bow (scaled), shovels for arrows, and a recoil that
+  // throws him off his feet (`thrown` counts up from each release).
+  private shovel = false;
+  private bowScale = 1;
+  private thrown = -1;
+  private lastRecoil = 0;
+  private turnBlend = new Blend(7);
   // Smoothed blends so every state change eases instead of snapping.
   private aimBlend = new Blend(12);
   private gestBlend = new Blend(10);
@@ -434,9 +318,8 @@ export class StickmanRig {
 
   constructor(look: Look) {
     this.bodyMat = new THREE.MeshLambertMaterial({ color: BODY_BLACK });
-    this.headMat = new THREE.MeshPhongMaterial({ color: BODY_BLACK, shininess: 60, specular: new THREE.Color(0x444444) });
 
-    const { thigh, shin, torso, neck, headR, upperArm, foreArm, limbR, torsoR } = BODY;
+    const { thigh, shin, torso, neck, upperArm, foreArm, limbR, torsoR } = BODY;
 
     this.root.add(this.body);
     this.body.position.y = HIP_Y;
@@ -456,41 +339,17 @@ export class StickmanRig {
       this.hips.add(th);
     }
 
-    // Torso, neck, head
+    // Torso, neck, head: the neck runs on up the spine to the paper head
+    // (a long-necked derp gets a longer one in setLook).
     this.torso.add(this.stick(boneGeo(torso + neck, torsoR)));
     this.hips.add(this.torso);
-    this.head.position.x = torso + neck + headR * 0.92;
     this.head.rotation.z = -Math.PI / 2;
-    const skull = mesh(cached('head', () => new THREE.SphereGeometry(headR, 22, 16)), this.headMat);
     this.head.add(this.headYaw);
-    this.headYaw.add(skull, this.face, this.cosmetics);
+    this.headYaw.add(this.derp.group);
     this.torso.add(this.head);
-
-    // Face: eyes sit on the front of the head, turned with its surface.
-    for (const [z, inner, s] of [
-      [headR * 0.4, -1, 1.05],
-      [-headR * 0.34, 1, 0.9],
-    ] as const) {
-      const e = new Eye(inner, s);
-      const theta = Math.atan2(z, headR * 0.84);
-      e.group.position.set(Math.cos(theta) * headR * 0.92, headR * 0.16, z);
-      e.group.rotation.y = -theta;
-      this.eyes.push(e);
-      this.face.add(e.group);
-    }
-    this.mouthOpen = mesh(
-      cached('mouthOpen', () => {
-        const g = new THREE.CircleGeometry(0.07, 14, Math.PI, Math.PI);
-        g.rotateY(Math.PI / 2);
-        return g;
-      }),
-      WHITE,
-    );
-    this.mouthOpen.position.set(headR * 0.93, -headR * 0.32, headR * 0.12);
-    this.mouthOpen.rotation.y = -0.2;
-    this.mouthLine = mesh(cached('mouthLine', () => new THREE.BoxGeometry(0.01, 0.012, 0.09)), WHITE);
-    this.mouthLine.position.set(headR * 0.95, -headR * 0.38, headR * 0.1);
-    this.face.add(this.mouthOpen, this.mouthLine);
+    this.neckBone = mesh(boneGeo(1, torsoR * 0.8), BLACK);
+    this.neckBone.visible = false;
+    this.torso.add(this.neckBone);
 
     // Arms (2D-placed segments in the arms group)
     const armSeg = (len: number, tip = true) => this.stick(boneGeo(len, limbR * 0.95, tip));
@@ -504,8 +363,7 @@ export class StickmanRig {
     this.foreDraw.position.z = -0.06;
     this.arms.add(this.upperBow, this.foreBow, this.upperDraw, this.foreDraw, this.bow);
 
-    // Smooth skinned body from the Unity asset, when it ships with this build
-    // (setLook swaps in a hero's suit instead).
+    // Smooth skinned body from the Unity asset, when it ships with this build.
     if (STICKMAN_DATA) {
       this.skinMat = new THREE.MeshPhongMaterial({ color: BODY_BLACK, shininess: 45, specular: new THREE.Color(0x3a3a3a) });
       this.stickSkin = new StickmanBody(STICKMAN_DATA, this.skinMat);
@@ -530,6 +388,11 @@ export class StickmanRig {
 
     this.nocked = makeArrow(look.trail);
     this.arms.add(this.nocked);
+
+    // The snack: one arrow, held level across the mouth while he chews.
+    this.snack = makeArrow(look.trail);
+    this.snack.visible = false;
+    this.arms.add(this.snack);
 
     // Little white surrender flag, shown during the "flag" emote.
     this.flagProp = new THREE.Group();
@@ -559,6 +422,8 @@ export class StickmanRig {
     this.setLook(look);
   }
 
+  private neckBone: THREE.Mesh;
+
   private stick(geo: THREE.BufferGeometry) {
     const m = mesh(geo, this.bodyMat);
     this.sticks.push(m);
@@ -573,21 +438,26 @@ export class StickmanRig {
     if (look.key === this.lookKey) return;
     this.lookKey = look.key;
     this.trail = look.trail;
-    this.cosmetics.clear();
-    this.flutter = [];
+    this.shovel = look.bow === 'shovel';
+    this.bowScale = this.shovel ? 1.7 : 1;
     this.buildBow(look);
-    this.buildHat(look);
-    this.buildHero(look);
-    this.useBody(look);
-    this.buildQuiver(look);
-    // A hero head replaces the cartoon eyes and mouth entirely.
-    this.face.visible = look.hat !== 'face';
-    const glow = look.eyes ? new THREE.MeshBasicMaterial({ color: look.eyes }) : null;
-    for (const e of this.eyes) e.setGlow(glow);
+    this.useBody();
+    this.derp.set(look.shape, look.hat, look.seed);
+    // Head on the neck; a long-necked derp shows the extra as a thin stalk.
+    const { torso, neck } = BODY;
+    this.neckExtra = look.neck;
+    this.head.position.x = torso + neck + look.neck;
+    this.neckBone.visible = look.neck > 0.01;
+    if (this.neckBone.visible) {
+      this.neckBone.position.x = torso + neck - 0.02;
+      this.neckBone.scale.set(look.neck + 0.02, 1, 1);
+    }
+    const hc = this.derp.clearance;
+    this.headClearance = hc;
 
-    // Nocked arrow takes the trail colour for its fletching
+    // Nocked arrow (or shovel) takes the trail colour for its fletching
     this.arms.remove(this.nocked);
-    this.nocked = makeArrow(look.trail);
+    this.nocked = makeProjectile(look);
     this.arms.add(this.nocked);
   }
 
@@ -597,95 +467,35 @@ export class StickmanRig {
     // tips, string nocked where they turn (BOW_TIP); wrapped grip with metal
     // ferrules either side, as on the character sheets. One merged,
     // vertex-coloured mesh per look (one draw call).
-    const key = `bow|${look.bowColor}|${look.bowAccent}`;
+    const shovel = look.bow === 'shovel';
+    const wood = shovel ? '#6B4A2B' : '#8B5A2B';
+    const accent = shovel ? '#2B2B2B' : '#E9D8A6';
+    const key = `bow|${wood}|${accent}`;
     const geo = cached(key, () => {
       const limb = recurveGeo();
       const lower = limb.clone().scale(1, -1, 1);
       const ferrules = [1, -1].map((s) => new THREE.CylinderGeometry(0.03, 0.03, 0.025, 10).translate(-0.004, s * 0.085, 0));
       const nocks = [1, -1].map((s) => new THREE.SphereGeometry(0.016, 8, 6).translate(BOW_TIP.x, s * BOW_TIP.y, 0));
       return mergeColored([
-        [limb, look.bowColor],
-        [flipWinding(lower), look.bowColor],
+        [limb, wood],
+        [flipWinding(lower), wood],
         [ferrules[0], '#B9B6AE'],
         [ferrules[1], '#B9B6AE'],
-        [nocks[0], look.bowAccent],
-        [nocks[1], look.bowAccent],
-        [gripGeo(), look.bowAccent],
+        [nocks[0], accent],
+        [nocks[1], accent],
+        [gripGeo(), accent],
       ]);
     });
-    const metal = look.bowColor === '#C9A227' ? 0.8 : 0.15;
-    const mat = new THREE.MeshPhongMaterial({
-      vertexColors: true,
-      shininess: 60,
-      specular: new THREE.Color(0xffffff).multiplyScalar(0.15 + metal * 0.6),
-      emissive: look.bowGlow ? new THREE.Color(look.bowAccent).multiplyScalar(0.35) : new THREE.Color(0x000000),
-    });
-    this.bow.add(mesh(geo, mat));
+    const mat = new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 40, specular: new THREE.Color(0x333333) });
+    const m = mesh(geo, mat);
+    m.scale.setScalar(this.bowScale);
+    this.bow.add(m);
   }
 
-  private buildQuiver(look: Look) {
-    this.torso.children.filter((c) => c.userData.quiver).forEach((c) => this.torso.remove(c));
-    const hero = look.hat === 'face';
-    this.heldArrows?.removeFromParent();
-    this.heldArrows = null;
-    if (hero && look.face && !HERO_SPECS[look.face].outfit.quiver) {
-      // No quiver: he carries two spare arrows, tips down, in the draw hand.
-      const g = new THREE.Group();
-      for (const [dz, tilt] of [
-        [0.015, 0.06],
-        [-0.015, -0.05],
-      ]) {
-        const a = makeArrow(look.trail);
-        a.position.set(0, -0.55, dz);
-        a.rotation.z = -Math.PI / 2 + tilt; // makeArrow points +x at its tip
-        g.add(a);
-      }
-      this.heldArrows = g;
-      this.arms.add(g);
-      return;
-    }
-    // Leather tube, trim bands and five arrows standing in it with their
-    // fletching fanned over the shoulder: one merged mesh (one draw).
-    const geo = cached(`quiver|${hero ? 'hero' : look.banner}|${look.trail}`, () => {
-      const parts: [THREE.BufferGeometry, string][] = [[new THREE.CylinderGeometry(0.085, 0.07, 0.56, 14), hero ? '#7A4527' : '#3A2A1E']];
-      for (const y of [0.25, -0.24]) parts.push([new THREE.CylinderGeometry(0.09, 0.09, 0.045, 14).translate(0, y, 0), hero ? '#4E2A15' : look.banner]);
-      const arrow = makeArrow(look.trail).children[0] as THREE.Mesh;
-      const m = new THREE.Matrix4();
-      for (let i = 0; i < 5; i++) {
-        const ang = (i / 5) * Math.PI * 2;
-        // makeArrow's tip is its origin, pointing +x: turn it tip-down.
-        m.compose(
-          new THREE.Vector3(Math.cos(ang) * 0.035, -0.24 + (i % 2) * 0.04, Math.sin(ang) * 0.035),
-          new THREE.Quaternion().setFromEuler(new THREE.Euler((i - 2) * 0.07, 0, -Math.PI / 2)),
-          new THREE.Vector3(1, 1, 1),
-        );
-        parts.push([arrow.geometry.clone().applyMatrix4(m), '#FFFFFF']);
-      }
-      return mergeColored(parts, true);
-    });
-    const quiver = mesh(geo, QUIVER_MAT);
-    quiver.userData.quiver = true;
-    // Torso space: +x runs up the spine, +y points behind the archer, +z to
-    // their right. Slung across the back, top over the right shoulder.
-    quiver.quaternion.setFromUnitVectors(_up, _qdir.set(Math.cos(0.45), 0, Math.sin(0.45)));
-    // A hero's quiver rides lower and further back, clear of the big head.
-    quiver.position.set(BODY.torso * (hero ? 0.4 : 0.56), hero ? 0.27 : 0.09, 0);
-    this.torso.add(quiver);
-  }
-
-  // The skinned body for this look: a hero wears their chibi suit
-  // (assets/heroes/<id>_body.json); everyone else the Unity stickman, or the
-  // capsule limbs when that file isn't in the build.
-  private useBody(look: Look) {
-    let next = this.stickSkin;
-    if (look.hat === 'face' && look.face) {
-      if (this.heroSkinId !== look.face) {
-        this.heroSkin?.group.removeFromParent();
-        this.heroSkin = new StickmanBody(heroBody(look.face), this.suitMat);
-        this.heroSkinId = look.face;
-      }
-      next = this.heroSkin;
-    }
+  // The skinned body: the Unity stickman, or the capsule limbs when that
+  // file isn't in the build.
+  private useBody() {
+    const next = this.stickSkin;
     if (next === this.skin) return;
     this.skin?.group.removeFromParent();
     this.skin = next;
@@ -695,195 +505,35 @@ export class StickmanRig {
     this.prevBow = this.prevDraw = null;
   }
 
-  // A hero is a sculpted head (HeroHead.ts) on their suit: the limbs and
-  // joints are exactly the ones every archer has.
-  private buildHero(look: Look) {
-    const { torso, neck, headR } = BODY;
-    this.hero?.dispose();
-    this.hero = null;
-    this.heroClear = null;
-    this.head.position.x = torso + neck + headR * 0.92;
-    this.headYaw.children.forEach((c) => {
-      c.visible = true;
-    });
-    if (look.hat !== 'face' || !look.face) return;
-
-    const R = headR * HERO_HEAD;
-    this.hero = new HeroHead(look.face, R);
-    // The sheet's chin rests on the suit's turtleneck collar; the head's own
-    // painted collar and neck run down inside it.
-    this.head.position.x = torso + COLLAR_TOP - this.hero.chin * R;
-    const b = this.hero.bounds;
-    this.heroClear = b.radius * 0.88 > R ? { center: b.center, radius: b.radius * 0.88 } : { center: new THREE.Vector3(), radius: R };
-    this.headYaw.add(this.hero.group);
-    // Hide the black skull and cartoon face: the hero head replaces them.
-    this.headYaw.children.forEach((c) => {
-      if (c !== this.hero?.group && c !== this.face && c !== this.cosmetics) c.visible = false;
-    });
-  }
-
-  private buildHat(look: Look) {
-    const hr = BODY.headR;
-    const acc = glossy(look.hatColor);
-    const add = (...o: THREE.Object3D[]) => this.cosmetics.add(...o);
-    switch (look.hat) {
-      case 'cap': {
-        const dome = mesh(new THREE.SphereGeometry(hr * 1.06, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), acc);
-        dome.position.y = hr * 0.12;
-        const brim = mesh(new THREE.CylinderGeometry(hr * 0.75, hr * 0.75, 0.02, 16, 1, false, -Math.PI / 2, Math.PI), glossy('#1B1B1B'));
-        brim.position.set(-hr * 0.7, hr * 0.2, 0);
-        add(dome, brim);
-        break;
-      }
-      case 'helmet': {
-        const dome = mesh(new THREE.SphereGeometry(hr * 1.14, 18, 12, 0, Math.PI * 2, 0, Math.PI * 0.55), glossy(look.hatColor, { rough: 0.8 }));
-        dome.position.y = hr * 0.05;
-        const rim = mesh(new THREE.TorusGeometry(hr * 1.12, 0.022, 6, 24), glossy('#3E4A26', { rough: 0.8 }));
-        rim.rotation.x = Math.PI / 2;
-        rim.position.y = hr * 0.08;
-        add(dome, rim);
-        // Camo blotches
-        const blot = [glossy('#3E4A26', { rough: 0.9 }), glossy('#8A7B4A', { rough: 0.9 }), glossy('#2A2A1A', { rough: 0.9 })];
-        for (let i = 0; i < 9; i++) {
-          const a = (i / 9) * Math.PI * 2;
-          const el = 0.35 + (i % 3) * 0.25;
-          const b = mesh(cached('blot', () => new THREE.SphereGeometry(0.05, 6, 4)), blot[i % 3]);
-          b.scale.set(1.4, 0.35, 1);
-          b.position.set(Math.cos(a) * Math.cos(el) * hr * 1.13, hr * 0.05 + Math.sin(el) * hr * 1.13, Math.sin(a) * Math.cos(el) * hr * 1.13);
-          b.lookAt(0, 0, 0);
-          add(b);
-        }
-        break;
-      }
-      case 'viking': {
-        const steel = glossy(look.hatColor, { metal: 0.85, rough: 0.3 });
-        const dome = mesh(new THREE.SphereGeometry(hr * 1.1, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), steel);
-        dome.position.y = hr * 0.1;
-        const nose = mesh(new THREE.BoxGeometry(0.03, 0.16, 0.035), steel);
-        nose.position.set(hr * 1.08, 0, 0.0);
-        add(dome, nose);
-        for (const s of [1, -1]) {
-          const horn = mesh(new THREE.TorusGeometry(0.13, 0.03, 6, 12, Math.PI * 0.6), glossy('#F1E3C6', { rough: 0.4 }));
-          horn.position.set(0, hr * 0.55, s * hr * 0.95);
-          horn.rotation.set(0, s > 0 ? 0 : Math.PI, 0.3);
-          add(horn);
-        }
-        break;
-      }
-      case 'dragon': {
-        const purple = glossy(look.hatColor, { rough: 0.35 });
-        const dome = mesh(new THREE.SphereGeometry(hr * 1.2, 18, 12, 0, Math.PI * 2, 0, Math.PI * 0.62), purple);
-        dome.position.y = hr * 0.02;
-        const snout = mesh(new THREE.ConeGeometry(0.12, 0.26, 6), purple);
-        snout.rotation.z = -Math.PI / 2;
-        snout.position.set(hr * 1.15, hr * 0.42, 0);
-        add(dome, snout);
-        const gold = glossy('#E9C46A', { metal: 0.7, rough: 0.3 });
-        for (const s of [1, -1]) {
-          const horn = mesh(new THREE.ConeGeometry(0.045, 0.32, 8), gold);
-          horn.position.set(-hr * 0.35, hr * 1.05, s * hr * 0.5);
-          horn.rotation.set(s * 0.4, 0, 0.9);
-          add(horn);
-        }
-        for (let i = 0; i < 4; i++) {
-          const fin = mesh(new THREE.ConeGeometry(0.04, 0.14, 4), glossy('#FF5AF1', { glow: 0.6 }));
-          fin.position.set(-hr * (0.2 + i * 0.3), hr * (1.15 - i * 0.18), 0);
-          fin.rotation.z = 0.6 + i * 0.25;
-          add(fin);
-        }
-        break;
-      }
-      case 'crown': {
-        const gold = glossy(look.hatColor, { metal: 0.9, rough: 0.2, glow: 0.12 });
-        const band = mesh(new THREE.CylinderGeometry(hr * 0.8, hr * 0.85, 0.1, 14, 1, true), gold);
-        band.position.y = hr * 0.95;
-        add(band);
-        for (let i = 0; i < 6; i++) {
-          const a = (i / 6) * Math.PI * 2;
-          const spike = mesh(new THREE.ConeGeometry(0.035, 0.12, 4), gold);
-          spike.position.set(Math.cos(a) * hr * 0.8, hr * 0.95 + 0.1, Math.sin(a) * hr * 0.8);
-          const gem = mesh(new THREE.SphereGeometry(0.02, 6, 4), glossy('#9D0208', { glow: 0.5 }));
-          gem.position.set(Math.cos(a) * hr * 0.85, hr * 0.95, Math.sin(a) * hr * 0.85);
-          add(spike, gem);
-        }
-        break;
-      }
-      case 'horns': {
-        for (const s of [1, -1]) {
-          const horn = mesh(new THREE.ConeGeometry(0.05, 0.26, 8), glossy(look.hatColor, { rough: 0.25 }));
-          horn.position.set(0.02, hr * 0.85, s * hr * 0.6);
-          horn.rotation.set(s * 0.5, 0, -0.35);
-          add(horn);
-        }
-        break;
-      }
-      case 'halo': {
-        const halo = mesh(new THREE.TorusGeometry(hr * 0.85, 0.022, 8, 28), glossy(look.hatColor, { glow: 1.6 }));
-        halo.rotation.x = Math.PI / 2;
-        halo.position.y = hr * 1.6;
-        halo.userData.bob = true;
-        this.flutter.push(halo);
-        for (const s of [1, -1]) {
-          const wing = mesh(new THREE.SphereGeometry(0.16, 10, 8), glossy('#FFFFFF', { rough: 0.6, glow: 0.25 }));
-          wing.scale.set(0.35, 1, 0.12);
-          wing.position.set(-0.05, -BODY.torso * 0.45, s * 0.14);
-          wing.rotation.set(s * 0.6, 0, 0.5);
-          wing.userData.wing = s;
-          this.flutter.push(wing);
-          add(wing);
-        }
-        add(halo);
-        break;
-      }
-      case 'hood': {
-        const hood = mesh(new THREE.SphereGeometry(hr * 1.14, 16, 12, Math.PI * 0.15, Math.PI * 1.7, 0, Math.PI * 0.62), acc);
-        hood.rotation.y = Math.PI;
-        const peak = mesh(new THREE.ConeGeometry(0.07, 0.18, 6), acc);
-        peak.position.set(-hr * 0.9, hr * 0.55, 0);
-        peak.rotation.z = 1.2;
-        add(hood, peak);
-        break;
-      }
-      case 'visor': {
-        const visor = mesh(
-          new THREE.CylinderGeometry(hr * 1.04, hr * 1.04, 0.075, 18, 1, true, -Math.PI * 0.4, Math.PI * 0.8),
-          glossy(look.hatColor, { glow: 1.4, rough: 0.1 }),
-        );
-        visor.rotation.y = Math.PI / 2;
-        visor.position.y = hr * 0.18;
-        const band = mesh(new THREE.TorusGeometry(hr * 1.02, 0.018, 6, 24), glossy('#1B2B34', { metal: 0.6 }));
-        band.rotation.x = Math.PI / 2;
-        band.position.y = hr * 0.18;
-        add(visor, band);
-        break;
-      }
-      case 'headband':
-      case 'bandana': {
-        const band = mesh(new THREE.TorusGeometry(hr * 0.98, look.hat === 'bandana' ? 0.035 : 0.022, 8, 24), acc);
-        band.rotation.x = Math.PI / 2;
-        band.position.y = hr * 0.38;
-        add(band);
-        for (const s of [1, -1]) {
-          const tail = mesh(new THREE.BoxGeometry(look.hat === 'bandana' ? 0.2 : 0.26, 0.04, 0.012), acc);
-          tail.geometry.translate(-0.1, 0, 0);
-          tail.position.set(-hr * 0.95, hr * 0.33, s * 0.03);
-          tail.userData.tail = s;
-          this.flutter.push(tail);
-          add(tail);
-        }
-        break;
-      }
-      default:
-        break;
-    }
-  }
-
   // Place every bone for this frame. `t` = time (s), `dt` = frame step.
   update(p: RigPose, t: number, dt = 1 / 60) {
     const f = p.facing;
     const d = p.death;
-    this.root.rotation.y = f === 1 ? 0 : Math.PI;
+    // Wrong way round: he turns his back on the target (the aim is the sim's,
+    // unchanged — he just draws at the scenery behind him for a moment).
+    this.turnBlend.to(p.turn && !d ? p.turn : 0, dt);
+    const turn = this.turnBlend.v;
+    this.root.rotation.y = (f === 1 ? 0 : Math.PI) + turn * Math.PI;
     const limp = d ? Math.min(1, d.t * 3) : 0;
+    // Shovel bow recoil: each release throws him back off his feet; he lands
+    // on his back, then shuffles back to his spot. Visual only.
+    if (this.shovel && p.recoil > this.lastRecoil + 0.5) this.thrown = 0;
+    this.lastRecoil = p.recoil;
+    let throwX = 0;
+    let throwY = 0;
+    let throwTilt = 0;
+    if (this.thrown >= 0) {
+      this.thrown += dt;
+      const k = this.thrown;
+      if (k > THROW_TIME || d) this.thrown = -1;
+      else {
+        const fly = Math.min(1, k / 0.4);
+        const back = k < 1.1 ? 1 - (1 - fly) * (1 - fly) : 1 - smooth((k - 1.1) / (THROW_TIME - 1.1));
+        throwX = -1.3 * back;
+        throwY = k < 0.4 ? Math.sin((k / 0.4) * Math.PI) * 0.5 : 0;
+        throwTilt = k < 1.1 ? Math.min(1, k / 0.3) * 1.15 : 1.15 * (1 - smooth((k - 1.1) / 0.35));
+      }
+    }
 
     // Blends: aim raises the bow; gestures and defeat take over the arms.
     const aiming = p.ready || p.draw > 0.02;
@@ -948,18 +598,17 @@ export class StickmanRig {
     } else {
       // Hit stagger: a small shove back that springs out.
       const shove = -f * p.flinch * 0.12;
-      this.root.position.set(p.x + walkOff + shove, p.y, 0);
-      this.body.rotation.z = 0;
+      this.root.position.set(p.x + walkOff + shove + f * throwX, p.y + throwY, 0);
+      // Local +z tips the body backward whichever way he faces.
+      this.body.rotation.z = throwTilt;
     }
-    this.body.position.y = HIP_Y + bounce;
+    this.body.position.y = HIP_Y + bounce - throwTilt * 0.42;
     this.shadow.visible = !d || d.landed;
     this.shadow.scale.setScalar(1 - Math.min(0.5, Math.max(0, bounce)));
 
     // Hit flash and shield shimmer
     this.bodyMat.emissive.setRGB(p.flash * 0.9, p.flash * 0.25, p.flash * 0.25);
-    this.headMat.emissive.copy(this.bodyMat.emissive);
     this.skinMat?.emissive.copy(this.bodyMat.emissive);
-    this.suitMat.emissive.copy(this.bodyMat.emissive);
     const sb = this.shieldBubble.material as THREE.MeshBasicMaterial;
     sb.opacity = p.shieldFlash * 0.55;
     this.shieldBubble.visible = p.shieldFlash > 0.01;
@@ -1010,17 +659,13 @@ export class StickmanRig {
     this.torso.rotation.z = Math.PI / 2 + lean;
     const idleLook = d ? 0 : Math.sin(t * 0.7) * 0.05 + Math.sin(t * 1.9) * 0.02;
     this.head.rotation.z = -Math.PI / 2 - lean * 0.3 + idleLook * (1 - g) + headTilt * g - sad * 0.55 - p.flinch * 0.3 + run * 0.12;
+    // Seeing stars: the head lolls about.
+    if (p.mood === 'dazed' && !d) this.head.rotation.z += Math.sin(t * 5.5) * 0.22;
     // Look back: the head turns about its own up axis, over the shoulder.
     this.headYaw.rotation.y = -look * 1.5;
 
-    // Face
-    this.eyes.forEach((e, i) => e.set(p.mood, t, i === 0, dt));
-    const mouthOpen = p.mood === 'laugh' ? 1 + Math.sin(t * 18) * 0.25 : p.mood === 'shock' ? 0.6 : p.mood === 'hurt' ? 0.5 : p.mood === 'happy' ? 0.55 : p.mood === 'scared' ? 0.45 + Math.sin(t * 26) * 0.08 : p.mood === 'wink' ? 0.35 : fx.yawn * g * 1.3;
-    this.mouthOpen.visible = mouthOpen > 0;
-    this.hero?.update(p.mood, t, dt, d ? 0 : this.aimBlend.v * p.draw, p.flash);
-    this.mouthOpen.scale.set(1, mouthOpen, 1);
-    this.mouthLine.visible = p.mood === 'angry' || p.mood === 'sad' || p.mood === 'smug' || p.mood === 'sleepy';
-    this.mouthLine.rotation.x = p.mood === 'sad' ? 0.25 : p.mood === 'smug' ? -0.28 : 0;
+    // Face: the paper head redraws itself for the mood (and blushes on a hit).
+    this.derp.update(d ? 'dead' : p.mood, t, p.flash);
 
     // Shoulder point in body space (hip = origin), after lean & yaw
     const spine = BODY.torso;
@@ -1040,17 +685,18 @@ export class StickmanRig {
     const sinA = Math.sin(a);
     const aimHand = { x: cosA * ARM_REACH, y: sinA * ARM_REACH };
     // Hands work in the aim plane; with the Unity body it sits out at the front
-    // shoulder, further for a big hero head.
+    // shoulder, further for a big head.
     const aimZ = this.skin ? 0.2 + Math.max(0, this.headClear().radius - BODY.headR) * 0.4 : 0.06;
     const pull = STRING_REST + p.draw * 0.62;
     const lift = p.draw * 0.06;
     let aimNock = { x: aimHand.x - cosA * pull - sinA * lift, y: aimHand.y - sinA * pull + cosA * lift };
     // Anchor point: the drawing hand stops at the face instead of inside it
-    // (a big chibi head would swallow it), pushed straight out of the head
+    // (a big paper head would swallow it), pushed straight out of the head
     // so it moves continuously. Visual only — the shot is the sim's.
     {
       const hc = this.headClear();
-      const Lh = this.head.position.x + hc.center.x;
+      // Head space +y runs up the spine.
+      const Lh = this.head.position.x + hc.center.y;
       const cx = Math.cos(sAng) * Lh * Math.cos(this.hips.rotation.y) - sx;
       const cy = Math.sin(sAng) * Lh - (sy + sad * 0.05);
       const r2 = (hc.radius + 0.04) ** 2 - aimZ * aimZ;
@@ -1086,6 +732,8 @@ export class StickmanRig {
     if (g > 0.001 && this.gest && !d) {
       bowHand = swing(bowHand, fx.bow, g);
       drawHand = swing(drawHand, fx.draw, g);
+      // The snack goes to the mouth, wherever a long neck put it.
+      if (this.gest === 'eat') drawHand = { x: drawHand.x, y: drawHand.y + this.neckExtra * g };
     }
     if (sad > 0.001 && !d) {
       bowHand = swing(bowHand, { x: 0.05, y: -0.55 }, sad);
@@ -1115,7 +763,7 @@ export class StickmanRig {
 
     // With the Unity body, pose it now and hang the bow and string on its
     // real hands. While aiming both hands work in one plane, a little in
-    // front of a big hero head so the string never cuts through the face.
+    // front of the big head so the string never cuts through the face.
     if (this.skin) {
       const aimW = ab * (1 - g) * (1 - sad);
       // Hanging (not aiming, not emoting): arms rest at their full length.
@@ -1139,8 +787,8 @@ export class StickmanRig {
     const sinB = Math.sin(bowRot);
 
     // Bowstring through the nock while drawn, straight otherwise
-    const tipBack = BOW_TIP.x;
-    const tipUp = BOW_TIP.y;
+    const tipBack = BOW_TIP.x * this.bowScale;
+    const tipUp = BOW_TIP.y * this.bowScale;
     const pos = this.stringGeo.getAttribute('position') as THREE.BufferAttribute;
     const tx = (lx: number, ly: number) => hx + lx * cosB - ly * sinB;
     const ty = (lx: number, ly: number) => hy + lx * sinB + ly * cosB;
@@ -1154,7 +802,8 @@ export class StickmanRig {
 
     // Nocked arrow sits on the string
     this.nocked.visible = p.showNocked && !d && ab > 0.6;
-    this.nocked.position.set(nx + cosA * ARROW_LEN, ny + sinA * ARROW_LEN, hz);
+    const len = this.shovel ? SHOVEL_LEN : ARROW_LEN;
+    this.nocked.position.set(nx + cosA * len, ny + sinA * len, hz);
     this.nocked.rotation.z = a;
 
     // Surrender flag rides the draw hand
@@ -1165,27 +814,17 @@ export class StickmanRig {
       cloth.rotation.y = Math.sin(t * 8) * 0.4;
     }
 
-    // Spare arrows ride the draw hand while the bow is down.
-    if (this.heldArrows) {
-      this.heldArrows.visible = !d && ab < 0.4 && g < 0.3;
-      this.heldArrows.position.set(nx, ny, nz);
-    }
-
-    // Cosmetic flutter
-    for (const o of this.flutter) {
-      if (o.userData.bob) o.position.y = BODY.headR * 1.6 + Math.sin(t * 2.4) * 0.02;
-      if (o.userData.tail) {
-        o.rotation.z = 0.6 + Math.sin(t * 7 + o.userData.tail) * 0.25;
-        o.rotation.y = Math.sin(t * 5.3 + o.userData.tail * 2) * 0.3;
-      }
-      if (o.userData.wing) o.rotation.x = o.userData.wing * (0.6 + Math.sin(t * 3) * 0.2);
+    // Lunch: one arrow held level across the mouth, tip forward.
+    this.snack.visible = this.gest === 'eat' && g > 0.3 && !d;
+    if (this.snack.visible) {
+      this.snack.position.set(nx + ARROW_LEN * 0.55, ny + 0.02, nz + 0.04);
+      this.snack.rotation.z = Math.sin(t * 22) * 0.04;
     }
   }
 
-  // The sphere hands must stay out of, in head-group space: the hero's head
-  // and most of its hair (hands may brush the fringe of a big hairdo).
+  // The sphere hands must stay out of, in head-group space.
   private headClear() {
-    return this.heroClear ?? PLAIN_HEAD;
+    return this.headClearance;
   }
 
   // Report this frame's joints (in root space) and bend the Unity skeleton to
@@ -1245,6 +884,11 @@ class Blend {
 }
 
 const PLAIN_HEAD = { center: new THREE.Vector3(), radius: BODY.headR };
+const THROW_TIME = 2.2; // shovel bow: thrown, lying there, back on his spot
+const smooth = (x: number) => {
+  const k = Math.max(0, Math.min(1, x));
+  return k * k * (3 - 2 * k);
+};
 const HAND_SPEED = 4.5; // m/s — above any aim drag the sim produces (~3.3 m/s)
 const _grip = new THREE.Vector3();
 const _armsInv = new THREE.Matrix4();
@@ -1353,6 +997,10 @@ function gestureFx(g: Gesture, t: number, out: GestureFx) {
       out.yawn = Math.max(0, k);
       break;
     }
+    case 'eat':
+      out.lean = 0.04;
+      out.tilt = 0.12 + Math.sin(t * 22) * 0.03;
+      break;
     default:
       break;
   }
@@ -1404,6 +1052,8 @@ function gesturePose(g: Gesture, t: number): { bow: V2; draw: V2 } {
       const k = yawnK(t);
       return { bow: { x: 0.34, y: 0.1 + k * 0.5 }, draw: { x: -0.26, y: 0.1 + k * 0.5 } };
     }
+    case 'eat': // arrow up to the mouth, chewing
+      return { bow: { x: 0.14, y: -0.48 }, draw: { x: 0.1, y: 0.15 + Math.sin(t * 22) * 0.012 } };
   }
 }
 

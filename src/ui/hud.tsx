@@ -1,13 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import Animated, {
   Easing,
-  FadeIn,
-  FadeOut,
   SlideInDown,
   SlideOutDown,
   ZoomIn,
   ZoomOut,
+  cancelAnimation,
   useAnimatedProps,
   useAnimatedStyle,
   useSharedValue,
@@ -21,11 +20,47 @@ import Svg, { Circle, Path } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
 import { HapticTouchable } from '@/components/haptic-touchable';
 import { BloodSplat, EMOTES, EmoteArt, QUICK_MESSAGES, type EmoteId } from '@/ui/emotes';
-import { FONT, HeartIcon, ShieldIcon, StatBar } from '@/ui/kit';
+import { FONT, HeartIcon, INK, ShieldIcon, StatBar } from '@/ui/kit';
 import type { Anchors } from '@/game3d/Duel3D';
+import type { Who } from '@/game3d/sim';
 import { HP } from '@/game3d/world';
 
-// In-duel HUD pieces, styled after the reference game.
+// In-duel HUD pieces. Bars, timer and chat follow the reference game; the
+// signs and words (turn sign, "-N", "BONK", "...ow.") are hand-lettered in
+// black ink like the launch videos (docs/trailer/tools/derpy20.py `hud`).
+
+// ---- hand lettering --------------------------------------------------------------
+// Deterministic 0..1 noise, so a word keeps its wonky letters across renders.
+function noise(n: number) {
+  const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+// Scrawled text: every letter a little rotated and off the line, ink with a
+// white paper halo so it reads over any sky.
+export function Scrawl({ text, size, color = INK, seed = 0 }: { text: string; size: number; color?: string; seed?: number }) {
+  const letters = useMemo(
+    () =>
+      [...text].map((c, i) => ({
+        c,
+        rot: (noise(seed * 31 + i) - 0.5) * 12,
+        dy: (noise(seed * 17 + i * 3 + 1) - 0.5) * size * 0.14,
+      })),
+    [text, size, seed],
+  );
+  return (
+    <View style={styles.scrawl}>
+      {letters.map((l, i) => (
+        <Text
+          key={i}
+          style={[styles.scrawlChar, { fontSize: size, lineHeight: size * 1.25, color, transform: [{ translateY: l.dy }, { rotate: `${l.rot}deg` }] }]}
+        >
+          {l.c}
+        </Text>
+      ))}
+    </View>
+  );
+}
 
 // ---- name plates ----------------------------------------------------------------
 export function Plate({
@@ -34,12 +69,16 @@ export function Plate({
   shield,
   right,
   timer,
+  hits,
+  onHitDone,
 }: {
   name: string;
   hp: number;
   shield: number;
   right?: boolean;
   timer?: { endsAt: number; seconds: number } | null;
+  hits?: BarHit[];
+  onHitDone?: (id: number) => void;
 }) {
   return (
     <View style={[styles.plate, right && styles.plateRight]} pointerEvents="none">
@@ -53,7 +92,40 @@ export function Plate({
           {name}
         </Text>
       </View>
+      {hits?.map((h) => (
+        <BarFloat key={h.id} hit={h} right={right} onDone={onHitDone} />
+      ))}
     </View>
+  );
+}
+
+// ---- damage off the bars ------------------------------------------------------------
+export type BarHit = { id: number; who: Who; bar: 'hp' | 'shield'; text: string; color: string; big?: boolean };
+
+// Centre of each bar's track, measured from the plate's outer edge (icon
+// overlap + track widths in StatBar; the right plate is mirrored).
+const BAR_CENTRE = { hp: 61, shield: 181 };
+
+// A scrawled "-N" that floats up off the bar it came out of, like the
+// videos' "-1".
+function BarFloat({ hit, right, onDone }: { hit: BarHit; right?: boolean; onDone?: (id: number) => void }) {
+  const rise = useSharedValue(0);
+  const scale = useSharedValue(0.5);
+  useEffect(() => {
+    rise.value = withTiming(1, { duration: 1100, easing: Easing.out(Easing.quad) });
+    scale.value = withSequence(withTiming(hit.big ? 1.35 : 1.15, { duration: 160, easing: Easing.out(Easing.cubic) }), withTiming(1, { duration: 200 }));
+    const id = setTimeout(() => onDone?.(hit.id), 1200);
+    return () => clearTimeout(id);
+  }, [hit, rise, scale, onDone]);
+  const style = useAnimatedStyle(() => ({
+    opacity: rise.value < 0.6 ? 1 : 1 - (rise.value - 0.6) * 2.5,
+    transform: [{ translateY: 24 - rise.value * 30 }, { scale: scale.value }],
+  }));
+  const at = BAR_CENTRE[hit.bar] - 40;
+  return (
+    <Animated.View style={[styles.barFloat, right ? { right: at } : { left: at }, style]}>
+      <Scrawl text={hit.text} size={hit.big ? 30 : 24} color={hit.color} seed={hit.id} />
+    </Animated.View>
   );
 }
 
@@ -134,34 +206,44 @@ export function SpeechBubble({ bubble, anchors }: { bubble: Bubble; anchors: Sha
   );
 }
 
-export type Floater = { id: number; who: 'player' | 'enemy'; text: string; color: string; big?: boolean };
+// `word`: a scrawled ink word over the head ("BONK", "...ow.", "nailed it")
+// that pops, hangs there a beat and drifts up; otherwise a number that pops
+// off the head and floats up.
+export type Floater = { id: number; who: Who; text: string; color: string; big?: boolean; word?: boolean };
 
-// Damage number that pops off the head and floats up.
 export function FloatingNumber({ f, anchors, onDone }: { f: Floater; anchors: SharedValue<Anchors>; onDone: (id: number) => void }) {
   const rise = useSharedValue(0);
   const scale = useSharedValue(0.4);
   const [drift] = useState(() => (Math.random() - 0.5) * 30);
+  const ms = f.word ? 1600 : 1100;
   useEffect(() => {
-    rise.value = withTiming(1, { duration: 1100, easing: Easing.out(Easing.cubic) });
-    scale.value = withSequence(withTiming(f.big ? 1.5 : 1.15, { duration: 220, easing: Easing.out(Easing.cubic) }), withDelay(500, withTiming(0.9, { duration: 400 })));
-    const id = setTimeout(() => onDone(f.id), 1200);
+    rise.value = withTiming(1, { duration: ms, easing: f.word ? Easing.inOut(Easing.quad) : Easing.out(Easing.cubic) });
+    scale.value = f.word
+      ? withSequence(withTiming(f.big ? 1.25 : 1.08, { duration: 140, easing: Easing.out(Easing.cubic) }), withTiming(1, { duration: 160 }))
+      : withSequence(withTiming(f.big ? 1.5 : 1.15, { duration: 220, easing: Easing.out(Easing.cubic) }), withDelay(500, withTiming(0.9, { duration: 400 })));
+    const id = setTimeout(() => onDone(f.id), ms + 100);
     return () => clearTimeout(id);
-  }, [f, rise, scale, onDone]);
+  }, [f, ms, rise, scale, onDone]);
+  const word = !!f.word;
   const style = useAnimatedStyle(() => {
     const a = anchors.value;
     const mine = f.who === 'player';
     return {
       opacity: rise.value < 0.75 ? 1 : 1 - (rise.value - 0.75) * 4,
       transform: [
-        { translateX: (mine ? a.px : a.ex) - 60 + drift * rise.value },
-        { translateY: (mine ? a.py : a.ey) - 30 - rise.value * 70 },
+        { translateX: (mine ? a.px : a.ex) - 60 + (word ? 0 : drift * rise.value) },
+        { translateY: (mine ? a.py : a.ey) - (word ? 78 + rise.value * 26 : 30 + rise.value * 70) },
         { scale: scale.value },
       ],
     };
   });
   return (
     <Animated.View pointerEvents="none" style={[styles.anchored, styles.floater, style]}>
-      <Text style={[styles.floaterText, { color: f.color, fontSize: f.big ? 30 : 24 }]}>{f.text}</Text>
+      {f.word ? (
+        <Scrawl text={f.text} size={f.big ? 38 : 22} color={f.color} seed={f.id} />
+      ) : (
+        <Text style={[styles.floaterText, { color: f.color, fontSize: f.big ? 30 : 24 }]}>{f.text}</Text>
+      )}
     </Animated.View>
   );
 }
@@ -279,13 +361,42 @@ export function BloodEdge({ side, id }: { side: 'left' | 'right'; id: number }) 
   );
 }
 
-// "YOUR TURN" / "OPPONENT'S TURN" sweep across the middle.
-export function TurnBanner({ text, color }: { text: string; color: string }) {
+// The turn sign: "YOUR TURN" / "HIS TURN" / "SUDDEN DEATH", scrawled near
+// the top centre like the videos. It pops in for each turn (`id`), its
+// letters boil a few times a second like redrawn ink, and it ducks out of
+// the way (`up` false) while someone aims or an arrow flies.
+export function TurnSign({ id, text, sub, up }: { id: number; text: string; sub?: string; up: boolean }) {
+  const pop = useSharedValue(0.4);
+  const show = useSharedValue(0);
+  const boil = useSharedValue(0);
+  const tilt = (noise(id) - 0.5) * 5;
+  useEffect(() => {
+    pop.value = 0.4;
+    pop.value = withSequence(withTiming(1.12, { duration: 170, easing: Easing.out(Easing.cubic) }), withTiming(1, { duration: 150 }));
+  }, [id, pop]);
+  useEffect(() => {
+    show.value = withTiming(up ? 1 : 0, { duration: up ? 120 : 220 });
+    if (!up) {
+      cancelAnimation(boil);
+      return;
+    }
+    boil.value = 0;
+    boil.value = withRepeat(withTiming(1, { duration: 1000, easing: Easing.linear }), -1);
+  }, [up, show, boil]);
+  const style = useAnimatedStyle(() => {
+    // Six redraws a second: a new small wobble each, held in between.
+    const step = Math.floor(boil.value * 6) + 1;
+    const j = Math.sin(step * 12.9898) * 43758.5453;
+    const wob = (j - Math.floor(j) - 0.5) * 1.8;
+    return {
+      opacity: show.value,
+      transform: [{ translateY: (1 - show.value) * -22 }, { scale: pop.value }, { rotate: `${tilt + wob}deg` }],
+    };
+  });
   return (
-    <Animated.View entering={FadeIn.duration(150)} exiting={FadeOut.duration(300)} pointerEvents="none" style={styles.turnWrap}>
-      <Animated.Text entering={ZoomIn.duration(240)} style={[styles.turnText, { color }]}>
-        {text}
-      </Animated.Text>
+    <Animated.View pointerEvents="none" style={[styles.signWrap, style]}>
+      <Scrawl text={text} size={40} seed={text.length} />
+      {sub ? <Scrawl text={sub} size={18} seed={sub.length + 5} /> : null}
     </Animated.View>
   );
 }
@@ -371,6 +482,14 @@ const styles = StyleSheet.create({
   tab: { flex: 1, backgroundColor: '#3A3A42', borderRadius: 8, paddingVertical: 6, alignItems: 'center' },
   tabOn: { backgroundColor: '#5FA82E' },
   bloodEdge: { position: 'absolute', top: 0, bottom: 0, width: 260 },
-  turnWrap: { position: 'absolute', top: '30%', left: 0, right: 0, alignItems: 'center' },
-  turnText: { fontFamily: FONT.bold, fontSize: 34, letterSpacing: 3, ...textShadow },
+  barFloat: { position: 'absolute', top: 0, width: 80, alignItems: 'center' },
+  scrawl: { flexDirection: 'row', alignItems: 'center' },
+  scrawlChar: {
+    fontFamily: FONT.bold,
+    includeFontPadding: false,
+    textShadowColor: 'rgba(255,255,255,0.95)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 5,
+  },
+  signWrap: { position: 'absolute', top: 60, left: 0, right: 0, alignItems: 'center', gap: 0 },
 });

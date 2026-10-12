@@ -1,7 +1,7 @@
 // Map catalog. "Classic" is the original set of arenas (a new one each
 // match, picked by the seed) and is free. The other three are locked in the
 // shop: each is dressed with one of the owner's Unity environment packs
-// (game3d/mapProps.ts) and bought in SOL or SKR like a hero.
+// (game3d/mapProps.ts) and bought in SOL or SKR like a derp or a hat.
 //
 // The chosen map rides in the match seed's low two bits, so both phones of
 // an online match land on the host's map with no protocol change, and a

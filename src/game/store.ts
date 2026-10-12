@@ -1,16 +1,16 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
-import { DEFAULT_SKIN_ID, SKINS, canonicalSkinId, isFreeSkin, type Currency } from '@/game/skins';
-import { DEFAULT_LOADOUT, loadoutForSkin, type Loadout } from '@/game/cosmetics';
+import { DEFAULT_SKIN_ID, canonicalSkinId, type Currency, type ProductKind } from '@/game/skins';
+import { DEFAULT_LOADOUT, ownedLoadout, sanitizeLoadout, type Loadout } from '@/game/cosmetics';
 import { DEFAULT_MAP_ID, MAPS, isFreeMap } from '@/game/maps';
 
 // Persistent, device-local game settings, best score, streak and cosmetics
-// cache. Skin and map OWNERSHIP is server-authoritative (purchases table,
+// cache. Product and map OWNERSHIP is server-authoritative (purchases table,
 // written only by the verify-purchase edge function); `ownedSkins` (every
-// purchased id: hero skins and shop maps) here is a cache
+// purchased id: derp_*, hat_*, bow_* products and shop maps) here is a cache
 // refreshed on sign-in and when the shop opens, so the shop works offline
-// once loaded.
+// once loaded. What the archer wears is `loadout` (derp + hat + bow).
 
 // A purchase whose on-chain transfer went out but whose server verification
 // didn't complete (network drop). The shop retries it on open.
@@ -29,12 +29,11 @@ type GameSettings = {
   // Daily streak: consecutive local days with at least one finished run.
   streak: number;
   lastPlayedDay: string | null; // YYYY-MM-DD local
-  equippedSkin: string;
   ownedSkins: string[];
   equippedMap: string; // maps.ts id: where my duels (and rooms I host) happen
   preferredCurrency: Currency;
   pendingPurchase: PendingPurchase | null;
-  // What the archer wears: always the equipped skin's loadout.
+  // What the archer wears; every part is one I own (or a free one).
   loadout: Loadout;
   // Progression: XP → level, coins from matches, duel record.
   xp: number;
@@ -47,7 +46,9 @@ type GameSettings = {
   setSound: (on: boolean) => void;
   setMusic: (on: boolean) => void;
   recordGame: (score: number, shots: number, hits: number) => void;
-  equipSkin: (id: string) => void;
+  // Put on one part (derp, hat or bow); the caller checks ownership.
+  equip: (kind: ProductKind, item: string) => void;
+  setLoadout: (l: Loadout) => void;
   equipMap: (id: string) => void;
   setOwnedSkins: (ids: string[]) => void;
   addOwnedSkin: (id: string) => void;
@@ -99,7 +100,6 @@ export const useGameStore = create<GameSettings>()(
       hits: 0,
       streak: 0,
       lastPlayedDay: null,
-      equippedSkin: DEFAULT_SKIN_ID,
       ownedSkins: [DEFAULT_SKIN_ID],
       equippedMap: DEFAULT_MAP_ID,
       preferredCurrency: 'SKR',
@@ -124,26 +124,27 @@ export const useGameStore = create<GameSettings>()(
           streak: nextStreak(s.streak, s.lastPlayedDay),
           lastPlayedDay: localDay(),
         })),
-      // Equipping a skin dresses you in its items.
-      equipSkin: (equippedSkin) => set((s) => ({ equippedSkin, loadout: loadoutForSkin(equippedSkin) ?? s.loadout })),
+      // Unknown ids fall back to the defaults (sanitizeLoadout).
+      equip: (kind, item) => set((s) => ({ loadout: sanitizeLoadout({ ...s.loadout, [kind]: item }) })),
+      setLoadout: (l) => set({ loadout: sanitizeLoadout(l) }),
       equipMap: (equippedMap) => set({ equippedMap }),
-      // Server-authoritative ownership replaces the cache; if the equipped skin
-      // or map isn't in it (signed out, or a different wallet), fall back to a
+      // Server-authoritative ownership replaces the cache; any worn part or
+      // map not in it (signed out, or a different wallet) falls back to a
       // free one.
       setOwnedSkins: (ids) =>
         set((s) => {
           const ownedSkins = Array.from(new Set([DEFAULT_SKIN_ID, ...ids.map(canonicalSkinId)]));
-          const eq = SKINS.find((k) => k.id === s.equippedSkin);
-          const keep = !!eq && (isFreeSkin(eq) || ownedSkins.includes(eq.id));
+          const l = ownedLoadout(s.loadout, ownedSkins);
+          const same = l.derp === s.loadout.derp && l.hat === s.loadout.hat && l.bow === s.loadout.bow;
           const map = MAPS.find((m) => m.id === s.equippedMap);
           const mapOk = !!map && (isFreeMap(map) || ownedSkins.includes(map.id));
           return {
             ownedSkins,
-            ...(keep ? {} : { equippedSkin: DEFAULT_SKIN_ID, loadout: DEFAULT_LOADOUT }),
+            ...(same ? {} : { loadout: l }),
             ...(mapOk ? {} : { equippedMap: DEFAULT_MAP_ID }),
           };
         }),
-      addOwnedSkin: (id) => set((s) => ({ ownedSkins: Array.from(new Set([...s.ownedSkins, id])) })),
+      addOwnedSkin: (id) => set((s) => ({ ownedSkins: Array.from(new Set([...s.ownedSkins, canonicalSkinId(id)])) })),
       setPreferredCurrency: (preferredCurrency) => set({ preferredCurrency }),
       setPendingPurchase: (pendingPurchase) => set({ pendingPurchase }),
       grantRewards: ({ xp, coins, won }) => {
@@ -163,26 +164,29 @@ export const useGameStore = create<GameSettings>()(
     }),
     {
       name: 'monolith.game', // storage key kept so existing installs keep their progress
-      version: 6,
+      version: 7,
       storage: createJSONStorage(() => AsyncStorage),
       // v1 → v2 added streak/accuracy/currency; v3 added sound/music toggles;
-      // v4 added loadout, progression and chat settings; v5 renamed the hero
-      // skins (bro_* → hero_<name>); v6 dropped the coin accessories, so the
-      // loadout is re-derived from the equipped skin.
+      // v4 added loadout, progression and chat settings; v5 and v6 reshaped
+      // the old skin catalogue; v7 is the derps: the loadout is
+      // { derp, hat, bow } and there is no equipped skin. Anything older
+      // becomes the defaults.
       // persist's shallow merge fills new fields from the defaults above.
       migrate: (persisted, version) => {
-        const s = persisted as GameSettings;
-        if (version < 5 && s) {
-          s.ownedSkins = (s.ownedSkins ?? []).map(canonicalSkinId);
-          if (s.equippedSkin) s.equippedSkin = canonicalSkinId(s.equippedSkin);
-          if (s.loadout?.head) s.loadout = { ...s.loadout, head: canonicalSkinId(s.loadout.head) };
+        if (!persisted) return persisted as GameSettings;
+        const s = persisted as GameSettings & { equippedSkin?: string; ownedItems?: string[]; loadout?: Partial<Loadout> & { head?: string } };
+        if (version < 7) {
+          s.ownedSkins = Array.from(new Set([DEFAULT_SKIN_ID, ...(s.ownedSkins ?? []).map(canonicalSkinId)]));
+          // An interrupted purchase is re-verified under its current id.
           if (s.pendingPurchase) s.pendingPurchase = { ...s.pendingPurchase, skinId: canonicalSkinId(s.pendingPurchase.skinId) };
+          const worn = canonicalSkinId(s.loadout?.head ?? s.equippedSkin ?? DEFAULT_SKIN_ID);
+          const m = /^(derp|hat|bow)_(.+)$/.exec(worn);
+          const l = m ? sanitizeLoadout({ ...DEFAULT_LOADOUT, [m[1]]: m[2] }) : DEFAULT_LOADOUT;
+          s.loadout = ownedLoadout(l, s.ownedSkins);
+          delete s.equippedSkin;
+          delete s.ownedItems;
         }
-        if (version < 6 && s) {
-          s.loadout = loadoutForSkin(s.equippedSkin ?? DEFAULT_SKIN_ID) ?? DEFAULT_LOADOUT;
-          delete (s as Partial<GameSettings> & { ownedItems?: string[] }).ownedItems;
-        }
-        return s;
+        return s as GameSettings;
       },
     },
   ),

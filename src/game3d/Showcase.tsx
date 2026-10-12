@@ -2,17 +2,32 @@ import { useEffect, useState } from 'react';
 import { StyleSheet, View, type ViewStyle } from 'react-native';
 import { Canvas, useFrame, useThree } from '@react-three/fiber/native';
 import * as THREE from 'three';
-import { StickmanRig, makeArrow, type RigPose } from '@/game3d/Stickman3D';
-import { SIDE, reelPose } from '@/game3d/heroReel';
+import { StickmanRig, makeProjectile, type RigPose } from '@/game3d/Stickman3D';
+import { reelPose } from '@/game3d/derpReel';
 import { ARM_REACH, PHYS, SHOULDER_Y } from '@/game3d/world';
-import type { Death, Mood } from '@/game3d/sim';
+import { GESTURE_SECONDS, type Death, type Gesture, type Mood } from '@/game3d/sim';
 import type { Look } from '@/game/cosmetics';
 
 // Developer character inspector: one archer on a neutral studio floor that
 // can be swapped, turned, zoomed and put through every pose the rig has.
 // Reached from Settings in dev builds only (src/app/showcase.tsx).
 
-export type ShowAction = 'reel' | 'idle' | 'aim' | 'shoot' | 'walk' | 'run' | 'crouch' | 'lookback' | 'hit' | 'win' | 'lose' | 'death';
+export type ShowAction =
+  | 'reel'
+  | 'idle'
+  | 'aim'
+  | 'shoot'
+  | 'eat'
+  | 'yawn'
+  | 'shrug'
+  | 'walk'
+  | 'run'
+  | 'crouch'
+  | 'lookback'
+  | 'hit'
+  | 'win'
+  | 'lose'
+  | 'death';
 export type ShowAngle = 'front' | 'side' | 'back' | 'left';
 export type ShowState = { look: Look; action: ShowAction; mood: Mood | 'auto'; angle: ShowAngle; zoom: number; wire: boolean };
 
@@ -35,14 +50,23 @@ function Scene({ view }: { view: ShowcaseView }) {
   return null;
 }
 
-// Heroes are shown square-on from the four sides their sheet drew.
-const ANGLES: Record<ShowAngle, number> = { front: SIDE.front, side: SIDE.right, back: SIDE.back, left: SIDE.left };
+// Turns that put the archer square-on to the camera from each side (the
+// rig itself stands turned YAW to the camera for its 3/4 view).
+const YAW = 0.42;
+const ANGLES: Record<ShowAngle, number> = { front: YAW - Math.PI / 2, side: YAW, back: YAW + Math.PI / 2, left: YAW + Math.PI };
+// Gesture actions loop: the gesture, then a beat of standing there.
+const LOOPED: Partial<Record<ShowAction, { g: Gesture; mood: Mood }>> = {
+  eat: { g: 'eat', mood: 'chew' },
+  yawn: { g: 'yawn', mood: 'sleepy' },
+  shrug: { g: 'shrug', mood: 'neutral' },
+};
 
 class ShowcaseView {
   private root = new THREE.Group();
   private turn = new THREE.Group();
   private rig: StickmanRig;
-  private arrow = makeArrow('#E63946');
+  private arrow = makeProjectile({ bow: 'bow', trail: '#E63946' });
+  private arrowBow: Look['bow'] = 'bow';
   private shot = { live: false, t: 0, x: 0, y: 0, vx: 0, vy: 0 };
   private state: ShowState;
   private t = 0;
@@ -94,6 +118,13 @@ class ShowcaseView {
     this.state = state;
     // Swapping the character keeps the pose, the action and the camera.
     this.rig.setLook(state.look);
+    if (this.arrowBow !== state.look.bow) {
+      this.arrowBow = state.look.bow;
+      this.turn.remove(this.arrow);
+      this.arrow = makeProjectile(state.look);
+      this.arrow.visible = false;
+      this.turn.add(this.arrow);
+    }
     this.setWire(state.wire);
   }
 
@@ -136,9 +167,21 @@ class ShowcaseView {
     p.look = 0;
     p.recoil = Math.max(0, p.recoil - dt * 2.5);
     switch (s.action) {
-      case 'reel': // the character-sheet reel the shop plays
+      case 'reel': // the derp reel the shop plays
         reelPose(a, p);
         break;
+      case 'eat':
+      case 'yawn':
+      case 'shrug': {
+        const l = LOOPED[s.action]!;
+        const c = a % (GESTURE_SECONDS[l.g] + 0.8);
+        if (c < GESTURE_SECONDS[l.g]) {
+          p.gesture = l.g;
+          p.gestureT = c;
+          p.mood = l.mood;
+        }
+        break;
+      }
       case 'run':
         p.walk = 1;
         p.x = 1;

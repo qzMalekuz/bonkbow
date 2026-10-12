@@ -235,6 +235,10 @@ const REEL: [Gesture | null, Mood][] = [
   ['cheer', 'laugh'],
   [null, 'scared'],
   ['thumbs', 'wink'],
+  // Bonk Bow beats: lunch, the stare down the lens, seeing stars.
+  ['eat', 'chew'],
+  [null, 'camera'],
+  [null, 'dazed'],
 ];
 const BEAT = 2.6;
 
@@ -242,7 +246,7 @@ const BEAT = 2.6;
 function reelAt(seed: number, beat: number) {
   const n = REEL.length;
   const off = Math.abs(Math.floor(seed * 7.13)) % n;
-  const step = [1, 3, 5, 7, 9, 11, 13][Math.abs(Math.floor(seed * 3.7)) % 7]; // coprime with 16
+  const step = [1, 3, 5, 7, 9, 11, 13][Math.abs(Math.floor(seed * 3.7)) % 7]; // coprime with 19
   return REEL[(off + beat * step) % n];
 }
 

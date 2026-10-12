@@ -17,26 +17,45 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-// MUST mirror src/game/skins.ts (hero skins) and src/game/maps.ts (maps).
-// SOL in lamports, SKR in base units (6 dp).
+// MUST mirror src/game/skins.ts (derps, hats, the shovel bow) and
+// src/game/maps.ts (maps). SOL in lamports, SKR in base units (6 dp).
+// Free items (Gary, no hat, the plain bow, Classic) are never sold.
 const PRICES_SOL: Record<string, number> = {
-  hero_akshay: 100_000_000,
-  hero_beeman: 100_000_000,
-  hero_chase: 100_000_000,
-  hero_mit: 100_000_000,
-  hero_mert: 100_000_000,
-  hero_tolly: 100_000_000,
+  derp_steve: 50_000_000,
+  derp_doug: 50_000_000,
+  derp_kevin: 50_000_000,
+  derp_someguy: 50_000_000,
+  hat_tophat: 20_000_000,
+  hat_party: 20_000_000,
+  hat_propeller: 20_000_000,
+  hat_cone: 20_000_000,
+  hat_crown: 20_000_000,
+  hat_pot: 20_000_000,
+  hat_viking: 20_000_000,
+  hat_arrow: 20_000_000,
+  hat_fish: 20_000_000,
+  hat_chef: 20_000_000,
+  bow_shovel: 80_000_000,
   map_grove: 50_000_000,
   map_valley: 50_000_000,
   map_snow: 50_000_000,
 }
 const PRICES_SKR: Record<string, number> = {
-  hero_akshay: 2_000_000_000,
-  hero_beeman: 2_000_000_000,
-  hero_chase: 2_000_000_000,
-  hero_mit: 2_000_000_000,
-  hero_mert: 2_000_000_000,
-  hero_tolly: 2_000_000_000,
+  derp_steve: 1_000_000_000,
+  derp_doug: 1_000_000_000,
+  derp_kevin: 1_000_000_000,
+  derp_someguy: 1_000_000_000,
+  hat_tophat: 400_000_000,
+  hat_party: 400_000_000,
+  hat_propeller: 400_000_000,
+  hat_cone: 400_000_000,
+  hat_crown: 400_000_000,
+  hat_pot: 400_000_000,
+  hat_viking: 400_000_000,
+  hat_arrow: 400_000_000,
+  hat_fish: 400_000_000,
+  hat_chef: 400_000_000,
+  bow_shovel: 1_600_000_000,
   map_grove: 1_000_000_000,
   map_valley: 1_000_000_000,
   map_snow: 1_000_000_000,

@@ -54,8 +54,6 @@ assets/licensed/
 docs/trailer/build/
 docs/trailer/out/
 
-# Hero build cache (scripts/heroes/build.sh)
-scripts/heroes/.cache/
 
 # Python bytecode
 __pycache__/

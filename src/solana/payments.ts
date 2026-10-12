@@ -29,7 +29,7 @@ export type PurchaseResult =
 
 const isUserRejection = (msg: string) => /cancel|declin|reject|user denied|dismiss/i.test(msg);
 
-// Buy a skin in SOL or SKR: one transfer from the connected wallet to the
+// Buy a product in SOL or SKR: one transfer from the connected wallet to the
 // treasury, signed + sent by the wallet through MWA (Seed Vault on Seeker),
 // then verified server-side.
 //
@@ -37,7 +37,7 @@ const isUserRejection = (msg: string) => /cancel|declin|reject|user denied|dismi
 // fetches the confirmed transaction from RPC, checks destination/amount/
 // signer/mint against ITS price table, and inserts the purchases row. The
 // client then refreshes ownership. Idempotent on signature (unique index).
-// Anything the shop sells (hero skins, maps) is bought by id the same way.
+// Anything the shop sells (derps, hats, the shovel bow, maps) is bought by id the same way.
 export async function buySkin(
   wallet: PaymentWallet | null,
   skin: Pick<Skin, 'id' | 'priceLamports' | 'priceSkr'>,
