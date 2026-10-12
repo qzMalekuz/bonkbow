@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { View, type StyleProp, type ViewStyle } from 'react-native';
 import Svg, { Circle, G, Line, Polygon, Rect } from 'react-native-svg';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { BOWS, INK, type BowId, type DerpId, type HatId } from '@/game/derps';
@@ -7,20 +7,31 @@ import { formatSol, isCoinSkin, type Currency, type ProductKind, type Skin } fro
 import { formatSkr } from '@/solana/skr';
 import { DerpThumb } from '@/ui/DerpThumb';
 import { CoinIcon, FONT } from '@/ui/kit';
+import { makeStyles, useMetrics } from '@/ui/responsive';
+import { Text } from '@/ui/Text';
+
+// A white section glyph at a design size (scaled when it renders, so the
+// icons can live in the module-level SECTIONS list).
+export function SectionIcon({ ion, mci, size }: { ion?: keyof typeof Ionicons.glyphMap; mci?: keyof typeof MaterialCommunityIcons.glyphMap; size: number }) {
+  const { s } = useMetrics();
+  return mci ? <MaterialCommunityIcons name={mci} size={s(size)} color="#FFFFFF" /> : <Ionicons name={ion ?? 'ellipse'} size={s(size)} color="#FFFFFF" />;
+}
 
 // The five shop / style sections, in the order both screens show them.
 export const SECTIONS: { kind: ProductKind; label: string; blurb: string; icon: React.ReactNode }[] = [
-  { kind: 'derp', label: 'Characters', blurb: 'Same stick body. Same bow. Different idiot.', icon: <Ionicons name="happy" size={15} color="#FFFFFF" /> },
-  { kind: 'outfit', label: 'Clothes', blurb: 'Dress for the duel you want. Get the one you have.', icon: <Ionicons name="shirt" size={15} color="#FFFFFF" /> },
-  { kind: 'hat', label: 'Hats', blurb: 'They do not help.', icon: <MaterialCommunityIcons name="hat-fedora" size={16} color="#FFFFFF" /> },
-  { kind: 'bow', label: 'Bows', blurb: 'Every bow shoots the same. Some shoot it in gold.', icon: <MaterialCommunityIcons name="bow-arrow" size={16} color="#FFFFFF" /> },
-  { kind: 'arrow', label: 'Arrows', blurb: 'Pointy end first. Mostly.', icon: <MaterialCommunityIcons name="arrow-projectile" size={16} color="#FFFFFF" /> },
+  { kind: 'derp', label: 'Characters', blurb: 'Same stick body. Same bow. Different idiot.', icon: <SectionIcon ion="happy" size={15} /> },
+  { kind: 'outfit', label: 'Clothes', blurb: 'Dress for the duel you want. Get the one you have.', icon: <SectionIcon ion="shirt" size={15} /> },
+  { kind: 'hat', label: 'Hats', blurb: 'They do not help.', icon: <SectionIcon mci="hat-fedora" size={16} /> },
+  { kind: 'bow', label: 'Bows', blurb: 'Every bow shoots the same. Some shoot it in gold.', icon: <SectionIcon mci="bow-arrow" size={16} /> },
+  { kind: 'arrow', label: 'Arrows', blurb: 'Pointy end first. Mostly.', icon: <SectionIcon mci="arrow-projectile" size={16} /> },
 ];
 
 // Any product as a small drawing on paper: a derp's head, a hat on my derp,
-// the clothes on a stick figure, a bow, an arrow.
-export function PartThumb({ part, derp, size }: { part: Skin; derp: DerpId; size: number }) {
-  const inner = size - 6;
+// the clothes on a stick figure, a bow, an arrow. `size` is a design size.
+export function PartThumb({ part, derp, size: design }: { part: Skin; derp: DerpId; size: number }) {
+  const styles = useStyles();
+  const size = useMetrics().s(design);
+  const inner = size - 6; // inside the (unscaled) 2 dp border
   let art: React.ReactNode;
   switch (part.kind) {
     case 'derp':
@@ -131,18 +142,22 @@ export function priceOf(p: Pick<Skin, 'priceCoins' | 'priceLamports' | 'priceSkr
 
 // A small price badge: coin icon + amount, or the SOL/SKR price.
 export function PriceTag({ part, currency, style }: { part: Skin; currency: Currency; style?: StyleProp<ViewStyle> }) {
+  const styles = useStyles();
+  const { s } = useMetrics();
   const price = priceOf(part, currency);
   return (
     <View style={[styles.tag, style]}>
-      {isCoinSkin(part) ? <CoinIcon size={13} /> : <MaterialCommunityIcons name="lightning-bolt" size={12} color="#B48CFF" />}
-      <Text style={[styles.tagText, !isCoinSkin(part) && styles.tagSol]}>{price.label}</Text>
+      {isCoinSkin(part) ? <CoinIcon size={13} /> : <MaterialCommunityIcons name="lightning-bolt" size={s(12)} color="#B48CFF" />}
+      <Text style={[styles.tagText, !isCoinSkin(part) && styles.tagSol]} numberOfLines={1}>
+        {price.label}
+      </Text>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((m) => ({
   paper: { backgroundColor: '#E9E4D8', borderWidth: 2, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
-  tag: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  tagText: { fontFamily: FONT.bold, fontSize: 12, color: '#FFC83D' },
+  tag: { flexDirection: 'row', alignItems: 'center', gap: m.s(3) },
+  tagText: { flexShrink: 1, fontFamily: FONT.bold, fontSize: m.s(12), color: '#FFC83D' },
   tagSol: { color: '#D9C6FF' },
-});
+}));

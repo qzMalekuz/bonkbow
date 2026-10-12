@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Alert, Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Linking, ScrollView, StyleSheet, View } from 'react-native';
 import Animated, { FadeInDown, ZoomIn, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -19,6 +19,8 @@ import { clearBestRuns } from '@/utils/scores';
 import { LEGAL_URLS, SUPPORT_URL } from '@/utils/legal';
 import { CoinPill, FONT } from '@/ui/kit';
 import { NameModal } from '@/ui/NameModal';
+import { Text, TIGHT_FONT_SCALE } from '@/ui/Text';
+import { makeStyles, useMetrics } from '@/ui/responsive';
 
 // Settings in the game's own look: chunky dark cards with a darker bottom
 // edge, coloured icon tiles, the Fredoka font and a springy ON/OFF switch.
@@ -26,6 +28,8 @@ import { NameModal } from '@/ui/NameModal';
 // feel, then the about links.
 
 export default function SettingsScreen() {
+  const styles = useStyles();
+  const metrics = useMetrics();
   useScreenMusic('menu');
   const { address, signOut } = useWalletAuth();
   const s = useGameStore();
@@ -68,11 +72,13 @@ export default function SettingsScreen() {
       <SafeAreaView style={styles.safe} edges={['top', 'bottom', 'left', 'right']}>
         <View style={styles.top}>
           <HapticTouchable onPress={() => router.back()} hitSlop={12} sound="ui_back" style={styles.back}>
-            <Ionicons name="chevron-back" size={24} color="#FFFFFF" />
+            <Ionicons name="chevron-back" size={metrics.s(24)} color="#FFFFFF" />
           </HapticTouchable>
           <Animated.View entering={ZoomIn.duration(240)} style={styles.titleWrap}>
             <LinearGradient colors={['#6FBF3A', '#7E57E6']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.titleBar}>
-              <Text style={styles.title}>Settings</Text>
+              <Text style={styles.title} numberOfLines={1}>
+                Settings
+              </Text>
             </LinearGradient>
           </Animated.View>
           <CoinPill coins={s.coins} />
@@ -84,7 +90,9 @@ export default function SettingsScreen() {
               <Card title="Profile" color="#8E6CEF" icon="person" delay={60}>
                 <View style={styles.profile}>
                   <View style={styles.lvl}>
-                    <Text style={styles.lvlText}>{lvl.level}</Text>
+                    <Text style={styles.lvlText} maxFontSizeMultiplier={TIGHT_FONT_SCALE}>
+                      {lvl.level}
+                    </Text>
                   </View>
                   <View style={styles.flex}>
                     <HapticTouchable style={styles.nameRow} onPress={() => setNaming(true)} sound="ui_open">
@@ -92,8 +100,10 @@ export default function SettingsScreen() {
                         {s.playerName || 'Pick a name'}
                       </Text>
                       <View style={styles.editChip}>
-                        <Ionicons name="pencil" size={12} color="#0B0B0F" />
-                        <Text style={styles.editText}>Edit</Text>
+                        <Ionicons name="pencil" size={metrics.s(12)} color="#0B0B0F" />
+                        <Text style={styles.editText} maxFontSizeMultiplier={TIGHT_FONT_SCALE}>
+                          Edit
+                        </Text>
                       </View>
                     </HapticTouchable>
                     <XpBar into={lvl.into} need={lvl.need} />
@@ -203,13 +213,18 @@ type IconName = keyof typeof Ionicons.glyphMap;
 
 // A chunky card with a coloured, slightly tilted label on its top edge.
 function Card({ title, color, icon, delay, children }: { title: string; color: string; icon: IconName; delay: number; children: React.ReactNode }) {
+  const styles = useStyles();
+  const { s } = useMetrics();
   return (
     <Animated.View entering={FadeInDown.delay(delay).duration(380)} style={styles.cardWrap}>
       <View style={styles.cardEdge} />
       <View style={styles.card}>
         <View style={[styles.cardLabel, { backgroundColor: color }]}>
-          <Ionicons name={icon} size={13} color="#FFFFFF" />
-          <Text style={styles.cardLabelText}>{title}</Text>
+          <Ionicons name={icon} size={s(13)} color="#FFFFFF" />
+          {/* Sits on the card's top edge: held near its size so it doesn't cover the first row. */}
+          <Text style={styles.cardLabelText} numberOfLines={1} maxFontSizeMultiplier={TIGHT_FONT_SCALE}>
+            {title}
+          </Text>
         </View>
         {children}
       </View>
@@ -218,14 +233,18 @@ function Card({ title, color, icon, delay, children }: { title: string; color: s
 }
 
 function Tile({ icon, color }: { icon: IconName; color: string }) {
+  const styles = useStyles();
+  const { s } = useMetrics();
   return (
     <View style={[styles.tile, { backgroundColor: color }]}>
-      <Ionicons name={icon} size={17} color="#FFFFFF" />
+      <Ionicons name={icon} size={s(17)} color="#FFFFFF" />
     </View>
   );
 }
 
 function Row({ icon, tile, label, hint, onPress }: { icon: IconName; tile: string; label: string; hint?: string; onPress: () => void }) {
+  const styles = useStyles();
+  const { s } = useMetrics();
   return (
     <HapticTouchable style={styles.row} onPress={onPress}>
       <Tile icon={icon} color={tile} />
@@ -233,12 +252,13 @@ function Row({ icon, tile, label, hint, onPress }: { icon: IconName; tile: strin
         <Text style={styles.rowText}>{label}</Text>
         {!!hint && <Text style={styles.hint}>{hint}</Text>}
       </View>
-      <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.45)" />
+      <Ionicons name="chevron-forward" size={s(18)} color="rgba(255,255,255,0.45)" />
     </HapticTouchable>
   );
 }
 
 function ToggleRow({ icon, tile, label, hint, value, onChange }: { icon: IconName; tile: string; label: string; hint: string; value: boolean; onChange: (v: boolean) => void }) {
+  const styles = useStyles();
   return (
     <HapticTouchable style={styles.row} onPress={() => onChange(!value)} sound={null}>
       <Tile icon={icon} color={tile} />
@@ -252,23 +272,30 @@ function ToggleRow({ icon, tile, label, hint, value, onChange }: { icon: IconNam
 }
 
 // ON/OFF pill: the knob springs across, the track turns green.
-const TRACK_W = 58;
+const TRACK_W = 64;
 const KNOB = 24;
 function GameToggle({ on }: { on: boolean }) {
+  const styles = useStyles();
+  const { s } = useMetrics();
+  const knobStart = s(3);
+  const knobTravel = s(TRACK_W - KNOB - 10);
   const x = useSharedValue(on ? 1 : 0);
   useEffect(() => {
     x.value = withSpring(on ? 1 : 0, { damping: 14, stiffness: 220 });
   }, [on, x]);
-  const knob = useAnimatedStyle(() => ({ transform: [{ translateX: 3 + x.value * (TRACK_W - KNOB - 10) }] }));
+  const knob = useAnimatedStyle(() => ({ transform: [{ translateX: knobStart + x.value * knobTravel }] }));
   return (
     <View style={[styles.track, on ? styles.trackOn : styles.trackOff]}>
-      <Text style={[styles.trackText, on ? styles.trackTextOn : styles.trackTextOff]}>{on ? 'ON' : 'OFF'}</Text>
+      <Text style={[styles.trackText, on ? styles.trackTextOn : styles.trackTextOff]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7} maxFontSizeMultiplier={TIGHT_FONT_SCALE}>
+        {on ? 'ON' : 'OFF'}
+      </Text>
       <Animated.View style={[styles.knob, knob]} />
     </View>
   );
 }
 
 function XpBar({ into, need }: { into: number; need: number }) {
+  const styles = useStyles();
   const fill = useSharedValue(0);
   useEffect(() => {
     fill.value = withTiming(into / need, { duration: 700 });
@@ -282,88 +309,95 @@ function XpBar({ into, need }: { into: number; need: number }) {
 }
 
 function Stat({ label, value }: { label: string; value: number | string }) {
+  const styles = useStyles();
   return (
     <View style={styles.stat}>
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
+      <Text style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+        {value}
+      </Text>
+      <Text style={styles.statLabel} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+        {label}
+      </Text>
     </View>
   );
 }
 
 const shadow = { textShadowColor: 'rgba(0,0,0,0.7)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 3 };
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((m) => ({
   root: { flex: 1, backgroundColor: '#141428' },
   safe: { flex: 1 },
   flex: { flex: 1 },
-  top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 6, paddingBottom: 4 },
-  back: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' },
-  titleWrap: { transform: [{ rotate: '-1.5deg' }] },
-  titleBar: { paddingHorizontal: 32, paddingVertical: 3, borderRadius: 6, borderWidth: 3, borderColor: '#0B0B0F' },
-  title: { fontFamily: FONT.bold, fontSize: 24, color: '#FFFFFF', ...shadow },
-  scroll: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 28 },
-  cols: { flexDirection: 'row', gap: 14 },
-  col: { flex: 1, gap: 18 },
-  cardWrap: { borderRadius: 18, paddingBottom: 5 },
-  cardEdge: { ...StyleSheet.absoluteFill, top: 5, borderRadius: 18, backgroundColor: '#07070C' },
+  top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: m.s(12), paddingHorizontal: m.s(16), paddingTop: m.s(6), paddingBottom: m.s(4) },
+  back: { width: m.s(38), height: m.s(38), borderRadius: m.s(19), alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' },
+  titleWrap: { flexShrink: 1, transform: [{ rotate: '-1.5deg' }] },
+  titleBar: { paddingHorizontal: m.s(32), paddingVertical: m.s(3), borderRadius: m.s(6), borderWidth: 3, borderColor: '#0B0B0F' },
+  title: { fontFamily: FONT.bold, fontSize: m.s(24), color: '#FFFFFF', ...shadow },
+  scroll: { paddingHorizontal: m.s(16), paddingTop: m.s(14), paddingBottom: m.s(28) },
+  // Capped so the cards don't stretch across a very wide window.
+  cols: { flexDirection: 'row', gap: m.s(14), width: '100%', maxWidth: m.s(1100), alignSelf: 'center' },
+  col: { flex: 1, minWidth: 0, gap: m.s(18) },
+  cardWrap: { borderRadius: m.s(18), paddingBottom: m.s(5) },
+  cardEdge: { ...StyleSheet.absoluteFill, top: m.s(5), borderRadius: m.s(18), backgroundColor: '#07070C' },
   card: {
     backgroundColor: '#1D1B36',
-    borderRadius: 18,
+    borderRadius: m.s(18),
     borderWidth: 2.5,
     borderColor: '#0B0B0F',
-    paddingHorizontal: 12,
-    paddingTop: 20,
-    paddingBottom: 8,
+    paddingHorizontal: m.s(12),
+    paddingTop: m.s(20),
+    paddingBottom: m.s(8),
   },
   cardLabel: {
     position: 'absolute',
-    top: -12,
-    left: 14,
+    top: m.s(-12),
+    left: m.s(14),
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 10,
-    paddingVertical: 2,
-    borderRadius: 8,
+    gap: m.s(5),
+    paddingHorizontal: m.s(10),
+    paddingVertical: m.s(2),
+    borderRadius: m.s(8),
     borderWidth: 2.5,
     borderColor: '#0B0B0F',
     transform: [{ rotate: '-2deg' }],
   },
-  cardLabelText: { fontFamily: FONT.bold, fontSize: 13, color: '#FFFFFF', ...shadow, textShadowRadius: 2 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8, paddingHorizontal: 2 },
-  tile: { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: 'rgba(0,0,0,0.35)' },
-  rowText: { fontFamily: FONT.bold, fontSize: 15, color: '#FFFFFF' },
-  hint: { fontFamily: FONT.medium, fontSize: 12, color: 'rgba(255,255,255,0.55)' },
-  empty: { fontFamily: FONT.medium, fontSize: 13, color: 'rgba(255,255,255,0.65)', paddingVertical: 8 },
-  track: { width: TRACK_W, height: 30, borderRadius: 15, justifyContent: 'center', borderWidth: 2, borderBottomWidth: 4 },
+  cardLabelText: { fontFamily: FONT.bold, fontSize: m.s(13), color: '#FFFFFF', ...shadow, textShadowRadius: 2 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: m.s(12), paddingVertical: m.s(8), paddingHorizontal: m.s(2) },
+  tile: { width: m.s(34), height: m.s(34), borderRadius: m.s(10), alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: 'rgba(0,0,0,0.35)' },
+  rowText: { fontFamily: FONT.bold, fontSize: m.s(15), color: '#FFFFFF' },
+  hint: { fontFamily: FONT.medium, fontSize: m.s(12), color: 'rgba(255,255,255,0.55)' },
+  empty: { fontFamily: FONT.medium, fontSize: m.s(13), color: 'rgba(255,255,255,0.65)', paddingVertical: m.s(8) },
+  track: { width: m.s(TRACK_W), height: m.s(30), borderRadius: m.s(15), justifyContent: 'center', borderWidth: 2, borderBottomWidth: 4 },
   trackOn: { backgroundColor: '#7CC23A', borderColor: '#4E8A1C' },
   trackOff: { backgroundColor: '#2C2A45', borderColor: '#141226' },
-  trackText: { position: 'absolute', fontFamily: FONT.bold, fontSize: 11, letterSpacing: 0.5 },
-  trackTextOn: { left: 8, color: '#FFFFFF' },
-  trackTextOff: { right: 7, color: 'rgba(255,255,255,0.5)' },
-  knob: { width: KNOB, height: KNOB, borderRadius: KNOB / 2, backgroundColor: '#FFFFFF', borderWidth: 2, borderColor: 'rgba(0,0,0,0.25)' },
-  profile: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  // Each label gets the half of the track the knob isn't on, so they never meet.
+  trackText: { position: 'absolute', textAlign: 'center', fontFamily: FONT.bold, fontSize: m.s(11), letterSpacing: m.s(0.5) },
+  trackTextOn: { left: m.s(4), right: m.s(KNOB + 6), color: '#FFFFFF' },
+  trackTextOff: { left: m.s(KNOB + 6), right: m.s(4), color: 'rgba(255,255,255,0.5)' },
+  knob: { width: m.s(KNOB), height: m.s(KNOB), borderRadius: m.s(KNOB / 2), backgroundColor: '#FFFFFF', borderWidth: 2, borderColor: 'rgba(0,0,0,0.25)' },
+  profile: { flexDirection: 'row', alignItems: 'center', gap: m.s(12) },
   lvl: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
+    width: m.s(54),
+    height: m.s(54),
+    borderRadius: m.s(27),
     backgroundColor: '#7B5CE0',
     borderWidth: 3,
     borderColor: '#F7C948',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  lvlText: { fontFamily: FONT.bold, fontSize: 22, color: '#FFFFFF', ...shadow },
-  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  name: { fontFamily: FONT.bold, fontSize: 20, color: '#FFFFFF', flexShrink: 1 },
-  editChip: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#FFB020', borderRadius: 8, paddingHorizontal: 7, paddingVertical: 2 },
-  editText: { fontFamily: FONT.bold, fontSize: 11, color: '#0B0B0F' },
-  xpTrack: { height: 10, borderRadius: 5, backgroundColor: 'rgba(0,0,0,0.6)', overflow: 'hidden', marginTop: 6 },
-  xpFill: { height: '100%', borderRadius: 5, backgroundColor: '#8E6CEF' },
-  xpText: { fontFamily: FONT.semi, fontSize: 11, color: 'rgba(255,255,255,0.65)', marginTop: 3 },
-  stats: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 12, paddingTop: 10, borderTopWidth: 1.5, borderTopColor: 'rgba(255,255,255,0.08)' },
+  lvlText: { fontFamily: FONT.bold, fontSize: m.s(22), color: '#FFFFFF', ...shadow },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: m.s(8) },
+  name: { fontFamily: FONT.bold, fontSize: m.s(20), color: '#FFFFFF', flexShrink: 1 },
+  editChip: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: m.s(3), backgroundColor: '#FFB020', borderRadius: m.s(8), paddingHorizontal: m.s(7), paddingVertical: m.s(2) },
+  editText: { fontFamily: FONT.bold, fontSize: m.s(11), color: '#0B0B0F' },
+  xpTrack: { height: m.s(10), borderRadius: m.s(5), backgroundColor: 'rgba(0,0,0,0.6)', overflow: 'hidden', marginTop: m.s(6) },
+  xpFill: { height: '100%', borderRadius: m.s(5), backgroundColor: '#8E6CEF' },
+  xpText: { fontFamily: FONT.semi, fontSize: m.s(11), color: 'rgba(255,255,255,0.65)', marginTop: m.s(3) },
+  stats: { flexDirection: 'row', justifyContent: 'space-between', marginTop: m.s(12), paddingTop: m.s(10), borderTopWidth: 1.5, borderTopColor: 'rgba(255,255,255,0.08)' },
   stat: { alignItems: 'center', flex: 1 },
-  statValue: { fontFamily: FONT.bold, fontSize: 18, color: '#FFFFFF' },
-  statLabel: { fontFamily: FONT.semi, fontSize: 10, letterSpacing: 0.8, color: 'rgba(255,255,255,0.55)', textTransform: 'uppercase' },
-  version: { fontFamily: FONT.semi, color: 'rgba(255,255,255,0.35)', fontSize: 11, textAlign: 'center', marginTop: 18 },
-});
+  statValue: { fontFamily: FONT.bold, fontSize: m.s(18), color: '#FFFFFF' },
+  statLabel: { fontFamily: FONT.semi, fontSize: m.s(10), letterSpacing: m.s(0.8), color: 'rgba(255,255,255,0.55)', textTransform: 'uppercase' },
+  version: { fontFamily: FONT.semi, color: 'rgba(255,255,255,0.35)', fontSize: m.s(11), textAlign: 'center', marginTop: m.s(18) },
+}));

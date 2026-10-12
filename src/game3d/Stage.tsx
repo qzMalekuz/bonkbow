@@ -3,6 +3,7 @@ import { StyleSheet, View, type ViewStyle } from 'react-native';
 import { useIsFocused } from 'expo-router';
 import { Canvas, useFrame, useThree } from '@react-three/fiber/native';
 import * as THREE from 'three';
+import { fitFov } from '@/game3d/fitFov';
 import { Arena } from '@/game3d/Arena';
 import { StickmanRig, type RigPose } from '@/game3d/Stickman3D';
 import { themeById, type Theme } from '@/game3d/themes';
@@ -186,6 +187,7 @@ class StageView {
       }
     }
     const c = this.cam;
+    fitFov(camera, c.fov ?? 34);
     const drift = c.drift ?? 0.25;
     camera.position.set(c.x + Math.sin(t * 0.2) * drift, c.y + Math.sin(t * 0.27) * drift * 0.4, c.z);
     camera.lookAt(c.lookX, c.lookY, 0);

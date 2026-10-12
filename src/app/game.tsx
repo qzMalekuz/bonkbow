@@ -1,8 +1,8 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BackHandler, StyleSheet, Text, View } from 'react-native';
+import { BackHandler, StyleSheet, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, ZoomIn, useAnimatedStyle, useSharedValue, withSequence, withTiming, Easing } from 'react-native-reanimated';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useKeepAwake } from 'expo-keep-awake';
 import { Ionicons } from '@expo/vector-icons';
 import { usePostHog } from 'posthog-react-native';
@@ -22,6 +22,8 @@ import { LoadingScreen, nextLoadingVariant } from '@/ui/LoadingScreen';
 import { BloodEdge, ChatPanel, FloatingNumber, Plate, Scrawl, SkullMarker, SpeechBubble, TurnSign, type BarHit, type Bubble, type Floater } from '@/ui/hud';
 import { EMOTES, type EmoteId } from '@/ui/emotes';
 import { FONT, GameButton, INK } from '@/ui/kit';
+import { Text, TIGHT_FONT_SCALE } from '@/ui/Text';
+import { makeStyles, useMetrics } from '@/ui/responsive';
 
 type Turn = 'player' | 'enemy' | 'over';
 type Outcome = 'win' | 'lose';
@@ -57,6 +59,13 @@ const LOADING_MIN_MS = 1500;
 // no rule changes.
 const SUDDEN_DEATH_HP = Math.floor(HP.max / 3);
 
+// Top bar budget in design units: side padding and the pause/kills column
+// (plus a little air either side) that the two plates share the rest around.
+const HUD_PAD = 18;
+const HUD_CENTER = 76;
+// Smallest touch target any HUD button may shrink to on a small screen.
+const MIN_TAP = 44;
+
 // What an archer says while his arrow is still in the air.
 const EARLY_CHEERS = ['nailed it', 'called it', 'easy', 'got him'];
 
@@ -71,6 +80,13 @@ const loadoutFrom = (l: LooseLoadout | undefined) => sanitizeLoadout(l as Parame
 export default function GameScreen() {
   useScreenMusic('battle');
   useKeepAwake();
+  const styles = useStyles();
+  const m = useMetrics();
+  const { s } = m;
+  const insets = useSafeAreaInsets();
+  // Each plate gets half of what's left of the top bar after the notch
+  // insets, padding and centre column; Plate shortens its bars to fit.
+  const plateRoom = ((m.width - insets.left - insets.right) / m.scale - HUD_PAD * 2 - HUD_CENTER) / 2;
   const params = useLocalSearchParams<{
     seed?: string;
     rivalDerp?: string;
@@ -511,14 +527,22 @@ export default function GameScreen() {
             timer={timer?.who === 'player' ? timer : null}
             hits={barHits.filter((h) => h.who === 'player')}
             onHitDone={dropBarHit}
+            room={plateRoom}
           />
           <View style={styles.center} pointerEvents="box-none">
-            <HapticTouchable onPress={() => setPaused(true)} hitSlop={10} style={styles.pause} sound="ui_open">
-              <Ionicons name="pause" size={18} color="#FFFFFF" />
+            <HapticTouchable
+              onPress={() => setPaused(true)}
+              hitSlop={Math.max(10, (MIN_TAP - s(30)) / 2)}
+              style={styles.pause}
+              sound="ui_open"
+            >
+              <Ionicons name="pause" size={s(18)} color="#FFFFFF" />
             </HapticTouchable>
             <Animated.View style={[styles.kills, scoreStyle]}>
-              <Ionicons name="skull" size={14} color="#FFFFFF" />
-              <Text style={styles.killsText}>{score}</Text>
+              <Ionicons name="skull" size={s(14)} color="#FFFFFF" />
+              <Text style={styles.killsText} maxFontSizeMultiplier={TIGHT_FONT_SCALE} numberOfLines={1}>
+                {score}
+              </Text>
             </Animated.View>
           </View>
           <Plate
@@ -529,6 +553,7 @@ export default function GameScreen() {
             timer={timer?.who === 'enemy' ? timer : null}
             hits={barHits.filter((h) => h.who === 'enemy')}
             onHitDone={dropBarHit}
+            room={plateRoom}
           />
         </View>
       </SafeAreaView>
@@ -546,10 +571,10 @@ export default function GameScreen() {
             hitSlop={8}
             sound={null}
           >
-            <Ionicons name="search" size={24} color="#FFFFFF" />
+            <Ionicons name="search" size={s(24)} color="#FFFFFF" />
           </HapticTouchable>
           <HapticTouchable style={styles.chatBtn} onPress={() => setChatOpen((o) => !o)} hitSlop={8} sound="ui_open">
-            <Ionicons name="chatbox-ellipses" size={24} color="#2A2A2A" />
+            <Ionicons name="chatbox-ellipses" size={s(24)} color="#2A2A2A" />
           </HapticTouchable>
         </View>
       </SafeAreaView>
@@ -567,7 +592,9 @@ export default function GameScreen() {
       {paused && (
         <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(150)} style={styles.overlay}>
           <Animated.View entering={ZoomIn.duration(240)} style={styles.sheet}>
-            <Text style={styles.sheetTitle}>Paused</Text>
+            <Text style={styles.sheetTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+              Paused
+            </Text>
             <GameButton label="Resume" color="green" onPress={() => setPaused(false)} style={styles.sheetBtn} />
             <GameButton label="Quit duel" color="red" onPress={quit} style={styles.sheetBtn} sound="ui_back" />
           </Animated.View>
@@ -579,28 +606,28 @@ export default function GameScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((m) => ({
   root: { flex: 1, backgroundColor: '#000000' },
   hud: { position: 'absolute', top: 0, left: 0, right: 0 },
-  hudRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingHorizontal: 18, paddingTop: 6 },
-  center: { alignItems: 'center', gap: 2, paddingTop: 2 },
-  pause: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.45)' },
+  hudRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingHorizontal: m.s(HUD_PAD), paddingTop: m.s(6) },
+  center: { alignItems: 'center', gap: m.s(2), paddingTop: m.s(2), maxWidth: m.s(HUD_CENTER) },
+  pause: { width: m.s(30), height: m.s(30), borderRadius: m.s(15), alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.45)' },
   kills: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: m.s(4),
     backgroundColor: 'rgba(0,0,0,0.5)',
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 1,
+    borderRadius: m.s(10),
+    paddingHorizontal: m.s(8),
+    paddingVertical: m.s(1),
   },
-  killsText: { fontFamily: FONT.bold, fontSize: 16, color: '#FFFFFF' },
+  killsText: { fontFamily: FONT.bold, fontSize: m.s(16), color: '#FFFFFF' },
   corner: { position: 'absolute', right: 0, bottom: 0 },
-  cornerRow: { flexDirection: 'row', alignItems: 'center', gap: 12, margin: 14 },
+  cornerRow: { flexDirection: 'row', alignItems: 'center', gap: m.s(12), margin: m.s(14) },
   roundBtn: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+    width: Math.max(MIN_TAP, m.s(50)),
+    height: Math.max(MIN_TAP, m.s(50)),
+    borderRadius: Math.max(MIN_TAP, m.s(50)) / 2,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.55)',
@@ -608,19 +635,20 @@ const styles = StyleSheet.create({
     borderColor: '#FFFFFF',
   },
   roundBtnOn: { backgroundColor: 'rgba(255,164,27,0.75)' },
-  chatBtn: { width: 54, height: 46, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' },
-  damage: { ...StyleSheet.absoluteFill, borderWidth: 26, borderColor: 'rgba(170,10,20,0.85)' },
+  chatBtn: { width: Math.max(MIN_TAP, m.s(54)), height: Math.max(MIN_TAP, m.s(46)), borderRadius: m.s(12), alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' },
+  damage: { ...StyleSheet.absoluteFill, borderWidth: m.s(26), borderColor: 'rgba(170,10,20,0.85)' },
   popupWrap: { position: 'absolute', top: '30%', left: 0, right: 0, alignItems: 'center' },
   overlay: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center' },
   sheet: {
-    width: 300,
+    width: m.s(300),
+    maxWidth: '90%',
     backgroundColor: '#15161C',
-    borderRadius: 20,
-    padding: 20,
-    gap: 10,
+    borderRadius: m.s(20),
+    padding: m.s(20),
+    gap: m.s(10),
     borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.2)',
   },
-  sheetTitle: { fontFamily: FONT.bold, fontSize: 24, color: '#FFFFFF', textAlign: 'center', marginBottom: 4 },
+  sheetTitle: { fontFamily: FONT.bold, fontSize: m.s(24), color: '#FFFFFF', textAlign: 'center', marginBottom: m.s(4) },
   sheetBtn: { alignSelf: 'stretch' },
-});
+}));

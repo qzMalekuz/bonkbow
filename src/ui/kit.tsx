@@ -1,9 +1,11 @@
 import { useEffect } from 'react';
-import { StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
+import { StyleSheet, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSequence, withTiming } from 'react-native-reanimated';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { HapticTouchable } from '@/components/haptic-touchable';
 import type { Sfx } from '@/audio/sound';
+import { AnimatedText, Text, TIGHT_FONT_SCALE } from '@/ui/Text';
+import { makeStyles, useMetrics } from '@/ui/responsive';
 
 // Shared game-UI building blocks in the reference game's style: a rounded
 // bold font, chunky buttons with a darker bottom edge, heart/shield bars and
@@ -49,13 +51,19 @@ export function GameButton({
   sound?: Sfx | null;
   small?: boolean;
 }) {
+  const styles = useStyles();
   const c = BUTTONS[color];
   return (
     <HapticTouchable onPress={onPress} disabled={disabled} sound={sound} style={[styles.btnWrap, style]}>
       <View style={[styles.btnEdge, { backgroundColor: c.edge }]} />
       <View style={[styles.btnFace, small && styles.btnFaceSmall, { backgroundColor: c.face }]}>
         {icon}
-        <Text style={[styles.btnText, small && styles.btnTextSmall, { color: c.text }, textStyle]} numberOfLines={1}>
+        <Text
+          style={[styles.btnText, small && styles.btnTextSmall, { color: c.text }, textStyle]}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.7}
+        >
           {label}
         </Text>
       </View>
@@ -64,7 +72,8 @@ export function GameButton({
 }
 
 // The coin: what matches pay and the coin shop spends.
-export function CoinIcon({ size = 18 }: { size?: number }) {
+export function CoinIcon({ size: design = 18 }: { size?: number }) {
+  const size = useMetrics().s(design);
   return (
     <Svg width={size} height={size} viewBox="0 0 26 26">
       <Circle cx={13} cy={13} r={11} fill="#F7A21B" stroke="#B85C00" strokeWidth={2} />
@@ -76,6 +85,7 @@ export function CoinIcon({ size = 18 }: { size?: number }) {
 
 // Coin balance chip; pops whenever the balance changes.
 export function CoinPill({ coins, style }: { coins: number; style?: StyleProp<ViewStyle> }) {
+  const styles = useStyles();
   const pop = useSharedValue(1);
   useEffect(() => {
     pop.value = withSequence(withTiming(1.18, { duration: 110 }), withTiming(1, { duration: 260 }));
@@ -84,13 +94,16 @@ export function CoinPill({ coins, style }: { coins: number; style?: StyleProp<Vi
   return (
     <Animated.View style={[styles.coinPill, popStyle, style]}>
       <CoinIcon size={18} />
-      <Text style={styles.coinText}>{coins.toLocaleString()}</Text>
+      <Text style={styles.coinText} maxFontSizeMultiplier={TIGHT_FONT_SCALE} numberOfLines={1}>
+        {coins.toLocaleString()}
+      </Text>
     </Animated.View>
   );
 }
 
 // Heart / shield icons (SVG so they stay crisp at any size).
-export function HeartIcon({ size = 22 }: { size?: number }) {
+export function HeartIcon({ size: design = 22 }: { size?: number }) {
+  const size = useMetrics().s(design);
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24">
       <Path
@@ -104,7 +117,8 @@ export function HeartIcon({ size = 22 }: { size?: number }) {
   );
 }
 
-export function ShieldIcon({ size = 22, broken = false }: { size?: number; broken?: boolean }) {
+export function ShieldIcon({ size: design = 22, broken = false }: { size?: number; broken?: boolean }) {
+  const size = useMetrics().s(design);
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24">
       <Path
@@ -130,7 +144,7 @@ export function StatBar({
   color,
   icon,
   right,
-  width = 110,
+  width: designWidth = 110,
 }: {
   value: number;
   max: number;
@@ -139,6 +153,8 @@ export function StatBar({
   right?: boolean;
   width?: number;
 }) {
+  const styles = useStyles();
+  const width = useMetrics().s(designWidth);
   const pct = Math.max(0, Math.min(1, value / max));
   const fill = useSharedValue(pct);
   const ghost = useSharedValue(pct);
@@ -159,19 +175,27 @@ export function StatBar({
         <Animated.View style={[styles.statFill, fillStyle, { backgroundColor: color }]} />
         <View style={styles.statGloss} />
       </View>
-      <Animated.Text style={[styles.statNum, right ? styles.statNumRight : styles.statNumLeft, popStyle]}>{Math.ceil(value)}</Animated.Text>
+      <AnimatedText
+        style={[styles.statNum, right ? styles.statNumRight : styles.statNumLeft, popStyle]}
+        maxFontSizeMultiplier={TIGHT_FONT_SCALE}
+      >
+        {Math.ceil(value)}
+      </AnimatedText>
     </View>
   );
 }
 
 // "VICTORY!" / "Defeat" plaque between two laurel sprigs.
 export function LaurelBadge({ label, win }: { label: string; win: boolean }) {
+  const styles = useStyles();
   const leaf = win ? '#7CC23A' : '#7CC23A';
   return (
     <View style={styles.laurelRow}>
       <Laurel color={leaf} />
       <View style={[styles.plaque, { backgroundColor: win ? '#7B5CE0' : '#C8442E', borderColor: win ? '#F7C948' : '#F7A440' }]}>
-        <Text style={styles.plaqueText}>{label}</Text>
+        <Text style={styles.plaqueText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+          {label}
+        </Text>
       </View>
       <Laurel color={leaf} flip />
     </View>
@@ -179,8 +203,9 @@ export function LaurelBadge({ label, win }: { label: string; win: boolean }) {
 }
 
 function Laurel({ color, flip }: { color: string; flip?: boolean }) {
+  const { s } = useMetrics();
   return (
-    <Svg width={26} height={40} viewBox="0 0 26 40" style={flip ? { transform: [{ scaleX: -1 }] } : undefined}>
+    <Svg width={s(26)} height={s(40)} viewBox="0 0 26 40" style={flip ? { transform: [{ scaleX: -1 }] } : undefined}>
       <Path d="M20 38C8 32 4 20 8 6" stroke={color} strokeWidth={2.4} fill="none" strokeLinecap="round" />
       {[8, 15, 22, 29].map((y, i) => (
         <Path key={y} d={`M${10 - i * 0.5} ${y}c-6-1-8-5-7-8 4 0 7 3 7 8Z`} fill={color} />
@@ -207,69 +232,69 @@ export const TIPS = [
   'Tap the chat bubble to say something. He will not listen.',
 ];
 
-const styles = StyleSheet.create({
-  btnWrap: { borderRadius: 14, paddingBottom: 5 },
-  btnEdge: { ...StyleSheet.absoluteFill, top: 5, borderRadius: 14 },
+const useStyles = makeStyles((m) => ({
+  btnWrap: { borderRadius: m.s(14), paddingBottom: m.s(5) },
+  btnEdge: { ...StyleSheet.absoluteFill, top: m.s(5), borderRadius: m.s(14) },
   btnFace: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    borderRadius: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 18,
+    gap: m.s(8),
+    borderRadius: m.s(14),
+    paddingVertical: m.s(12),
+    paddingHorizontal: m.s(18),
     borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.35)',
   },
-  btnFaceSmall: { paddingVertical: 8, paddingHorizontal: 12 },
-  btnText: { fontFamily: FONT.bold, fontSize: 18, letterSpacing: 0.5 },
-  btnTextSmall: { fontSize: 14 },
+  btnFaceSmall: { paddingVertical: m.s(8), paddingHorizontal: m.s(12) },
+  btnText: { fontFamily: FONT.bold, fontSize: m.s(18), letterSpacing: m.s(0.5) },
+  btnTextSmall: { fontSize: m.s(14) },
   coinPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: m.s(6),
     backgroundColor: 'rgba(0,0,0,0.55)',
-    borderRadius: 10,
-    paddingLeft: 6,
-    paddingRight: 12,
-    paddingVertical: 5,
+    borderRadius: m.s(10),
+    paddingLeft: m.s(6),
+    paddingRight: m.s(12),
+    paddingVertical: m.s(5),
     borderWidth: 1.5,
     borderColor: 'rgba(255,200,61,0.45)',
   },
-  coinText: { fontFamily: FONT.bold, fontSize: 15, color: '#FFFFFF' },
+  coinText: { fontFamily: FONT.bold, fontSize: m.s(15), color: '#FFFFFF' },
   stat: { flexDirection: 'row', alignItems: 'center' },
   statRight: { flexDirection: 'row-reverse' },
-  statIcon: { zIndex: 2, marginRight: -8, marginLeft: -8 },
+  statIcon: { zIndex: 2, marginRight: m.s(-8), marginLeft: m.s(-8) },
   statTrack: {
-    height: 18,
-    borderRadius: 6,
+    height: m.s(18),
+    borderRadius: m.s(6),
     backgroundColor: '#0E0E12',
     borderWidth: 1.5,
     borderColor: '#000000',
     overflow: 'hidden',
   },
-  statFill: { position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: 4 },
-  statGhost: { position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.75)' },
-  statGloss: { position: 'absolute', left: 2, right: 2, top: 1, height: 5, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.22)' },
+  statFill: { position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: m.s(4) },
+  statGhost: { position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: m.s(4), backgroundColor: 'rgba(255,255,255,0.75)' },
+  statGloss: { position: 'absolute', left: m.s(2), right: m.s(2), top: m.s(1), height: m.s(5), borderRadius: m.s(3), backgroundColor: 'rgba(255,255,255,0.22)' },
   statNum: {
     position: 'absolute',
     fontFamily: FONT.bold,
-    fontSize: 13,
+    fontSize: m.s(13),
     color: '#FFFFFF',
     textShadowColor: 'rgba(0,0,0,0.8)',
-    textShadowOffset: { width: 0, height: 1 },
+    textShadowOffset: { width: 0, height: m.s(1) },
     textShadowRadius: 2,
   },
-  statNumLeft: { left: 18 },
-  statNumRight: { right: 18 },
-  laurelRow: { flexDirection: 'row', alignItems: 'center', gap: 2 },
-  plaque: { borderRadius: 10, borderWidth: 3, paddingHorizontal: 14, paddingVertical: 4 },
+  statNumLeft: { left: m.s(18) },
+  statNumRight: { right: m.s(18) },
+  laurelRow: { flexDirection: 'row', alignItems: 'center', gap: m.s(2) },
+  plaque: { borderRadius: m.s(10), borderWidth: 3, paddingHorizontal: m.s(14), paddingVertical: m.s(4) },
   plaqueText: {
     fontFamily: FONT.bold,
-    fontSize: 18,
+    fontSize: m.s(18),
     color: '#FFFFFF',
     textShadowColor: 'rgba(0,0,0,0.5)',
-    textShadowOffset: { width: 0, height: 2 },
+    textShadowOffset: { width: 0, height: m.s(2) },
     textShadowRadius: 2,
   },
-});
+}));

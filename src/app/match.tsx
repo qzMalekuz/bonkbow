@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
 import Animated, {
   Easing,
   FadeIn,
@@ -31,6 +31,8 @@ import { formatSol } from '@/game/skins';
 import { DUEL_FEE_ENABLED, DUEL_FEE_LAMPORTS, shortAddress } from '@/solana/config';
 import { isUserRejection, useWalletAuth } from '@/solana/auth';
 import { duelCreditStatus, payDuelFee, spendDuelCredit } from '@/solana/payments';
+import { Text, TIGHT_FONT_SCALE } from '@/ui/Text';
+import { makeStyles, useMetrics } from '@/ui/responsive';
 
 // Matchmaking / VS screen: you on the left, a VS badge in the middle, and an
 // opponent slot that searches, then reveals the AI rival dropping into the
@@ -58,6 +60,7 @@ const RIVAL_NAMES = [
 ];
 
 export default function MatchScreen() {
+  const styles = useStyles();
   useScreenMusic('menu');
   const loadout = useGameStore((s) => s.loadout);
   const xp = useGameStore((s) => s.xp);
@@ -211,7 +214,9 @@ export default function MatchScreen() {
         <Text style={styles.plateName} numberOfLines={1}>
           {playerName || 'You'}
         </Text>
-        <Text style={styles.plateLevel}>Lv {levelOf(xp).level}</Text>
+        <Text style={styles.plateLevel} numberOfLines={1} maxFontSizeMultiplier={TIGHT_FONT_SCALE}>
+          Lv {levelOf(xp).level}
+        </Text>
       </Animated.View>
 
       {found ? (
@@ -219,36 +224,19 @@ export default function MatchScreen() {
           <Text style={styles.plateName} numberOfLines={1}>
             {match.rivalName}
           </Text>
-          <Text style={styles.plateLevel}>Lv {match.rivalLevel}</Text>
-        </Animated.View>
-      ) : phase === 'search' ? (
-        <View style={styles.searching}>
-          <PaperPlaneSpinner />
-          <Text style={styles.searchText}>Searching for an opponent</Text>
-        </View>
-      ) : (
-        <Animated.View entering={FadeIn.duration(250)} style={styles.feeCard}>
-          <Text style={styles.feeLabel}>ENTRY FEE</Text>
-          <Text style={styles.feeAmount}>{formatSol(DUEL_FEE_LAMPORTS)}</Text>
-          <Text style={styles.feeSub}>
-            {wallet.account ? `From ${shortAddress(wallet.account.address)} to the Bonk Bow treasury` : 'Paid from your Solana wallet'}
+          <Text style={styles.plateLevel} numberOfLines={1} maxFontSizeMultiplier={TIGHT_FONT_SCALE}>
+            Lv {match.rivalLevel}
           </Text>
-          {phase === 'fee' ? (
-            <GameButton
-              label={unconfirmed ? 'Check payment' : wallet.account ? `Pay ${formatSol(DUEL_FEE_LAMPORTS)} & fight` : 'Connect wallet & pay'}
-              color="green"
-              onPress={onPay}
-              style={styles.feeBtn}
-            />
-          ) : (
-            <View style={styles.feeBusy}>
-              <ActivityIndicator color="#FFFFFF" />
-              <Text style={styles.feeSub}>{phase === 'checking' ? 'Checking your wallet…' : 'Confirm in your wallet…'}</Text>
-            </View>
-          )}
-          {!!note && <Text style={styles.feeNote}>{note}</Text>}
-          {phase === 'fee' && <GameButton label="Back" color="red" small onPress={() => router.back()} style={styles.feeBack} sound="ui_back" />}
         </Animated.View>
+      ) : (
+        phase === 'search' && (
+          <View style={styles.searching}>
+            <PaperPlaneSpinner />
+            <Text style={styles.searchText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+              Searching for an opponent
+            </Text>
+          </View>
+        )
       )}
 
       {phase === 'search' && <VsBadge slammed={found} />}
@@ -256,17 +244,59 @@ export default function MatchScreen() {
       {found && (
         <Animated.View entering={FadeIn.delay(500).duration(400)} style={styles.arenaTag}>
           <Text style={styles.arenaLabel}>ARENA</Text>
-          <Text style={styles.arenaName}>{arena.name}</Text>
+          <Text style={styles.arenaName} numberOfLines={1}>
+            {arena.name}
+          </Text>
         </Animated.View>
       )}
 
-      <Text style={styles.tip}>{match.tip}</Text>
+      {/* Fee card above the tip in one column so they can't collide: on a short
+          phone or with a large font the card's text scrolls, the Pay and Back
+          buttons stay on screen. */}
+      <View style={styles.lower} pointerEvents="box-none">
+        <View style={styles.feeArea} pointerEvents="box-none">
+          {!found && phase !== 'search' && (
+            <Animated.View entering={FadeIn.duration(250)} style={styles.feeCard}>
+              <ScrollView style={styles.feeScroll} contentContainerStyle={styles.feeInfo} showsVerticalScrollIndicator={false} bounces={false}>
+                <Text style={styles.feeLabel}>ENTRY FEE</Text>
+                <Text style={styles.feeAmount} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+                  {formatSol(DUEL_FEE_LAMPORTS)}
+                </Text>
+                <Text style={styles.feeSub}>
+                  {wallet.account ? `From ${shortAddress(wallet.account.address)} to the Bonk Bow treasury` : 'Paid from your Solana wallet'}
+                </Text>
+                {phase !== 'fee' && (
+                  <View style={styles.feeBusy}>
+                    <ActivityIndicator color="#FFFFFF" />
+                    <Text style={styles.feeSub}>{phase === 'checking' ? 'Checking your wallet…' : 'Confirm in your wallet…'}</Text>
+                  </View>
+                )}
+                {!!note && <Text style={styles.feeNote}>{note}</Text>}
+              </ScrollView>
+              {phase === 'fee' && (
+                <>
+                  <GameButton
+                    label={unconfirmed ? 'Check payment' : wallet.account ? `Pay ${formatSol(DUEL_FEE_LAMPORTS)} & fight` : 'Connect wallet & pay'}
+                    color="green"
+                    onPress={onPay}
+                    style={styles.feeBtn}
+                  />
+                  <GameButton label="Back" color="red" small onPress={() => router.back()} style={styles.feeBack} sound="ui_back" />
+                </>
+              )}
+            </Animated.View>
+          )}
+        </View>
+        <Text style={styles.tip}>{match.tip}</Text>
+      </View>
     </View>
   );
 }
 
 // "VS" coin: idles with a gentle pulse, then slams in bigger when matched.
 function VsBadge({ slammed }: { slammed: boolean }) {
+  const styles = useStyles();
+  const { s } = useMetrics();
   const pulse = useSharedValue(1);
   const slam = useSharedValue(1);
   useEffect(() => {
@@ -278,17 +308,21 @@ function VsBadge({ slammed }: { slammed: boolean }) {
   const style = useAnimatedStyle(() => ({ transform: [{ scale: pulse.value * slam.value }] }));
   return (
     <Animated.View entering={ZoomIn.duration(240)} style={[styles.vs, style]}>
-      <Svg width={74} height={74} viewBox="0 0 74 74" style={StyleSheet.absoluteFill}>
+      <Svg width={s(74)} height={s(74)} viewBox="0 0 74 74" style={StyleSheet.absoluteFill}>
         <Circle cx={37} cy={37} r={34} fill="#F7A21B" stroke="#B85C00" strokeWidth={4} />
         <Circle cx={37} cy={37} r={27} fill="#FFC23D" stroke="#FFE08A" strokeWidth={2} />
       </Svg>
-      <Text style={styles.vsText}>VS</Text>
+      <Text style={styles.vsText} maxFontSizeMultiplier={TIGHT_FONT_SCALE}>
+        VS
+      </Text>
     </Animated.View>
   );
 }
 
 // Folded paper-plane arrowhead circling inside a two-tone ring.
 function PaperPlaneSpinner() {
+  const styles = useStyles();
+  const { s } = useMetrics();
   const spin = useSharedValue(0);
   useEffect(() => {
     spin.value = withRepeat(withTiming(1, { duration: 1300, easing: Easing.linear }), -1);
@@ -297,12 +331,12 @@ function PaperPlaneSpinner() {
   return (
     <View style={styles.spinner}>
       <Animated.View style={[StyleSheet.absoluteFill, ring]}>
-        <Svg width={84} height={84} viewBox="0 0 84 84">
+        <Svg width={s(84)} height={s(84)} viewBox="0 0 84 84">
           <Circle cx={42} cy={42} r={34} stroke="rgba(255,255,255,0.4)" strokeWidth={5} fill="none" />
           <Path d="M42 8 A34 34 0 0 1 76 42" stroke="#FF9F1C" strokeWidth={5} strokeLinecap="round" fill="none" />
         </Svg>
       </Animated.View>
-      <Svg width={40} height={40} viewBox="0 0 44 44">
+      <Svg width={s(40)} height={s(40)} viewBox="0 0 44 44">
         <Path d="M6 30 L34 6 L30 34 L20 26 Z" fill="#F2F2F2" />
         <Path d="M6 30 L20 26 L30 34 Z" fill="#BDBDBD" />
       </Svg>
@@ -316,59 +350,62 @@ const shadow = {
   textShadowRadius: 4,
 };
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((m) => ({
   root: { flex: 1, backgroundColor: '#000000' },
   plate: {
     position: 'absolute',
-    top: 18,
+    top: m.s(18),
     backgroundColor: '#0B0B0F',
-    borderRadius: 12,
-    paddingHorizontal: 18,
-    paddingVertical: 6,
-    minWidth: 180,
+    borderRadius: m.s(12),
+    paddingHorizontal: m.s(18),
+    paddingVertical: m.s(6),
+    minWidth: m.s(180),
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: m.s(10),
   },
-  plateLeft: { left: 20 },
-  plateRight: { right: 20, justifyContent: 'flex-end' },
-  plateName: { fontFamily: FONT.bold, fontSize: 20, color: '#FFFFFF', maxWidth: 220 },
-  plateLevel: { fontFamily: FONT.semi, fontSize: 13, color: '#F7C948' },
-  searching: { position: 'absolute', right: '12%', top: '30%', alignItems: 'center', gap: 10 },
-  searchText: { fontFamily: FONT.bold, fontSize: 19, color: '#FFFFFF', ...shadow },
-  spinner: { width: 84, height: 84, alignItems: 'center', justifyContent: 'center' },
-  vs: { position: 'absolute', alignSelf: 'center', top: '38%', width: 74, height: 74, alignItems: 'center', justifyContent: 'center' },
-  vsText: { fontFamily: FONT.bold, fontSize: 28, color: '#FFFFFF', ...shadow, textShadowColor: '#9A4A00' },
-  arenaTag: { position: 'absolute', alignSelf: 'center', top: '62%', alignItems: 'center' },
-  arenaLabel: { fontFamily: FONT.semi, fontSize: 11, letterSpacing: 3, color: 'rgba(255,255,255,0.75)', ...shadow },
-  arenaName: { fontFamily: FONT.bold, fontSize: 22, color: '#FFFFFF', ...shadow },
+  plateLeft: { left: m.s(20) },
+  plateRight: { right: m.s(20), justifyContent: 'flex-end' },
+  plateName: { flexShrink: 1, fontFamily: FONT.bold, fontSize: m.s(20), color: '#FFFFFF', maxWidth: m.s(220) },
+  plateLevel: { flexShrink: 0, fontFamily: FONT.semi, fontSize: m.s(13), color: '#F7C948' },
+  searching: { position: 'absolute', right: '12%', top: '30%', maxWidth: '40%', alignItems: 'center', gap: m.s(10) },
+  searchText: { fontFamily: FONT.bold, fontSize: m.s(19), color: '#FFFFFF', ...shadow },
+  spinner: { width: m.s(84), height: m.s(84), alignItems: 'center', justifyContent: 'center' },
+  vs: { position: 'absolute', alignSelf: 'center', top: '38%', width: m.s(74), height: m.s(74), alignItems: 'center', justifyContent: 'center' },
+  vsText: { fontFamily: FONT.bold, fontSize: m.s(28), color: '#FFFFFF', ...shadow, textShadowColor: '#9A4A00' },
+  arenaTag: { position: 'absolute', alignSelf: 'center', top: '62%', maxWidth: '60%', alignItems: 'center' },
+  arenaLabel: { fontFamily: FONT.semi, fontSize: m.s(11), letterSpacing: m.s(3), color: 'rgba(255,255,255,0.75)', ...shadow },
+  arenaName: { fontFamily: FONT.bold, fontSize: m.s(22), color: '#FFFFFF', ...shadow },
+  // Fills the screen below the name plates; the tip sits at its bottom.
+  lower: { position: 'absolute', top: m.s(64), left: 0, right: 0, bottom: m.s(14) },
+  feeArea: { flex: 1, minHeight: 0, alignItems: 'flex-end', paddingRight: '6%' },
   feeCard: {
-    position: 'absolute',
-    right: '6%',
-    top: '16%',
-    width: 300,
+    width: m.s(300),
+    maxWidth: '100%',
+    flexShrink: 1,
+    minHeight: 0,
     alignItems: 'center',
-    gap: 6,
-    padding: 18,
-    borderRadius: 18,
+    gap: m.s(6),
+    padding: m.s(18),
+    borderRadius: m.s(18),
     backgroundColor: 'rgba(11,11,15,0.88)',
   },
-  feeLabel: { fontFamily: FONT.semi, fontSize: 11, letterSpacing: 3, color: 'rgba(255,255,255,0.7)' },
-  feeAmount: { fontFamily: FONT.bold, fontSize: 30, color: '#FFFFFF' },
-  feeSub: { fontFamily: FONT.semi, fontSize: 13, color: 'rgba(255,255,255,0.75)', textAlign: 'center' },
-  feeBtn: { alignSelf: 'stretch', marginTop: 8 },
-  feeBusy: { alignItems: 'center', gap: 6, marginTop: 8 },
-  feeNote: { fontFamily: FONT.semi, fontSize: 12, color: '#F7C948', textAlign: 'center' },
-  feeBack: { marginTop: 4 },
+  feeScroll: { flexGrow: 0, flexShrink: 1, alignSelf: 'stretch' },
+  feeInfo: { alignItems: 'center', gap: m.s(6) },
+  feeLabel: { fontFamily: FONT.semi, fontSize: m.s(11), letterSpacing: m.s(3), color: 'rgba(255,255,255,0.7)' },
+  feeAmount: { fontFamily: FONT.bold, fontSize: m.s(30), color: '#FFFFFF' },
+  feeSub: { fontFamily: FONT.semi, fontSize: m.s(13), color: 'rgba(255,255,255,0.75)', textAlign: 'center' },
+  feeBtn: { alignSelf: 'stretch', marginTop: m.s(8) },
+  feeBusy: { alignItems: 'center', gap: m.s(6), marginTop: m.s(8) },
+  feeNote: { fontFamily: FONT.semi, fontSize: m.s(12), color: '#F7C948', textAlign: 'center' },
+  feeBack: { marginTop: m.s(4) },
   tip: {
-    position: 'absolute',
-    bottom: 14,
-    left: 60,
-    right: 60,
+    marginTop: m.s(6),
+    marginHorizontal: m.s(60),
     textAlign: 'center',
     fontFamily: FONT.semi,
-    fontSize: 14,
+    fontSize: m.s(14),
     color: '#FFFFFF',
     ...shadow,
   },
-});
+}));

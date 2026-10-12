@@ -1,6 +1,6 @@
 import { Redirect, router } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { HapticTouchable } from '@/components/haptic-touchable';
@@ -10,6 +10,8 @@ import { ARROWS, ARROW_IDS, OUTFITS, OUTFIT_IDS, type ArrowId, type OutfitId } f
 import { Showcase, type ShowAction, type ShowAngle, type ShowState } from '@/game3d/Showcase';
 import type { Mood } from '@/game3d/sim';
 import { FONT } from '@/ui/kit';
+import { Text } from '@/ui/Text';
+import { makeStyles, useMetrics } from '@/ui/responsive';
 
 // Developer-only character inspector (Settings → Character showcase in dev
 // builds): every derp, in any hat, with either bow, on the shared rig, from
@@ -37,6 +39,8 @@ const MOODS: (Mood | 'auto')[] = [
 const ZOOMS = [2.2, 3.4, 4.8, 6.5];
 
 export default function ShowcaseScreen() {
+  const styles = useStyles();
+  const { s } = useMetrics();
   const [derp, setDerp] = useState<DerpId>(DERP_IDS[0]);
   const [hat, setHat] = useState<HatId>('none');
   const [bow, setBow] = useState<BowId>('bow');
@@ -59,9 +63,11 @@ export default function ShowcaseScreen() {
       <View style={styles.panel}>
         <View style={styles.header}>
           <HapticTouchable onPress={() => router.back()} hitSlop={12} sound="ui_back">
-            <Ionicons name="chevron-back" size={24} color="#FFFFFF" />
+            <Ionicons name="chevron-back" size={s(24)} color="#FFFFFF" />
           </HapticTouchable>
-          <Text style={styles.title}>Character showcase</Text>
+          <Text style={styles.title} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+            Character showcase
+          </Text>
         </View>
         <ScrollView contentContainerStyle={styles.scroll}>
           <Group label="Derp">
@@ -117,6 +123,7 @@ export default function ShowcaseScreen() {
 }
 
 function Group({ label, children }: { label: string; children: React.ReactNode }) {
+  const styles = useStyles();
   return (
     <View style={styles.group}>
       <Text style={styles.label}>{label}</Text>
@@ -126,25 +133,28 @@ function Group({ label, children }: { label: string; children: React.ReactNode }
 }
 
 function Chip({ label, on, onPress }: { label: string; on: boolean; onPress: () => void }) {
+  const styles = useStyles();
   return (
     <HapticTouchable onPress={onPress} style={[styles.chip, on && styles.chipOn]}>
-      <Text style={[styles.chipText, on && styles.chipTextOn]}>{label}</Text>
+      <Text style={[styles.chipText, on && styles.chipTextOn]} numberOfLines={1}>
+        {label}
+      </Text>
     </HapticTouchable>
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((m) => ({
   container: { flex: 1, flexDirection: 'row', backgroundColor: '#12141C' },
   stage: { flex: 1.1 },
-  panel: { flex: 1, paddingHorizontal: 12 },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 },
-  title: { color: '#FFFFFF', fontFamily: FONT.bold, fontSize: 18 },
-  scroll: { paddingBottom: 16, gap: 10 },
-  group: { gap: 4 },
-  label: { color: 'rgba(255,255,255,0.55)', fontFamily: FONT.medium, fontSize: 12 },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  chip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.08)' },
+  panel: { flex: 1, paddingHorizontal: m.s(12) },
+  header: { flexDirection: 'row', alignItems: 'center', gap: m.s(8), paddingVertical: m.s(8) },
+  title: { color: '#FFFFFF', fontFamily: FONT.bold, fontSize: m.s(18), flexShrink: 1 },
+  scroll: { paddingBottom: m.s(16), gap: m.s(10) },
+  group: { gap: m.s(4) },
+  label: { color: 'rgba(255,255,255,0.55)', fontFamily: FONT.medium, fontSize: m.s(12) },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: m.s(6) },
+  chip: { paddingHorizontal: m.s(10), paddingVertical: m.s(6), borderRadius: m.s(10), backgroundColor: 'rgba(255,255,255,0.08)' },
   chipOn: { backgroundColor: '#FFB020' },
-  chipText: { color: '#FFFFFF', fontFamily: FONT.medium, fontSize: 13, textTransform: 'capitalize' },
+  chipText: { color: '#FFFFFF', fontFamily: FONT.medium, fontSize: m.s(13), textTransform: 'capitalize' },
   chipTextOn: { color: '#0B0B0F' },
-});
+}));

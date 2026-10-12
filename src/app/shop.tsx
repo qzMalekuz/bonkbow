@@ -1,8 +1,8 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, ScrollView, View } from 'react-native';
 import Animated, { FadeInDown, FadeOut, ZoomIn } from 'react-native-reanimated';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useMobileWallet } from '@wallet-ui/react-native-kit';
 import { usePostHog } from 'posthog-react-native';
@@ -22,7 +22,9 @@ import { CLUSTER, SHOP_ENABLED, SKR_ENABLED } from '@/solana/config';
 import { buySkin, restorePendingPurchase, restorePurchasesFromChain } from '@/solana/payments';
 import { formatSkr, useSkrBalance } from '@/solana/skr';
 import { CoinIcon, CoinPill, FONT } from '@/ui/kit';
-import { PartThumb, PriceTag, SECTIONS, priceOf } from '@/ui/PartThumb';
+import { PartThumb, PriceTag, SECTIONS, SectionIcon, priceOf } from '@/ui/PartThumb';
+import { makeStyles, useMetrics } from '@/ui/responsive';
+import { Text, TIGHT_FONT_SCALE } from '@/ui/Text';
 
 // In-game shop, one tab per section: characters, clothes, hats, bows,
 // arrows (skins.ts) and maps (maps.ts). The newer items cost coins, earned
@@ -37,7 +39,7 @@ const isMap = (p: Product): p is GameMap => 'theme' in p;
 type Tab = ProductKind | 'maps';
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   ...SECTIONS.map((s) => ({ id: s.kind as Tab, label: s.label, icon: s.icon })),
-  { id: 'maps', label: 'Maps', icon: <Ionicons name="map" size={15} color="#FFFFFF" /> },
+  { id: 'maps', label: 'Maps', icon: <SectionIcon ion="map" size={15} /> },
 ];
 const BLURB: Record<Tab, string> = {
   ...(Object.fromEntries(SECTIONS.map((s) => [s.kind, s.blurb])) as Record<ProductKind, string>),
@@ -56,6 +58,11 @@ const tabParam = (t: string | undefined): Tab | null =>
 
 // The map preview: my archer on a ledge, framed wide enough to see the set.
 const MAP_CAMERA = { x: 0.6, y: 2.1, z: 7, lookX: 1.4, lookY: 2.3, fov: 50, drift: 0.25 };
+// Grid: the narrowest a card may get (design units) before a column drops.
+// 3 skin columns at the design size, 4 on a long 21:9 phone, 2 on a narrow one.
+const CARD_MIN = { skin: 125, map: 190 };
+const GRID_GAP = 10;
+const GRID_PAD = 16;
 const MAP_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
   classic: 'shuffle',
   map_grove: 'leaf',
@@ -65,6 +72,9 @@ const MAP_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
 
 export default function ShopScreen() {
   useScreenMusic('shop');
+  const styles = useStyles();
+  const { s, scale, width } = useMetrics();
+  const insets = useSafeAreaInsets();
   const wallet = useMobileWallet();
   const { signIn, signingIn } = useWalletAuth();
   const posthog = usePostHog();
@@ -287,7 +297,7 @@ export default function ShopScreen() {
           onPress={() => (removable ? onTakeOff(item as Skin) : onEquip(item))}
           disabled={worn && !removable}
         >
-          <Text style={[styles.ctaText, worn && styles.ctaGhostText]}>
+          <Text style={[styles.ctaText, worn && styles.ctaGhostText]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
             {removable ? 'Take off' : worn ? (map ? 'Playing here' : 'Equipped') : map ? 'Play here' : 'Equip'}
           </Text>
         </HapticTouchable>
@@ -299,7 +309,9 @@ export default function ShopScreen() {
       return (
         <HapticTouchable style={[styles.cta, styles.ctaCoins, short && styles.ctaShort]} onPress={() => onBuyCoins(item as Skin)} sound={null}>
           <CoinIcon size={16} />
-          <Text style={[styles.ctaText, styles.ctaCoinsText]}>{price.toLocaleString()}</Text>
+          <Text style={[styles.ctaText, styles.ctaCoinsText]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+            {price.toLocaleString()}
+          </Text>
         </HapticTouchable>
       );
     }
@@ -308,7 +320,13 @@ export default function ShopScreen() {
     const sellable = cur === 'SOL' ? item.priceLamports > 0 : SKR_ENABLED && item.priceSkr > 0;
     return (
       <HapticTouchable style={[styles.cta, !sellable && styles.ctaDisabled]} onPress={() => onBuy(item, cur)} disabled={!!buying || !sellable}>
-        {buying === item.id ? <ActivityIndicator color="#0B0B0F" /> : <Text style={styles.ctaText}>{sellable ? price.label : 'Needs SKR'}</Text>}
+        {buying === item.id ? (
+          <ActivityIndicator color="#0B0B0F" />
+        ) : (
+          <Text style={styles.ctaText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+            {sellable ? price.label : 'Needs SKR'}
+          </Text>
+        )}
       </HapticTouchable>
     );
   };
@@ -317,6 +335,12 @@ export default function ShopScreen() {
   // Wallet, currency and balance only matter where something is sold in SOL/SKR.
   const paidHere = data.some((p) => p.priceLamports > 0 || p.priceSkr > 0);
   const stageItem: Product = tab === 'maps' ? previewMap : preview;
+  // The list column is what the 36% stage column leaves of the safe area;
+  // fit as many columns of at least CARD_MIN as it holds (never fewer than 2).
+  const gridW = ((width - insets.left - insets.right) * 0.64) / scale - GRID_PAD * 2;
+  const cols = Math.max(2, Math.floor((gridW + GRID_GAP) / ((tab === 'maps' ? CARD_MIN.map : CARD_MIN.skin) + GRID_GAP)));
+  // Cap each card at one column's width so a short last row doesn't stretch.
+  const cardMax = s((gridW - GRID_GAP * (cols - 1)) / cols);
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom', 'left', 'right']}>
@@ -331,23 +355,29 @@ export default function ShopScreen() {
           )}
           {tab !== 'maps' && !!step && (
             <View style={styles.stepChip} pointerEvents="none">
-              <Text style={styles.stepText}>{step}</Text>
+              <Text style={styles.stepText} numberOfLines={1} maxFontSizeMultiplier={TIGHT_FONT_SCALE}>
+                {step}
+              </Text>
             </View>
           )}
           {!isOwned(stageItem) && (
             <View style={[styles.stepChip, styles.lockChip, tab !== 'maps' && styles.lockChipRight]} pointerEvents="none">
-              <Ionicons name="lock-closed" size={12} color="#FFFFFF" />
-              <Text style={styles.stepText}>Locked</Text>
+              <Ionicons name="lock-closed" size={s(12)} color="#FFFFFF" />
+              <Text style={styles.stepText} numberOfLines={1} maxFontSizeMultiplier={TIGHT_FONT_SCALE}>
+                Locked
+              </Text>
             </View>
           )}
           <Animated.View key={stageItem.id} entering={FadeInDown.duration(260)} style={styles.stageInfo} pointerEvents="none">
-            <Text style={styles.stageName}>{stageItem.name}</Text>
+            <Text style={styles.stageName} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+              {stageItem.name}
+            </Text>
             <Text style={styles.stageDesc} numberOfLines={3}>
               {stageItem.description}
             </Text>
             {!isOwned(stageItem) &&
               (isMap(stageItem) ? (
-                <Text style={styles.stagePrice}>{priceOf({ priceCoins: 0, priceLamports: stageItem.priceLamports, priceSkr: stageItem.priceSkr }, currency).label}</Text>
+                <Text style={styles.stagePrice} numberOfLines={1}>{priceOf({ priceCoins: 0, priceLamports: stageItem.priceLamports, priceSkr: stageItem.priceSkr }, currency).label}</Text>
               ) : (
                 <PriceTag part={stageItem} currency={currency} style={styles.stageTag} />
               ))}
@@ -356,27 +386,33 @@ export default function ShopScreen() {
         <View style={styles.listCol}>
           <View style={styles.header}>
             <HapticTouchable onPress={() => router.back()} hitSlop={12} sound="ui_back" style={styles.back}>
-              <Ionicons name="chevron-back" size={24} color="#FFFFFF" />
+              <Ionicons name="chevron-back" size={s(24)} color="#FFFFFF" />
             </HapticTouchable>
-            <Text style={styles.title}>Shop</Text>
+            <Text style={styles.title} numberOfLines={1}>
+              Shop
+            </Text>
             <CoinPill coins={coins} />
-            <Text style={styles.cluster}>{CLUSTER.name}</Text>
+            <Text style={styles.cluster} numberOfLines={1}>
+              {CLUSTER.name}
+            </Text>
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabsScroll} contentContainerStyle={styles.tabs}>
             {TABS.map((t) => (
               <HapticTouchable key={t.id} style={[styles.tab, tab === t.id && styles.tabActive]} onPress={() => setTab(t.id)} sound="ui_click">
                 {t.icon}
-                <Text style={[styles.tabText, tab === t.id && styles.tabTextActive]}>{t.label}</Text>
+                <Text style={[styles.tabText, tab === t.id && styles.tabTextActive]} numberOfLines={1}>
+                  {t.label}
+                </Text>
               </HapticTouchable>
             ))}
           </ScrollView>
 
           <FlatList<Product>
-            key={tab}
+            key={`${tab}-${cols}`}
             data={data}
-            keyExtractor={(s) => s.id}
-            numColumns={tab === 'maps' ? 2 : 3}
-            columnWrapperStyle={{ gap: 10 }}
+            keyExtractor={(p) => p.id}
+            numColumns={cols}
+            columnWrapperStyle={styles.gridRow}
             contentContainerStyle={styles.grid}
             ListHeaderComponent={
               <View style={styles.headerBlock}>
@@ -389,14 +425,16 @@ export default function ShopScreen() {
                         style={[styles.segmentItem, currency === c && styles.segmentActive]}
                         onPress={() => setPreferredCurrency(c)}
                       >
-                        <Text style={[styles.segmentText, currency === c && styles.segmentTextActive]}>Pay in {c}</Text>
+                        <Text style={[styles.segmentText, currency === c && styles.segmentTextActive]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+                          Pay in {c}
+                        </Text>
                       </HapticTouchable>
                     ))}
                   </View>
                 )}
                 {paidHere ? (
                   <View style={styles.balanceRow}>
-                    <Ionicons name="wallet-outline" size={15} color="rgba(255,255,255,0.7)" />
+                    <Ionicons name="wallet-outline" size={s(15)} color="rgba(255,255,255,0.7)" />
                     <Text style={styles.hint}>
                       {!wallet.account
                         ? 'Paid from your wallet. Connect it when you buy.'
@@ -426,7 +464,7 @@ export default function ShopScreen() {
               const skin = map ? null : (item as Skin);
               const isPreview = map ? item.id === mapId : item.id === previewId;
               return (
-                <Animated.View entering={FadeInDown.delay(Math.min(index, 9) * 35).duration(260)} style={styles.cardWrap}>
+                <Animated.View entering={FadeInDown.delay(Math.min(index, 9) * 35).duration(260)} style={[styles.cardWrap, { maxWidth: cardMax }]}>
                   <HapticTouchable
                     style={[styles.card, isWorn(item) && styles.cardEquipped, isPreview && styles.cardPreview]}
                     onPress={() => (map ? setMapId(item.id) : setPreviewId(item.id))}
@@ -434,10 +472,10 @@ export default function ShopScreen() {
                   >
                     {map ? (
                       <View style={[styles.mapSwatch, { backgroundColor: map.color }]}>
-                        <Ionicons name={MAP_ICONS[map.id] ?? 'map'} size={22} color="#0B0B0F" />
+                        <Ionicons name={MAP_ICONS[map.id] ?? 'map'} size={s(22)} color="#0B0B0F" />
                         {!isOwned(item) && (
                           <View style={styles.mapLock}>
-                            <Ionicons name="lock-closed" size={12} color="#FFFFFF" />
+                            <Ionicons name="lock-closed" size={s(12)} color="#FFFFFF" />
                           </View>
                         )}
                       </View>
@@ -445,12 +483,16 @@ export default function ShopScreen() {
                       skin && (
                         <View style={styles.thumbRow}>
                           <PartThumb part={skin} derp={loadout.derp} size={48} />
-                          {skin.id === 'bow_shovel' && <Text style={styles.kicker}>BY REQUEST</Text>}
-                          {isWorn(item) && <Ionicons name="checkmark-circle" size={18} color="#7CC23A" style={styles.wornTick} />}
+                          {skin.id === 'bow_shovel' && (
+                            <Text style={styles.kicker} numberOfLines={1} maxFontSizeMultiplier={TIGHT_FONT_SCALE}>
+                              BY REQUEST
+                            </Text>
+                          )}
+                          {isWorn(item) && <Ionicons name="checkmark-circle" size={s(18)} color="#7CC23A" style={styles.wornTick} />}
                         </View>
                       )
                     )}
-                    <Text style={styles.name} numberOfLines={1}>
+                    <Text style={styles.name} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
                       {item.name}
                     </Text>
                     {action(item)}
@@ -461,8 +503,10 @@ export default function ShopScreen() {
           />
           {toast && (
             <Animated.View key={toast.id} entering={ZoomIn.duration(220)} exiting={FadeOut.duration(250)} style={styles.toast} pointerEvents="none">
-              <Ionicons name="sparkles" size={18} color="#FFD23F" />
-              <Text style={styles.toastText}>{toast.text}</Text>
+              <Ionicons name="sparkles" size={s(18)} color="#FFD23F" />
+              <Text style={styles.toastText} numberOfLines={2}>
+                {toast.text}
+              </Text>
             </Animated.View>
           )}
         </View>
@@ -473,84 +517,85 @@ export default function ShopScreen() {
 
 const textShadow = { textShadowColor: 'rgba(0,0,0,0.7)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 };
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((m) => ({
   container: { flex: 1, backgroundColor: COLORS.skyTop },
   body: { flex: 1, flexDirection: 'row' },
-  stageCol: { width: '36%', padding: 12, paddingRight: 0 },
-  stage: { flex: 1, borderRadius: 20 },
+  stageCol: { width: '36%', padding: m.s(12), paddingRight: 0 },
+  stage: { flex: 1, borderRadius: m.s(20) },
   clip: { overflow: 'hidden' },
-  lockChip: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  lockChipRight: { top: 52 }, // under the reel's step chip
-  mapSwatch: { height: 48, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
-  mapLock: { position: 'absolute', top: 6, right: 6, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 9, padding: 3 },
-  stageInfo: { position: 'absolute', left: 28, right: 16, bottom: 26, gap: 2 },
-  stepChip: { position: 'absolute', top: 22, left: 24, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 4 },
-  stepText: { fontFamily: FONT.bold, color: '#FFFFFF', fontSize: 12, letterSpacing: 0.6, textTransform: 'uppercase' },
-  stageName: { fontFamily: FONT.bold, color: '#FFFFFF', fontSize: 24, ...textShadow, textShadowOffset: { width: 0, height: 2 } },
-  stageDesc: { fontFamily: FONT.medium, color: 'rgba(255,255,255,0.88)', fontSize: 12, lineHeight: 16, ...textShadow },
-  stageTag: { alignSelf: 'flex-start', backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3, marginTop: 4 },
-  stagePrice: { fontFamily: FONT.bold, fontSize: 13, color: '#D9C6FF', marginTop: 4, ...textShadow },
+  lockChip: { flexDirection: 'row', alignItems: 'center', gap: m.s(4) },
+  lockChipRight: { top: m.s(52) }, // under the reel's step chip
+  mapSwatch: { height: m.s(48), borderRadius: m.s(14), alignItems: 'center', justifyContent: 'center', marginBottom: m.s(2) },
+  mapLock: { position: 'absolute', top: m.s(6), right: m.s(6), backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: m.s(9), padding: m.s(3) },
+  stageInfo: { position: 'absolute', left: m.s(28), right: m.s(16), bottom: m.s(26), gap: m.s(2) },
+  stepChip: { position: 'absolute', top: m.s(22), left: m.s(24), backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: m.s(10), paddingHorizontal: m.s(10), paddingVertical: m.s(4) },
+  stepText: { fontFamily: FONT.bold, color: '#FFFFFF', fontSize: m.s(12), letterSpacing: m.s(0.6), textTransform: 'uppercase' },
+  stageName: { fontFamily: FONT.bold, color: '#FFFFFF', fontSize: m.s(24), ...textShadow, textShadowOffset: { width: 0, height: m.s(2) } },
+  stageDesc: { fontFamily: FONT.medium, color: 'rgba(255,255,255,0.88)', fontSize: m.s(12), lineHeight: m.s(16), ...textShadow },
+  stageTag: { alignSelf: 'flex-start', backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: m.s(8), paddingHorizontal: m.s(8), paddingVertical: m.s(3), marginTop: m.s(4) },
+  stagePrice: { fontFamily: FONT.bold, fontSize: m.s(13), color: '#D9C6FF', marginTop: m.s(4), ...textShadow },
   listCol: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 },
-  back: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.35)' },
-  title: { fontFamily: FONT.bold, color: '#FFFFFF', fontSize: 24, flex: 1 },
-  cluster: { fontFamily: FONT.semi, color: 'rgba(255,255,255,0.45)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1 },
+  header: { flexDirection: 'row', alignItems: 'center', gap: m.s(10), paddingHorizontal: m.s(16), paddingTop: m.s(8), paddingBottom: m.s(4) },
+  back: { width: m.s(36), height: m.s(36), borderRadius: m.s(18), alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.35)' },
+  title: { fontFamily: FONT.bold, color: '#FFFFFF', fontSize: m.s(24), flex: 1 },
+  cluster: { flexShrink: 1, fontFamily: FONT.semi, color: 'rgba(255,255,255,0.45)', fontSize: m.s(11), textTransform: 'uppercase', letterSpacing: m.s(1) },
   tabsScroll: { flexGrow: 0, flexShrink: 0 },
-  tabs: { gap: 6, paddingHorizontal: 16, paddingVertical: 6 },
+  tabs: { gap: m.s(6), paddingHorizontal: m.s(16), paddingVertical: m.s(6) },
   tab: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 10,
+    gap: m.s(5),
+    paddingHorizontal: m.s(12),
+    paddingVertical: m.s(6),
+    borderRadius: m.s(10),
     backgroundColor: 'rgba(0,0,0,0.3)',
     borderWidth: 1.5,
     borderColor: 'rgba(255,255,255,0.12)',
   },
   tabActive: { backgroundColor: '#8E6CEF', borderColor: '#F7C948' },
-  tabText: { fontFamily: FONT.bold, color: 'rgba(255,255,255,0.75)', fontSize: 13 },
+  tabText: { fontFamily: FONT.bold, color: 'rgba(255,255,255,0.75)', fontSize: m.s(13) },
   tabTextActive: { color: '#FFFFFF' },
-  headerBlock: { gap: 8, marginBottom: 10 },
-  segment: { flexDirection: 'row', backgroundColor: 'rgba(0,0,0,0.3)', borderRadius: 12, padding: 4 },
-  segmentItem: { flex: 1, paddingVertical: 8, borderRadius: 9, alignItems: 'center' },
+  headerBlock: { gap: m.s(8), marginBottom: m.s(10) },
+  segment: { flexDirection: 'row', backgroundColor: 'rgba(0,0,0,0.3)', borderRadius: m.s(12), padding: m.s(4) },
+  segmentItem: { flex: 1, paddingVertical: m.s(8), borderRadius: m.s(9), alignItems: 'center' },
   segmentActive: { backgroundColor: COLORS.arrow },
-  segmentText: { fontFamily: FONT.bold, color: 'rgba(255,255,255,0.7)', fontSize: 13 },
+  segmentText: { fontFamily: FONT.bold, color: 'rgba(255,255,255,0.7)', fontSize: m.s(13) },
   segmentTextActive: { color: '#0B0B0F' },
-  balanceRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  hint: { flex: 1, fontFamily: FONT.medium, color: 'rgba(255,255,255,0.6)', fontSize: 12, lineHeight: 16 },
-  tabBlurb: { fontFamily: FONT.semi, color: 'rgba(255,255,255,0.85)', fontSize: 14 },
-  grid: { paddingHorizontal: 16, paddingTop: 4, gap: 10, paddingBottom: 24 },
+  balanceRow: { flexDirection: 'row', alignItems: 'center', gap: m.s(8) },
+  hint: { flex: 1, fontFamily: FONT.medium, color: 'rgba(255,255,255,0.6)', fontSize: m.s(12), lineHeight: m.s(16) },
+  tabBlurb: { fontFamily: FONT.semi, color: 'rgba(255,255,255,0.85)', fontSize: m.s(14) },
+  grid: { paddingHorizontal: m.s(GRID_PAD), paddingTop: m.s(4), gap: m.s(GRID_GAP), paddingBottom: m.s(24) },
+  gridRow: { gap: m.s(GRID_GAP) },
   cardWrap: { flex: 1 },
   card: {
     flex: 1,
     backgroundColor: 'rgba(255,255,255,0.07)',
-    borderRadius: 16,
-    padding: 10,
-    gap: 4,
+    borderRadius: m.s(16),
+    padding: m.s(10),
+    gap: m.s(4),
     borderWidth: 2,
     borderColor: 'transparent',
   },
   cardEquipped: { borderColor: COLORS.arrow },
   cardPreview: { backgroundColor: 'rgba(255,255,255,0.15)' },
-  thumbRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 2 },
+  thumbRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: m.s(2) },
   wornTick: { marginLeft: 'auto' },
-  kicker: { fontFamily: FONT.bold, color: '#FFD23F', fontSize: 9, letterSpacing: 1, marginLeft: 6, marginTop: 2 },
-  name: { fontFamily: FONT.bold, color: '#FFFFFF', fontSize: 15 },
+  kicker: { flexShrink: 1, fontFamily: FONT.bold, color: '#FFD23F', fontSize: m.s(9), letterSpacing: m.s(1), marginLeft: m.s(6), marginTop: m.s(2) },
+  name: { fontFamily: FONT.bold, color: '#FFFFFF', fontSize: m.s(15) },
   cta: {
     flexDirection: 'row',
-    gap: 5,
+    gap: m.s(5),
     justifyContent: 'center',
     backgroundColor: COLORS.arrow,
-    borderRadius: 11,
-    paddingVertical: 8,
+    borderRadius: m.s(11),
+    paddingVertical: m.s(8),
     alignItems: 'center',
-    marginTop: 2,
+    marginTop: m.s(2),
     borderBottomWidth: 3,
     borderBottomColor: '#B86B2E',
   },
   ctaDisabled: { opacity: 0.45 },
-  ctaText: { fontFamily: FONT.bold, color: '#0B0B0F', fontSize: 14 },
+  ctaText: { flexShrink: 1, fontFamily: FONT.bold, color: '#0B0B0F', fontSize: m.s(14) },
   ctaCoins: { backgroundColor: '#2A2440', borderBottomColor: '#15122A', borderWidth: 1.5, borderColor: 'rgba(255,200,61,0.6)' },
   ctaCoinsText: { color: '#FFC83D' },
   ctaShort: { opacity: 0.55 },
@@ -558,17 +603,18 @@ const styles = StyleSheet.create({
   ctaGhostText: { color: 'rgba(255,255,255,0.75)' },
   toast: {
     position: 'absolute',
-    top: 56,
+    top: m.s(56),
     alignSelf: 'center',
+    maxWidth: '90%',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: m.s(8),
     backgroundColor: '#1B1A33',
-    borderRadius: 14,
+    borderRadius: m.s(14),
     borderWidth: 2.5,
     borderColor: '#F7C948',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingHorizontal: m.s(16),
+    paddingVertical: m.s(8),
   },
-  toastText: { fontFamily: FONT.bold, color: '#FFFFFF', fontSize: 15 },
-});
+  toastText: { flexShrink: 1, fontFamily: FONT.bold, color: '#FFFFFF', fontSize: m.s(15) },
+}));
