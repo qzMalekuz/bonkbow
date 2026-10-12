@@ -23,8 +23,7 @@ pivoted on 2026-10-12 (see "Where the app is" below).
 
 ### Name
 Display name is **Bonk Bow** (was Stickchers): `app.json` `name`, the menu wordmark
-(`src/app/index.tsx`), share text (`src/app/lobby.tsx`), the sign-in statement
-(`src/solana/auth.ts`), wallet app identity (`src/solana/config.ts`), README, docs, audio credits.
+(`src/app/index.tsx`), wallet app identity (`src/solana/config.ts`), README, docs, audio credits.
 
 **Renamed on 2026-10-12 at the owner's request:** repo (`qzMalekuz/bonkbow`), folder
 (`~/Developer/bonkbow`), npm `name`, Expo `slug` (`bonkbow`), URL `scheme` (`bonkbow://`),
@@ -74,8 +73,8 @@ public promise; either build it or soften the line in `derpy30c.py` (`credit()`)
 
 ## Where the app is (done 2026-10-12)
 
-Kept unchanged: duel rules, fixed-step sim, hit zones, AI, multiplayer rooms, wallet sign-in,
-on-chain SOL/SKR purchases, maps. What changed (all shipped in the working tree):
+Kept unchanged: duel rules, fixed-step sim, hit zones, AI, wallet sign-in, on-chain SOL/SKR
+purchases, maps. What changed (all shipped in the working tree):
 
 1. **Archers.** The cast is `src/game/derps.ts` (Gary, Tall Steve, Doug, Kevin, Some Guy),
    drawn as wobbly ink by `src/game3d/DerpHead.ts` + `ink.ts` on the same stick body, and as
@@ -85,16 +84,19 @@ on-chain SOL/SKR purchases, maps. What changed (all shipped in the working tree)
 2. **Behaviour.** In `src/game3d/sim.ts`: early cheers, wrong-way draws, arrow snacks and
    yawns, self-bonk when a shot goes straight up, delayed "ow", staring at the camera after
    a miss, Some Guy smug. Each archer's habit makes his gag likely. Rolls come off a seeded
-   stream (`mulberry32(seed)`), so both phones see the same beats. Nothing changes a hit.
+   stream (`mulberry32(seed)`). Nothing changes a hit.
 3. **Look.** Still three.js, but the heads are hand-scrawled ink on paper (the videos' outlines
    from `derpy.py`, wobbling), so the app and the clips read as one thing.
 4. **Shop.** Derps, hats ("they do not help"), the Shovel Bow and maps, in SOL or SKR:
-   `src/game/skins.ts`, `cosmetics.ts`, `shop.tsx`, and the matching price table in
-   `supabase/functions/verify-purchase` (redeploy it after any price change).
+   `src/game/skins.ts`, `cosmetics.ts`, `shop.tsx`; payments are checked against those prices
+   in `src/solana/payments.ts`.
 5. **Shovel bow.** Shipped: giant bow, shovel projectile, recoil throws the shooter onto his back
    (`Stickman3D.ts`), digs in deeper on landing (`Duel3D.tsx`). Same physics as an arrow.
-6. **Copy.** Wordmark BONK BOW with the tagline; share text, sign-in statement, tips and shop
-   blurbs are derp-themed. `docs/SUBMISSION.md` and the README describe the new game.
+6. **Copy.** Wordmark BONK BOW with the tagline; tips and shop blurbs are derp-themed. `docs/SUBMISSION.md` and the README describe the new game.
+
+Later (2026-10-13) the app went fully offline: no server, no online rooms (every duel is vs the
+AI, with a small SOL entry fee), wallet sign-in is a plain MWA connect, and payments are read
+back from the chain by the app and stored on the device. The README has the details.
 
 Still open: the player's own 'bonk' habit (Tall Steve) does nothing, since the player aims; the
 AI is the one that fires straight up. The dev showcase (`/showcase`) swaps its projectile with

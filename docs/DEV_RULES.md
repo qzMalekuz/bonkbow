@@ -115,19 +115,16 @@ here (in the right section) in the same change that applies it.
 ## Game logic
 
 1. Anything that decides an outcome runs on the fixed physics step in
-   `sim.ts`; bullet time and visuals may not change results (both multiplayer
-   phones must agree).
-2. Keep the online protocol as angle + power per shot; the shooter's result
-   (`zone`, `hp`, `shield`) is authoritative.
-3. Input feel: smooth the aim toward the finger every frame, fire the raw value;
+   `sim.ts`; bullet time and visuals may not change results.
+2. Input feel: smooth the aim toward the finger every frame, fire the raw value;
    animations ease (exponential, frame-rate independent) rather than snap.
-4. Comedy beats (early cheers, the stare at the camera, the late "ow",
+3. Comedy beats (early cheers, the stare at the camera, the late "ow",
    eating arrows, the wrong-way turn, the self-bonk) live in `sim.ts` as
-   presentation: they may use `Math.random()` and differ between phones,
-   but never change a hit, damage or turn. A self-bonk resolves as a miss.
-   The AI's own derpy shots (straight up, wrong-way draw) are vs-AI only.
-5. The map rides in the match seed's low two bits (`seedWithMap`,
-   `mapOfSeed` in `src/game/maps.ts`): create every match/room seed with
+   presentation: they may use `Math.random()`, but never change a hit,
+   damage or turn. A self-bonk resolves as a miss. The AI also fires its
+   own derpy shots (straight up, wrong-way draw).
+4. The map rides in the match seed's low two bits (`seedWithMap`,
+   `mapOfSeed` in `src/game/maps.ts`): create every match seed with
    `randomSeed(equippedMap)`, never `Math.random()` directly, and only
    append to `MAPS` (its index is what the seed carries).
 
@@ -146,15 +143,45 @@ here (in the right section) in the same change that applies it.
 
 ## Shop
 
-1. The shop sells derps (Gary is free), hats ("they do not help"), the
-   Shovel Bow and the three environment maps (Classic is free), in SOL or
-   SKR. Product ids are `derp_<id>`, `hat_<id>`, `bow_<id>` and the map ids;
-   all are listed in `skins.ts` / `maps.ts`. Nothing sold changes a shot.
-   "Choose your style" picks the derp, hat and bow among owned items; a
-   locked one links to the shop. Keep `supabase/functions/verify-purchase`
-   PRICES equal to `skins.ts` and `maps.ts` (plus the retired `hero_*`
-   entries, which old app builds still sell), and deploy the function
-   together with the app update.
+1. The shop and "Choose your style" share five sections, in this order:
+   Characters (derps), Clothes, Hats, Bows, Arrows (`SECTIONS` in
+   `ui/PartThumb.tsx`); the shop adds Maps. Product ids are `<kind>_<id>`
+   (`derp_`, `outfit_`, `hat_`, `bow_`, `arrow_`) plus the map ids, all
+   listed in `skins.ts` / `maps.ts`. Nothing sold changes a shot.
+2. Every item is sold one way only. The originals (four derps, ten hats,
+   the Shovel Bow, the three maps) are SOL/SKR: keep their ids and prices
+   stable, since purchases are verified against them
+   (`solana/payments.ts`). Everything newer costs coins (`COIN_PRICES` in `skins.ts`),
+   bought on the device into the store's `coinItems`, which must never feed
+   `ownedSkins`. Check ownership with `ownsProduct(id, ownedSkins,
+   coinItems)`; an item is free only if it has no price of either kind.
+3. New cosmetics are data first: derps and hats in `derps.ts` (hats are
+   ink drawings), bows in `BOWS` (colours + scale), clothes and arrows in
+   `gear.ts`; the rig builds clothes on the torso and arrows from those
+   defs, the UI draws them in `ui/PartThumb.tsx`. Add a coin price, keep
+   `sanitizeLoadout` accepting the id, and check it in the showcase.
+4. XP, levels and coin rewards live in `progression.ts` only (match pay,
+   daily bonus, level-up bonus); a match pays through `store.finishMatch`.
+   Coin prices assume ~30–90 coins a match.
+
+## Payments & offline
+
+1. There is no server. Anything that must be kept lives on the device:
+   AsyncStorage or the persisted zustand store (`game/store.ts`). Don't add
+   a backend or an account system.
+2. Every real-money payment goes through `solana/payments.ts`: pay from the
+   wallet to the treasury with a `bonkbow:` memo, read the transaction back
+   from the chain, then store the item locally. Never unlock anything before
+   the chain confirms the payment.
+3. Item ids and `priceLamports` / `priceSkr` are what restore checks old
+   payments against (memo = id, amount ≥ price). Never rename a paid item's
+   id, and don't raise a price casually: older purchases would stop
+   restoring.
+4. Keep `.easignore` in sync with `.gitignore` (EAS reads it instead), but
+   keep `assets/licensed/` uploaded: the APK needs the Unity models.
+5. Start EAS builds from the local machine (`bunx eas-cli workflow:run
+   build-android.yml` or `eas build`), never from a GitHub push: a checkout
+   has no `assets/licensed/`.
 
 ## Working with other agents and git
 
