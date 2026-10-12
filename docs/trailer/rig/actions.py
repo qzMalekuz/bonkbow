@@ -68,8 +68,13 @@ def setup_controls(h):
     arm['controls'] = True
     h['ctrl'] = ctrls
     # The bow hangs from the left hand target: limbs vertical, string toward the archer.
+    # The bow rides the left hand on a mount that copies the hand's place and turn but not the
+    # body's squash, so it keeps its true shape.
     bow = h['bow']
-    bow.parent = ctrls['hand_L']; bow.parent_type = 'OBJECT'
+    mount = bpy.data.objects.new(arm.name + '_bow_mount', None); col.objects.link(mount)
+    cl = mount.constraints.new('COPY_LOCATION'); cl.target = ctrls['hand_L']
+    cr = mount.constraints.new('COPY_ROTATION'); cr.target = ctrls['hand_L']
+    bow.parent = mount; bow.parent_type = 'OBJECT'
     bow.location = (0, 0, 0)
     bow.rotation_euler = (0, 0, math.radians(-90))  # bow +X (toward target) -> -Y forward
     # Rest pose: hands down, feet planted.
@@ -136,9 +141,11 @@ def apply(h, p, t, interp='BEZIER'):
     setup_controls(h)
     c = h['ctrl']
     arm = h['arm']
-    key_loc(c['foot_L'], t, p.foot_L, interp); key_loc(c['foot_R'], t, p.foot_R, interp)
+    k = arm.get('pose_z', 1.0)      # a true chibi skeleton (body_v2) scales the pose library's heights
+    zs = (lambda v: (v[0], v[1], v[2] * k)) if k != 1.0 else (lambda v: v)
+    key_loc(c['foot_L'], t, zs(p.foot_L), interp); key_loc(c['foot_R'], t, zs(p.foot_R), interp)
     key_rot(c['foot_L'], t, p.foot_rot_L, interp); key_rot(c['foot_R'], t, p.foot_rot_R, interp)
-    key_loc(c['hand_L'], t, p.hand_L, interp); key_loc(c['hand_R'], t, p.hand_R, interp)
+    key_loc(c['hand_L'], t, zs(p.hand_L), interp); key_loc(c['hand_R'], t, zs(p.hand_R), interp)
     for side in 'LR':
         r = getattr(p, 'hand_rot_' + side)
         if isinstance(r, Euler):
@@ -150,17 +157,17 @@ def apply(h, p, t, interp='BEZIER'):
         el = getattr(p, 'elbow_' + side)
         if el is None:
             hx = c['hand_' + side].location
-            el = (hx.x + (0.6 if side == 'L' else -0.6), hx.y + 0.9, SHOULDER - 0.2)
-        key_loc(c['elbow_' + side], t, el, interp)
+            el = (hx.x + (0.6 if side == 'L' else -0.6), hx.y + 0.9, (SHOULDER - 0.2))
+        key_loc(c['elbow_' + side], t, zs(el), interp)
         kn = getattr(p, 'knee_' + side)
         if kn is None:
             f = c['foot_' + side].location
             kn = ((HIP_X if side == 'L' else -HIP_X), f.y - 0.9, HIP * 0.5)
-        key_loc(c['knee_' + side], t, kn, interp)
+        key_loc(c['knee_' + side], t, zs(kn), interp)
     # hips: the Root bone (bone Y = world Z). Pose-space rotations: pitch about bone X.
     pb = arm.pose.bones
     root = pb['Root']
-    root.location = (p.hips[0], p.hips[2] - HIP, -p.hips[1])  # bone local: X, Y(up), Z(= -world Y)
+    root.location = (p.hips[0], (p.hips[2] - HIP) * k, -p.hips[1])  # bone local: X, Y(up), Z(= -world Y)
     root.rotation_euler = Euler((-math.radians(p.hips_rot[0]), math.radians(p.hips_rot[2]), -math.radians(p.hips_rot[1])), 'XYZ')
     root.keyframe_insert('location', frame=frame(t)); root.keyframe_insert('rotation_euler', frame=frame(t))
     sp = pb['Spine']

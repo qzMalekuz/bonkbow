@@ -28,7 +28,7 @@ def _set(node, name, value):
 
 
 QUALITY = {'draft': dict(scale=50, samples=12, mb=False, vol=False), 'review': dict(scale=50, samples=24, mb=True, vol=True),
-           'final': dict(scale=100, samples=48, mb=True, vol=True)}
+           'final': dict(scale=100, samples=32, mb=True, vol=True)}
 
 
 def reset(quality='final', seconds=4.0):
@@ -46,6 +46,7 @@ def reset(quality='final', seconds=4.0):
     ee.taa_render_samples = q['samples']
     sc.render.use_motion_blur = q['mb']
     sc.render.motion_blur_shutter = 0.5
+    sc.render.motion_blur_position = 'START'  # shutter opens on the frame: in-shot cuts stay clean
     if hasattr(ee, 'motion_blur_steps'):
         ee.motion_blur_steps = 2
     if hasattr(ee, 'use_raytracing'):

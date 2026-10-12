@@ -226,11 +226,11 @@ def pine(b, x, y, s, trunk, foliage, foliage2=None, rnd=None):
         b.cone(foliage if i % 2 == 0 or not foliage2 else foliage2, (x, y, z * s), r * s, h * s, segs=8)
 
 
-def fire(name, loc, scale=1.0, energy=600, color='#FF7A2A', flicker_seed=0, light=True):
+def fire(name, loc, scale=1.0, energy=600, color='#FF7A2A', flicker_seed=0, light=True, shadow=False):
     """A brazier flame: stacked emissive blobs plus a flickering point light."""
     b = Batch(name)
-    em = emissive('fire_core', '#FFB040', 30)
-    em2 = emissive('fire_outer', '#FF5A14', 14)
+    em = emissive('fire_core', '#FFC060', 9)
+    em2 = emissive('fire_outer', '#FF5A14', 4)
     x, y, z = loc
     b.sphere(em2, (x, y, z + 0.18 * scale), 0.24 * scale, (1, 1, 1.5), segs=10)
     b.sphere(em, (x, y, z + 0.14 * scale), 0.15 * scale, (1, 1, 1.6), segs=10)
@@ -245,7 +245,7 @@ def fire(name, loc, scale=1.0, energy=600, color='#FF7A2A', flicker_seed=0, ligh
             m = fc.modifiers.new('NOISE'); m.strength = 0.25; m.scale = 3.0; m.phase = flicker_seed * 13.7 + i * 5.1
     li = None
     if light:
-        li = S.point(name + '_light', (x, y, z + 0.5 * scale), color, energy, radius=0.35)
+        li = S.point(name + '_light', (x, y, z + 0.5 * scale), color, energy, radius=0.35, shadow=shadow)
         li.data.keyframe_insert('energy', frame=1)
         from common import fcurves
         for fc in fcurves(li.data.animation_data.action):
@@ -259,11 +259,11 @@ def build_colosseum(night=True, seed=7, braziers=8, radius=30.0):
     rnd = random.Random(seed)
     col = new_collection('arena')
     if night:
-        S.sky('#120812', '#5A1E14', strength=0.55, stars=3.0, ground='#1A0E0A')
-        S.sun('#FF8A50', (0.0, 0.42, -1.0), energy=1.6, angle=4)  # the moon behind the arena wall, rim light
-        S.sun('#5A6AA8', (-0.6, 0.8, 0.6), energy=0.5, angle=10, name='fill')
-        moon_ob = moon((0, 210, 62), 46, '#FF5A2A', strength=5.0)
-        S.fog('#C8582E', density=0.006, anisotropy=0.55)
+        S.sky('#070B1C', '#7A2E1C', strength=0.5, stars=3.0, ground='#14100E', sharp=1.3)
+        S.sun('#FF8448', (0.0, 0.42, -1.0), energy=2.6, angle=4)  # the moon behind the arena wall: warm rim light
+        S.sun('#5E7EC8', (-0.6, 0.8, 0.6), energy=1.1, angle=14, name='fill')  # cool night fill from the camera side
+        moon_ob = moon((0, 210, 62), 46, '#FF6A30', strength=4.0)
+        S.fog('#9A6A58', density=0.0035, anisotropy=0.6)
     else:
         S.sky('#7DB8E8', '#F3E3C3', strength=1.0)
         S.sun('#FFF0D0', (-0.35, 0.8, 0.45), energy=4.0)
@@ -282,7 +282,7 @@ def build_colosseum(night=True, seed=7, braziers=8, radius=30.0):
         for tier in range(3):
             r = R + tier * 3
             z0 = tier * 6
-            b.box(stone_d if tier == 1 else stone, (cx * r, cy * r, z0 + 3), (seg * 1.03, 1.6, 6), (0, 0, rz))
+            b.box(stone_d if tier == 1 else stone, (cx * r, cy * r, z0 + 3), (seg * 1.14 * (r / R), 1.6, 6.05), (0, 0, rz))
             b.box(shade, (cx * (r - 0.82), cy * (r - 0.82), z0 + 2.6), (seg * 0.45, 0.06, 3.4), (0, 0, rz))
             # arch top (half cylinder look): a dark disc above the recess
             b.cyl(shade, (cx * (r - 0.82), cy * (r - 0.82), z0 + 4.3), seg * 0.225, 0.06, (math.pi / 2, 0, rz), segs=16)
@@ -310,7 +310,7 @@ def build_colosseum(night=True, seed=7, braziers=8, radius=30.0):
         x, y = math.cos(a) * 13.0, math.sin(a) * 13.0
         bb.cyl(iron, (x, y, 0.55), 0.07, 1.1, segs=8)
         bb.cyl(iron, (x, y, 1.18), 0.42, 0.22, segs=12, radius2=0.26)
-        fires.append(fire('brazier_%d' % i, (x, y, 1.25), 1.15, energy=900 if night else 0, flicker_seed=i, light=night))
+        fires.append(fire('brazier_%d' % i, (x, y, 1.25), 1.15, energy=1400 if night else 0, flicker_seed=i, light=night, shadow=(i % 2 == 0)))
     bb.finish()
     embers = None
     if night:
@@ -320,7 +320,7 @@ def build_colosseum(night=True, seed=7, braziers=8, radius=30.0):
 
 # ---- 2. Golden Meadow ------------------------------------------------------------------------------
 
-def build_golden_meadow(seed=11, sunset=False, grass=True, grass_y=(-9, 9), grass_x=(-9, 9), windmill=None):
+def build_golden_meadow(seed=11, sunset=False, grass=True, grass_y=(-9, 9), grass_x=(-9, 9), windmill=None, fence_y=6.0, grass_density=220, grass_height=0.95):
     rnd = random.Random(seed)
     col = new_collection('arena')
     if sunset:
@@ -349,15 +349,15 @@ def build_golden_meadow(seed=11, sunset=False, grass=True, grass_y=(-9, 9), gras
     posts = []
     for i in range(-6, 7):
         x = i * 2.2 + 1.0
-        b.cyl(wood, (x, 6.0, 0.6), 0.09, 1.2, segs=8)
-        posts.append((x, 6.0, 1.0))
+        b.cyl(wood, (x, fence_y, 0.6), 0.09, 1.2, segs=8)
+        posts.append((x, fence_y, 1.0))
         if i < 6:
-            b.box(wood, (x + 1.1, 6.0, 0.95), (2.2, 0.07, 0.09))
-            b.box(wood, (x + 1.1, 6.0, 0.55), (2.2, 0.07, 0.09))
+            b.box(wood, (x + 1.1, fence_y, 0.95), (2.2, 0.07, 0.09))
+            b.box(wood, (x + 1.1, fence_y, 0.55), (2.2, 0.07, 0.09))
     b.finish()
     field = None
     if grass:
-        field = grass_field('grass', grass_x, grass_y, density=220, height=0.95, color_a='#4E6E2A', color_b='#E8D070', seed=seed)
+        field = grass_field('grass', grass_x, grass_y, density=grass_density, height=grass_height, color_a='#4E6E2A', color_b='#E8D070', seed=seed)
         grass_field('grass_far', (-40, 40), (9, 30), density=14, height=0.8, color_a='#5E7E34', color_b='#D8C468', seed=seed + 1, width=0.06)
     mill = None
     if windmill:
@@ -372,8 +372,8 @@ def build_moonlit_woods(seed=21, clearing=6.0):
     rnd = random.Random(seed)
     col = new_collection('arena')
     S.sky('#07131F', '#2F6A6A', strength=0.5, stars=4.0, ground='#0E2620', sharp=1.5)
-    S.sun('#BFE3FF', (0.25, 0.75, -0.7), energy=2.2, angle=1.5)  # the moon, behind: rim light and beams
-    S.sun('#3E8E8E', (-0.5, 0.6, 0.7), energy=0.35, angle=20, name='fill')
+    S.sun('#BFE3FF', (0.25, 0.75, -0.7), energy=4.0, angle=1.0)  # the moon, behind: rim light and beams
+    S.sun('#4EA0A8', (-0.5, 0.6, 0.7), energy=0.8, angle=20, name='fill')
     moon_ob = moon((60, 230, 120), 20, '#DDF4FF', strength=9.0)
     S.fog('#3E8A86', density=0.022, anisotropy=0.72)
     S.ground('#1C3A2E', color2='#28504A', noise=0.6, noise_scale=0.5, name='woods_floor', rough=0.95)
@@ -381,11 +381,11 @@ def build_moonlit_woods(seed=21, clearing=6.0):
     avoid = [(0, 0)]
     trees = scatter('grove', ['tree_fir_tall', 'tree_fir_tall', 'tree_1_leaf_1'], 70, (-45, 45), (-6, 60), (2.6, 4.2), rnd, col, avoid, clearing)
     scatter('grove', ['tree_fir_tall'], 26, (-40, 40), (-34, -9), (2.8, 4.0), rnd, col, avoid, clearing + 2)
-    scatter('grove', ['stone_large_1', 'stone_medium_1'], 24, (-20, 20), (-6, 30), (1.6, 3.6), rnd, col, avoid, 2.5)
-    scatter('grove', ['foliage_grasspatch_small_1', 'foliage_grasspatch_small_2'], 260, (-16, 16), (-8, 26), (4, 7), rnd, col)
+    scatter('grove', ['stone_large_1', 'stone_medium_1'], 24, (-20, 20), (-4, 30), (1.2, 2.6), rnd, col, avoid, 3.5)
+    scatter('grove', ['foliage_grasspatch_small_1', 'foliage_grasspatch_small_2'], 420, (-16, 16), (-8, 26), (1.6, 3.0), rnd, col, avoid, 0.8)
     # glowing mushrooms (the theme's signature)
     glow = emissive('mushroom_glow', '#5AE0D0', 6.0)
-    shrooms = scatter('grove', ['foliage_mushroom_blue_big'], 40, (-14, 14), (-5, 22), (4, 9), rnd, col, avoid, 1.5)
+    shrooms = scatter('grove', ['foliage_mushroom_blue_big'], 40, (-14, 14), (-5, 22), (2.5, 5), rnd, col, avoid, 1.5)
     for i, sob in enumerate(shrooms):
         if i % 3 == 0:
             S.point('shroom_light_%d' % i, (sob.location.x, sob.location.y, 0.8), '#5AE0D0', 18, radius=0.3, shadow=False)
@@ -430,10 +430,10 @@ def build_elder_forest(seed=31, corridor=None, clearing=5.0, big_tree=None):
     hero_tree = None
     if big_tree:
         hero_tree = ga.place_prop('grove', 'tree_fir_tall', (big_tree[0], big_tree[1], 0), 0.6, big_tree[2], col, name='hero_fir')
-    scatter('grove', ['stone_large_1', 'stone_medium_1'], 40, (-30, 30), (-20, 40), (1.8, 4.2), rnd, col, avoid, 2.5)
+    scatter('grove', ['stone_large_1', 'stone_medium_1'], 40, (-30, 30), (-20, 40), (1.2, 2.8), rnd, col, avoid, 3.5)
     scatter('grove', ['tree_stump_1'], 10, (-20, 20), (-12, 30), (2, 2.6), rnd, col, avoid, 2.5)
-    scatter('grove', ['foliage_mushroom_blue_big', 'foliage_mushroom_red_small'], 60, (-18, 18), (-12, 28), (4, 7), rnd, col, avoid, 1.2)
-    scatter('grove', ['foliage_grasspatch_small_1', 'foliage_grasspatch_small_2'], 420, (-22, 22), (-16, 34), (4, 8), rnd, col)
+    scatter('grove', ['foliage_mushroom_blue_big', 'foliage_mushroom_red_small'], 60, (-18, 18), (-12, 28), (2, 4), rnd, col, avoid, 1.2)
+    scatter('grove', ['foliage_grasspatch_small_1', 'foliage_grasspatch_small_2'], 700, (-22, 22), (-16, 34), (1.6, 3.2), rnd, col, avoid, 0.8)
     # the dirt road
     bpy.ops.mesh.primitive_plane_add(size=1, location=(0, 0, 0.03))
     road = bpy.context.object; road.name = 'road'; road.scale = (2.8, 220, 1)

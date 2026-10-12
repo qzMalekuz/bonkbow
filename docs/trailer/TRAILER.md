@@ -1,74 +1,106 @@
 # Stickchers launch trailer
 
-> The 60-second heroic cut is scripted in [SCRIPT.md](SCRIPT.md) (six entrances,
-> dodge-and-answer duels, group volley). This file documents the 41-second
-> sprite build that exists today.
+A 60-second, 1920×1080, fully 3D launch film: six archers, six arenas, nobody
+loses. The creative script is [SCRIPT.md](SCRIPT.md). This file documents how
+the film is built.
 
-A 41-second, 9:16 character short: six archers trying to outplay each other in a
-moonlit ruin. Rendered entirely in code from `archer-boys.pdf` and the game's own
-assets. No video generator, stock footage or third-party music is involved.
+Everything is rendered in code with Blender (Eevee) from the game's own 3D
+heroes and arenas. No video generator, stock footage or third-party music.
 
 | Piece | Where |
 |---|---|
-| Finished trailer, 1080x1920, 30 fps, H.264 + AAC | `out/stickchers-trailer.mp4` |
-| One-command rebuild, about four minutes | `tools/build.sh` |
-| The eleven shots: staging, timing, camera | `tools/shots.py` |
-| Renderer: arena, lighting, characters, effects, grade | `tools/engine.py` |
-| Original score, synthesised with numpy | `tools/music.py` |
-| Sound-effect cue sheet and final mix | `tools/mix.py` |
-| Pose sprites cut from the PDF, 10 per hero | `refs/<hero>_<pose>.png` |
+| Finished film (H.264 + AAC, −14 LUFS) | `out/stickchers-launch-60.mp4` |
+| One-command rebuild | `tools/build.sh` |
+| Shots: staging, timing, camera, sound cues | `rig/shots/sNN.py` |
+| Heroes, bow, arrows, prop kits from the game's assets | `rig/game_assets.py`, `rig/props.py` |
+| Posing and the action library (IK, sheet poses) | `rig/actions.py` |
+| Arenas (palettes from `themes.ts`, kits from `mapProps.ts`) | `rig/arenas.py` |
+| Sky, light, fog, particles, grade | `rig/scene.py` |
+| Camera moves: dolly, orbit, rack focus, arrow-cam, shake | `rig/camera.py` |
+| Deterministic arrow flights | `rig/arrows.py` |
+| Score + sound effects | `tools/audio60.py` (instruments from `tools/music.py`) |
+| Cards, lower thirds, gameplay flash, final encode, cut-downs | `tools/assemble.py` |
 
-`build/` and `out/` are gitignored. Preview single frames while editing with
-`python3 tools/render.py stills 8.1 15.5 38.6`, which writes `build/sheet.png`.
+`build/` and `out/` are gitignored.
 
-## Cast
+## Rebuild
 
-Names are the in-game hero names from `src/game/faces.ts`. All share one build:
-big chibi head, matte black suit, round black mitten hands, wooden recurve bow.
+Needs Blender 5.x (`brew install --cask blender`), ffmpeg, and Python 3 with
+pillow, numpy and scipy.
 
-| Hero | PDF page | Identity locks | Role in the trailer |
-|---|---|---|---|
-| **The Smile** | 1 | Black textured quiff with a fade, full short black beard, wide grin | The instigator. Peeks, grins, gets nearly shot. |
-| **Shades** | 2 | Bald, black sunglasses, grey beard, thin stickman limbs, white-fletched arrows, no quiver | The cold professional. Opens the film and takes the hero shot. |
-| **Curls** | 3 | Big golden-brown curls, thin moustache | The suspicious one. Ducks, looks back, loses the gameplay duel. |
-| **Mobile** | 4 | Short swept brown hair, clean-shaven, big smile, collared jacket | Cheerfully reckless. Fires at Curls and later the wrong way. |
-| **The Beard** | 5 | Bald, heavy brows, big black beard, crossed chest straps, scowl | The grump. Slow turn, long stare, revenge. |
-| **The Fade** | 6 | Short dark hair, stubble, large round eyes, zip jacket | The wide-eyed one. Reacts to everything. |
+```bash
+tools/build.sh                 # everything: render all shots, sound, three films (about 2 h on an M4)
+rig/render_all.sh              # only the 3D render, resumable (finished frames are kept)
+python3 tools/audio60.py       # only the soundtrack
+python3 tools/assemble.py      # only the 60 s film from what is rendered
+python3 tools/assemble.py --cut 30
+python3 tools/assemble.py --cut 15
+```
 
-Characters appear only as the sheet art: body poses from the turnaround and
-action rows, and the expression heads from `assets/faces/` for close-ups.
-Nothing is redrawn, so identity cannot drift. The trade-off is that motion is
-pose-to-pose with squash, stretch, bob and lean, not full limb animation.
+Working on one shot:
+
+```bash
+blender -b -P rig/render.py -- --shot 13 --sheet --q review    # contact sheet, a frame every 0.5 s
+blender -b -P rig/render.py -- --shot 13 --frame 45 --q review # one frame -> build/stills/
+blender -b -P rig/render.py -- --shot 13 --save                # build/blend/s13.blend to open in Blender
+python3 tools/assemble.py --preview                            # film with whatever is rendered so far
+```
+
+`--q draft` is half-res with no blur, `review` half-res with blur and fog,
+`final` 1080p.
+
+## Where the characters come from
+
+The characters follow `archer-boys.pdf`, not the game's meshes.
+
+- **Heads** are the sheet's own renders. `rig/assets/heads/` holds every
+  turnaround view and facial expression of each hero, cut out of the PDF
+  (4x upscaled, 512 px from hair top to chin). A head is a camera-facing card;
+  after a shot is built, `bake_heads` (`rig/game_assets.py`) picks, per frame,
+  the sheet view that matches the angle the head is seen from, and the front
+  view's expression. A side the sheet did not draw uses its mirror image.
+- **Bodies** are the game's skinned chibi suits (`rig/assets/heroes/*_body.json`)
+  squashed to the sheet's proportions (`BODY_SQUASH`): the head is about half the
+  character's height. The bow rides the hand on an unscaled mount.
+
+An earlier build textured the game's 3D head meshes instead; they distort off
+their front and side views and were dropped.
 
 ## Shots
 
-| # | Time | Shot | What happens |
-|---|---|---|---|
-| 1 | 0.0–3.5 | Quiet before the chaos | Tilt down from the blood moon to Shades alone. He raises his bow. The Smile peeks out from a pillar. |
-| 2 | 3.5–7.0 | The challenge | Letterboxed stand-off. Split-screen eye close-ups. The Smile breaks into a goofy grin. |
-| 3 | 7.0–10.0 | First arrow | Close-up of the bow at full draw, release, the arrow skims The Smile's hair, shock face. Card: ONE ARENA. |
-| 4 | 10.0–14.0 | Chaos begins | Four one-second cuts joined by whip pans: sprint, crouch shot, chase, jump shot. |
-| 5 | 14.0–18.5 | Character comedy | Mobile shoots at Curls, Curls ducks, the arrow hits a post beside The Beard. Silence. Slow turn, glare, draw. Mobile's face. |
-| 6 | 18.5–23.5 | Archery montage | Six half-second hero shots, then one arrow in slow motion into a target. |
-| 7 | 23.5–27.5 | The six | Camera travels along all six, each doing one thing in character. Card: SIX ARCHERS. |
-| 8 | 27.5–31.5 | Escalation | Crossfire, a jump over a crouching archer, Mobile falls back and fires into the sky, the arrow lands at The Fade's feet. Card: ZERO CHILL. |
-| 9 | 31.5–34.5 | Hero moment | Slow-motion Shades, glint on the glasses, release, arrow into the lens, cut to black. |
-| 10 | 34.5–37.5 | Game reveal | Gameplay-style duel with aim arc, drag control, health bars and a headshot. |
-| 11 | 37.5–41.0 | Title | Group shot. Shades fires off-screen, everyone jumps. STICKCHERS, AIM. SHOOT. SURVIVE., COMING SOON. |
+Timing lives in each shot file (`START, END`), with the hero and lower-third
+window (`HERO`, `LOWER`) and sound cues (`CUES`). `tools/assemble.py` and
+`tools/audio60.py` read them from there.
 
-## Sound
-
-The score is original: 120 BPM in D minor with a drone and plucked strings for
-the stand-off, a chromatic bass groove with claps and hats for the chaos, and
-a harder four-on-the-floor variant for the montage and title. It stops dead at
-15.5 s for the stare, drops to a filtered pulse under the slow-motion arrow, and
-falls to a heartbeat for the hero shot. Sound effects are the game's own CC0
-files from `assets/audio/sfx/`. The mix is normalised to about -13 LUFS.
+| Time | Shot | File |
+|---|---|---|
+| 0:00–0:07 | Arrowhead, bowstring, blood-moon arena, six bows taken, `SIX ARCHERS. ONE ARENA.` | `s01`–`s04`, cards |
+| 0:07–0:31 | Entrances: Akshay (meadow), Beeman (moonlit woods), Chase (elder forest), M-it (rainy town), Mert (colosseum), Tolly (snow village) | `s06`–`s11` |
+| 0:31–0:33 | `AIM.` | card |
+| 0:33–0:40.5 | Arrow-cam duel: Beeman fires, Chase pivots behind the fir, answers; Beeman leans out of the way | `s13`–`s15` |
+| 0:40.5–0:44.5 | M-it's rooftop run and airborne counter | `s16`, `s17` |
+| 0:44.5–0:47 | Mert walks through arrows and catches the last | `s18` |
+| 0:47–0:51 | Tolly's snow dodge; Akshay's windmill ricochet | `s19`, `s20` |
+| 0:51–0:52.5 | Gameplay flash | `rig/assets/gameplay/` |
+| 0:52.5–0:58 | Walk-out and the frozen volley | `s22`, `s23` |
+| 0:58–1:00 | Logo and arrow sting | `s24` |
 
 ## Before publishing
 
-- Shot 10 is a stylised recreation, not a screen recording. Swap in real capture
-  from the Android build if the trailer must show the actual interface.
-- The six heroes are likenesses of real people. Get each person's consent first.
-- The end card says COMING SOON and shows no date. Change it in `S11` in
-  `tools/shots.py` at launch.
+- **Gameplay flash.** `rig/assets/gameplay/` is the game's own duel code run in
+  a browser harness (from the earlier trailer build), trimmed to aim and
+  release so no hit is shown. It predates the current hero heads. Replace it
+  with a device capture: 45 frames, `f_0014.jpg`–`f_0058.jpg`.
+- **Likenesses.** All six heroes are real people. Get each person's written OK.
+- **Credit line.** The logo card has no hackathon or Solana Mobile marks; add
+  them in `s24.py` only after confirming the logo-use rules.
+- **Cut-downs.** The 30 s and 15 s films reuse the master's picture and slice
+  its soundtrack at the cuts. They are on the beat but not re-scored.
+- Cards are drawn with Pillow in `assemble.py` rather than HTML + Chromium as
+  the script proposed: same result, one less dependency.
+
+## The earlier 41-second sprite cut
+
+`tools/shots.py`, `engine.py`, `render.py`, `cut.py`, `mix.py` and `refs/` build
+the first trailer (9:16, 2D sprites cut from the character sheets). It is kept
+for reference; only `music.py`'s instruments are reused by the new film.

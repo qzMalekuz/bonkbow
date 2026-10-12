@@ -88,163 +88,216 @@ def load_image(path):
     return im
 
 
-def head_material(hero, baked, expressions):
-    """Sheet art chosen by camera azimuth, exactly like HeroHead.ts: the front (one texture per
-    expression, blended by the object's `expr` weights) and the right/back/left paintings."""
-    name = 'head_%s' % hero
+# ---- heads: the character sheet's own renders ---------------------------------------------------
+# Every head in the film is a cut-out of archer-boys.pdf (assets/heads/, 512 px from hair top to
+# chin): the seven turnaround views and the front-view expressions. A head is a camera-facing
+# card that shows whichever sheet view matches the angle it is seen from; `bake_heads` picks the
+# view (and expression) per frame after a shot is built.
+HEAD_DIR = os.path.join(RIG, 'assets', 'heads')
+HEAD_H = 1.05            # hair top to chin, metres
+BODY_SQUASH = 0.64       # the game's tall stick body, brought to the sheet's chibi proportions
+NECK_DROP = 0.03         # how far the sheet's painted collar sinks into the suit's collar
+# what the shots call an expression -> the sheet's name for it, best first
+EXPR = {'smile': ['e_grin', 'e_smile', 'e_neutral'], 'neutral': ['e_neutral', 'e_smile', 'e_grin'], 'angry': ['e_angry', 'e_scowl'],
+        'stern': ['e_scowl', 'e_angry'], 'wink': ['e_wink'], 'shock': ['e_shock']}
+REST_EXPR = {'akshay': 'smile', 'mit': 'smile', 'tolly': 'neutral', 'chase': 'neutral', 'mert': 'angry'}
+_heads_meta = None
+REG = []                 # heroes built in this scene: dicts with root, sprites, expression keys
+
+
+def heads_meta():
+    global _heads_meta
+    if _heads_meta is None:
+        _heads_meta = json.load(open(os.path.join(HEAD_DIR, 'heads.json')))
+    return _heads_meta
+
+
+def sprite_material(hero, key):
+    name = 'head_%s_%s' % (hero, key)
     m = bpy.data.materials.get(name)
     if m:
         return m
     m = bpy.data.materials.new(name)
     m.use_nodes = True
     nt = m.node_tree
-    nodes, links = nt.nodes, nt.links
-    nodes.clear()
-    out = nodes.new('ShaderNodeOutputMaterial')
-    # Camera position in object space (driven), azimuth round the head's up axis.
-    cam = nodes.new('ShaderNodeCombineXYZ')
-    cam.name = 'CamPos'
-    xf = nodes.new('ShaderNodeVectorTransform')
-    xf.vector_type, xf.convert_from, xf.convert_to = 'POINT', 'WORLD', 'OBJECT'
-    links.new(cam.outputs[0], xf.inputs[0])
-    sep = nodes.new('ShaderNodeSeparateXYZ')
-    links.new(xf.outputs[0], sep.inputs[0])
-    # Head object space: Blender X = -right(head z), Y = -forward(head x), Z = up.
-    # Head azimuth az = atan2(z_head, x_head) = atan2(-X, -Y).
-    negx = nodes.new('ShaderNodeMath'); negx.operation = 'MULTIPLY'; negx.inputs[1].default_value = -1
-    negy = nodes.new('ShaderNodeMath'); negy.operation = 'MULTIPLY'; negy.inputs[1].default_value = -1
-    links.new(sep.outputs[0], negx.inputs[0]); links.new(sep.outputs[1], negy.inputs[0])
-    az = nodes.new('ShaderNodeMath'); az.operation = 'ARCTAN2'
-    links.new(negx.outputs[0], az.inputs[0]); links.new(negy.outputs[0], az.inputs[1])
-    uvn = nodes.new('ShaderNodeUVMap'); uvn.uv_map = 'UVMap'
-    views = []  # (azimuth, colour socket)
-    tex_dir = HERO_DIR
-    # front = expressions mixed by object props expr_<name>
-    front_imgs = []
-    for e in expressions:
-        p = os.path.join(tex_dir, '%s_%s.jpg' % (hero, e))
-        if os.path.exists(p):
-            t = nodes.new('ShaderNodeTexImage'); t.image = load_image(p); t.extension = 'REPEAT'; t.name = 'expr_' + e
-            links.new(uvn.outputs[0], t.inputs[0])
-            front_imgs.append((e, t))
-    acc = None
-    wsum = None
-    for e, t in front_imgs:
-        w = nodes.new('ShaderNodeValue'); w.name = 'w_' + e; w.label = 'w_' + e
-        w.outputs[0].default_value = 1.0 if e == REST_FACE.get(hero, 'neutral') else 0.0
-        mul = nodes.new('ShaderNodeVectorMath'); mul.operation = 'SCALE'
-        links.new(t.outputs[0], mul.inputs[0]); links.new(w.outputs[0], mul.inputs['Scale'])
-        if acc is None:
-            acc, wsum = mul, w
-        else:
-            add = nodes.new('ShaderNodeVectorMath'); add.operation = 'ADD'
-            links.new(acc.outputs[0], add.inputs[0]); links.new(mul.outputs[0], add.inputs[1]); acc = add
-            ws = nodes.new('ShaderNodeMath'); ws.operation = 'ADD'
-            links.new(wsum.outputs[0], ws.inputs[0]); links.new(w.outputs[0], ws.inputs[1]); wsum = ws
-    front = nodes.new('ShaderNodeVectorMath'); front.operation = 'DIVIDE'
-    wv = nodes.new('ShaderNodeCombineXYZ')
-    for i in range(3):
-        links.new(wsum.outputs[0], wv.inputs[i])
-    links.new(acc.outputs[0], front.inputs[0]); links.new(wv.outputs[0], front.inputs[1])
-    views.append((baked['views']['front'], front.outputs[0]))
-    for v in VIEW_FILES:
-        p = os.path.join(tex_dir, '%s_v_%s.jpg' % (hero, v))
-        if os.path.exists(p) and v in baked['views']:
-            t = nodes.new('ShaderNodeTexImage'); t.image = load_image(p); t.extension = 'REPEAT'
-            links.new(uvn.outputs[0], t.inputs[0])
-            views.append((baked['views'][v], t.outputs[0]))
-    views.sort(key=lambda x: x[0])
-    # Weight each view: 1 inside its sector, crossfading over 10 degrees at the 45 degree boundaries.
-    n = len(views)
-    TAU = math.pi * 2
-    def weight_node(i):
-        a0 = views[i][0]
-        a1 = views[(i + 1) % n][0]
-        am = views[(i - 1) % n][0]
-        span_next = (a1 - a0) % TAU or TAU
-        span_prev = (a0 - am) % TAU or TAU
-        # offset into this view's sector measured from the previous boundary
-        d = nodes.new('ShaderNodeMath'); d.operation = 'SUBTRACT'; d.inputs[1].default_value = a0
-        links.new(az.outputs[0], d.inputs[0])
-        wrap = nodes.new('ShaderNodeMath'); wrap.operation = 'WRAP'; wrap.inputs[1].default_value = -math.pi; wrap.inputs[2].default_value = math.pi
-        links.new(d.outputs[0], wrap.inputs[0])
-        # rising edge at -span_prev/2 (fade 10deg), falling edge at +span_next/2
-        fade = math.radians(10)
-        up = nodes.new('ShaderNodeMapRange'); up.clamp = True
-        up.inputs['From Min'].default_value = -span_prev / 2 - fade / 2; up.inputs['From Max'].default_value = -span_prev / 2 + fade / 2
-        links.new(wrap.outputs[0], up.inputs[0])
-        dn = nodes.new('ShaderNodeMapRange'); dn.clamp = True
-        dn.inputs['From Min'].default_value = span_next / 2 + fade / 2; dn.inputs['From Max'].default_value = span_next / 2 - fade / 2
-        links.new(wrap.outputs[0], dn.inputs[0])
-        w = nodes.new('ShaderNodeMath'); w.operation = 'MULTIPLY'
-        links.new(up.outputs[0], w.inputs[0]); links.new(dn.outputs[0], w.inputs[1])
-        s = nodes.new('ShaderNodeMath'); s.operation = 'MULTIPLY'  # smoothstep-ish
-        links.new(w.outputs[0], s.inputs[0]); links.new(w.outputs[0], s.inputs[1])
-        return w
-    acc = None
-    for i, (a, sock) in enumerate(views):
-        w = weight_node(i)
-        mul = nodes.new('ShaderNodeVectorMath'); mul.operation = 'SCALE'
-        links.new(sock, mul.inputs[0]); links.new(w.outputs[0], mul.inputs['Scale'])
-        if acc is None:
-            acc = mul
-        else:
-            add = nodes.new('ShaderNodeVectorMath'); add.operation = 'ADD'
-            links.new(acc.outputs[0], add.inputs[0]); links.new(mul.outputs[0], add.inputs[1]); acc = add
-    colour = acc.outputs[0]
-    # The sheet art carries its own studio shading: show it mostly as-is, let the scene add a key.
-    bsdf = nodes.new('ShaderNodeBsdfPrincipled')
-    bsdf.inputs['Roughness'].default_value = 0.55
-    if 'Specular IOR Level' in bsdf.inputs:
-        bsdf.inputs['Specular IOR Level'].default_value = 0.25
-    links.new(colour, bsdf.inputs['Base Color'])
-    links.new(colour, bsdf.inputs['Emission Color'])
-    bsdf.inputs['Emission Strength'].default_value = 0.42
-    links.new(bsdf.outputs[0], out.inputs[0])
+    nt.nodes.clear()
+    out = nt.nodes.new('ShaderNodeOutputMaterial')
+    tex = nt.nodes.new('ShaderNodeTexImage')
+    tex.image = load_image(os.path.join(HEAD_DIR, '%s_%s.png' % (hero, key)))
+    tex.extension = 'CLIP'
+    tint = nt.nodes.new('ShaderNodeMix'); tint.data_type = 'RGBA'; tint.blend_type = 'MULTIPLY'; tint.name = 'Tint'
+    tint.inputs['Factor'].default_value = 1.0
+    tint.inputs['B'].default_value = (1, 1, 1, 1)
+    nt.links.new(tex.outputs['Color'], tint.inputs['A'])
+    em = nt.nodes.new('ShaderNodeEmission'); em.name = 'Glow'
+    em.inputs['Strength'].default_value = 1.0
+    nt.links.new(tint.outputs['Result'], em.inputs['Color'])
+    tr = nt.nodes.new('ShaderNodeBsdfTransparent')
+    mix = nt.nodes.new('ShaderNodeMixShader')
+    # crisp edge: alpha pushed through a steep ramp
+    ramp = nt.nodes.new('ShaderNodeMapRange'); ramp.clamp = True
+    ramp.inputs['From Min'].default_value = 0.35; ramp.inputs['From Max'].default_value = 0.65
+    nt.links.new(tex.outputs['Alpha'], ramp.inputs[0])
+    nt.links.new(ramp.outputs[0], mix.inputs[0])
+    nt.links.new(tr.outputs[0], mix.inputs[1]); nt.links.new(em.outputs[0], mix.inputs[2])
+    nt.links.new(mix.outputs[0], out.inputs['Surface'])
+    m.use_backface_culling = False
+    if hasattr(m, 'surface_render_method'):
+        m.surface_render_method = 'DITHERED'
     return m
 
 
-def set_expression(head_obj, name, t=None, fade=0.18):
-    """Crossfade the hero's front to expression `name` at shot time t (None = set now)."""
-    from common import frame
-    m = head_obj.active_material
-    nt = m.node_tree
-    ws = [n for n in nt.nodes if n.name.startswith('w_')]
-    if 'w_' + name not in [n.name for n in ws]:
-        name = 'neutral' if 'w_neutral' in [n.name for n in ws] else ws[0].name[2:]
-    for n in ws:
-        want = 1.0 if n.name == 'w_' + name else 0.0
-        if t is None:
-            n.outputs[0].default_value = want
-        else:
-            cur = n.outputs[0].default_value
-            n.outputs[0].default_value = cur
-            n.outputs[0].keyframe_insert('default_value', frame=frame(t) - 1)
-            n.outputs[0].default_value = want
-            n.outputs[0].keyframe_insert('default_value', frame=frame(t + fade))
+def build_head(hero, name, arm, col):
+    """The head root (an empty riding the Head bone, facing the camera) and one card per sheet view."""
+    meta = heads_meta()[hero]
+    s = HEAD_H / 512.0
+    anchor = bpy.data.objects.new(name + '_neck', None); col.objects.link(anchor)
+    anchor.parent = arm; anchor.parent_type = 'BONE'; anchor.parent_bone = 'Head'
+    anchor.location = (0, -arm.data.bones['Head'].length, 0)
+    root = bpy.data.objects.new(name + '_head', None); col.objects.link(root)
+    root.empty_display_size = 0.2
+    cl = root.constraints.new('COPY_LOCATION'); cl.target = anchor
+    sprites = {}
+    for key, m in meta.items():
+        w, h, ax, ay = m['w'], m['h'], m['ax'], m['ay']
+        x0, x1 = -ax * s, (w - ax) * s
+        z0, z1 = -(h - ay) * s - NECK_DROP, ay * s - NECK_DROP
+        me = bpy.data.meshes.new('%s_%s' % (name, key))
+        me.from_pydata([(x0, 0, z0), (x1, 0, z0), (x1, 0, z1), (x0, 0, z1)], [], [(0, 1, 2, 3)])
+        uv = me.uv_layers.new(name='UVMap')
+        for li, co in zip(range(4), ((0, 0), (1, 0), (1, 1), (0, 1))):
+            uv.data[li].uv = co
+        me.materials.append(sprite_material(hero, key))
+        ob = bpy.data.objects.new(me.name, me); col.objects.link(ob)
+        ob.parent = root
+        ob.visible_shadow = False
+        ob.scale = (0, 0, 0)
+        sprites[key] = ob
+    # an unseen ball so the head still casts a shadow
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=HEAD_H * 0.42, segments=16, ring_count=8)
+    ball = bpy.context.object; ball.name = name + '_shadow'
+    for c in list(ball.users_collection):
+        c.objects.unlink(ball)
+    col.objects.link(ball)
+    ball.parent = root; ball.location = (0, 0, HEAD_H * 0.5)
+    ball.visible_camera = False
+    if hasattr(ball, 'visible_glossy'):
+        ball.visible_glossy = False; ball.visible_diffuse = False; ball.visible_volume_scatter = False
+    # which sheet view to show for each direction the face points on screen (degrees, + = screen right)
+    views = []
+    for key, m in meta.items():
+        if key.startswith('e_') or key in ('idle', 'walk', 'run'):
+            continue
+        views.append((float(m['yaw']), key, False))
+    have = {round(v[0]) for v in views}
+    for yaw, key, _ in list(views):
+        if round(-yaw) not in have and abs(yaw) not in (0, 180):
+            views.append((-yaw, key, True))      # the missing side: the same drawing, mirrored
+    reg = dict(hero=hero, root=root, anchor=anchor, arm=arm, sprites=sprites, views=views, expr=[(-1.0, REST_EXPR.get(hero, 'neutral'))])
+    REG.append(reg)
+    root['hero'] = hero
+    return root
+
+
+def set_expression(head_root, name, t=None, fade=0.0):
+    """The front-view expression from time t on (None = from the start)."""
+    for r in REG:
+        if r['root'] == head_root:
+            r['expr'].append((-0.5 if t is None else float(t), name))
 
 
 def bind_camera(cam):
-    """Point every head shader's CamPos node at camera object `cam` (world location drivers).
-    Call once per shot, after the camera exists."""
-    for mat in bpy.data.materials:
-        if not mat.name.startswith('head_') or not mat.node_tree:
-            continue
-        n = mat.node_tree.nodes.get('CamPos')
-        if not n:
-            continue
-        for i, axis in enumerate('XYZ'):
-            try:
-                n.inputs[i].driver_remove('default_value')
-            except Exception:
-                pass
-            fc = n.inputs[i].driver_add('default_value')
-            d = fc.driver
-            d.type = 'AVERAGE'
-            v = d.variables.new(); v.name = 'c'; v.type = 'TRANSFORMS'
-            v.targets[0].id = cam
-            v.targets[0].transform_type = 'LOC_' + axis
-            v.targets[0].transform_space = 'WORLD_SPACE'
+    """Turn every head card to face camera `cam`."""
+    for r in REG:
+        root = r['root']
+        tr = root.constraints.get('face') or root.constraints.new('TRACK_TO')
+        tr.name = 'face'
+        tr.target = cam
+        tr.track_axis = 'TRACK_NEGATIVE_Y'
+        tr.up_axis = 'UP_Z'
+
+
+def _expr_key(r, t):
+    name = sorted([e for e in r['expr'] if e[0] <= t + 1e-6], key=lambda e: e[0])[-1][1]
+    for k in EXPR.get(name, []) + ['front']:
+        if k in r['sprites']:
+            return k
+    return 'front'
+
+
+def bake_heads(frames=None):
+    """Per frame, show the sheet view that matches the angle each head is seen from. A view is
+    held until the camera is clearly past the boundary to the next, so heads do not flicker."""
+    from common import FPS
+    sc = bpy.context.scene
+    cam = sc.camera
+    bind_camera(cam)
+    frames = list(frames) if frames is not None else list(range(sc.frame_start, sc.frame_end + 1))
+    cont = len(frames) > 1 and frames == list(range(frames[0], frames[-1] + 1))
+    state = {id(r): None for r in REG}
+    shown = {id(r): [] for r in REG}
+    for f in frames:
+        sc.frame_set(f)
+        cpos = cam.matrix_world.translation
+        for r in REG:
+            arm = r['arm']
+            mw = arm.matrix_world @ arm.pose.bones['Head'].matrix
+            fwd = mw.to_3x3() @ Vector((0, 0, 1)); fwd.z = 0
+            if fwd.length < 1e-6:
+                fwd = Vector((0, -1, 0))
+            fwd.normalize()
+            left = Vector((-fwd.y, fwd.x, 0))
+            v = cpos - r['root'].matrix_world.translation; v.z = 0
+            az = math.degrees(math.atan2(v.dot(left), v.dot(fwd)))    # camera bearing, + = toward his left
+            face = -az                                                  # where the face points on screen
+            def dist(y):
+                return abs((y - face + 180) % 360 - 180)
+            best = min(r['views'], key=lambda vw: dist(vw[0]))
+            cur = state[id(r)]
+            if cont and cur is not None and dist(cur[0]) < dist(best[0]) + 12:
+                best = cur
+            state[id(r)] = best
+            key, mirror = best[1], best[2]
+            if key == 'front':
+                key = _expr_key(r, (f - 1) / FPS)
+            shown[id(r)].append((f, key, mirror))
+    for r in REG:
+        prev = {}
+        for f, key, mirror in shown[id(r)]:
+            for k, ob in r['sprites'].items():
+                want = ((-1.0 if mirror else 1.0), 1.0, 1.0) if k == key else (0.0, 0.0, 0.0)
+                if prev.get(k) != want:
+                    ob.scale = want
+                    ob.keyframe_insert('scale', frame=f)
+                    prev[k] = want
+        for ob in r['sprites'].values():
+            if ob.animation_data and ob.animation_data.action:
+                from common import fcurves
+                for fc in fcurves(ob.animation_data.action):
+                    for kp in fc.keyframe_points:
+                        kp.interpolation = 'CONSTANT'
+
+
+def head_glow(value, color=None, hero=None):
+    """Brightness of the sheet art (the old scale: 0.42 = full daylight, 0.2 = night) and an
+    optional tint so faces sit in the scene's light."""
+    strength = 0.52 + value * 1.15
+    for m in bpy.data.materials:
+        if m.name.startswith('head_') and m.node_tree and 'Glow' in m.node_tree.nodes:
+            if hero and not m.name.startswith('head_%s_' % hero):
+                continue
+            m.node_tree.nodes['Glow'].inputs['Strength'].default_value = strength
+            if color:
+                m.node_tree.nodes['Tint'].inputs['B'].default_value = hexc(color)
+
+
+def key_head_glow(hero, t, value):
+    from common import frame
+    for m in bpy.data.materials:
+        if m.name.startswith('head_%s_' % hero) and m.node_tree and 'Glow' in m.node_tree.nodes:
+            sk = m.node_tree.nodes['Glow'].inputs['Strength']
+            sk.default_value = 0.52 + value * 1.15
+            sk.keyframe_insert('default_value', frame=frame(t))
 
 
 # ---- hero ------------------------------------------------------------------------------------
@@ -271,7 +324,6 @@ def build_hero(hero, col=None, name=None):
     name = name or hero
     hdir = HERO_DIR
     body = json.load(open(os.path.join(hdir, '%s_body.json' % hero)))
-    baked = json.load(open(os.path.join(hdir, '%s.json' % hero)))
 
     # --- armature
     arm_data = bpy.data.armatures.new(name + '_rig')
@@ -346,27 +398,9 @@ def build_hero(hero, col=None, name=None):
             bsdf.inputs['Specular IOR Level'].default_value = 0.35
     suit.data.materials.append(smat)
 
-    # --- head: sheet mesh, parented to the Head bone
-    hpos, hcol, hfaces, huv = decode_mesh(baked['head'])
-    # head space (x fwd, y up, z right) -> model (−z, y, x) -> Blender (−hz, −hx, hy)
-    hb = [(-p[2], -p[0], p[1]) for p in hpos]
-    head = build_mesh(name + '_head', hb, hfaces, uv=huv, convert=False)
-    col.objects.link(head)
-    head.scale = (HEAD_R, HEAD_R, HEAD_R)
-    head.parent = arm
-    head.parent_type = 'BONE'
-    head.parent_bone = 'Head'
-    # Bone parenting puts the child at the bone's tail; move back to the head joint.
-    chin = baked['chin']
-    head_joint_y = HIP + BODY['torso'] + BODY['neck']
-    centre_y = HIP + BODY['torso'] + 0.06 - chin * HEAD_R  # Stickman3D: torso + COLLAR_TOP - chin * R (+ a little clear of the collar)
-    bone_len = 0.4
-    head.location = (0, -(bone_len) + (centre_y - head_joint_y), 0)
-    # bone space: Y along the bone (up). We need: offset along bone = centre_y - head_joint_y.
-    head.location = (0, (centre_y - head_joint_y) - bone_len, 0)
-    head.rotation_euler = (math.radians(-90), 0, 0)  # bone Y-up -> object Z-up
-    hmat = head_material(hero, baked, baked['expressions'])
-    head.data.materials.append(hmat)
+    # --- head: the sheet's own renders on a camera-facing card
+    head = build_head(hero, name, arm, col)
+    arm.scale = (1.0, 1.0, BODY_SQUASH)
 
     # --- quiver (all but Beeman) on the back
     from props import build_quiver, build_bow, build_spare_arrows
@@ -440,23 +474,20 @@ def prop_mesh(kit_id, key):
     mats = []
     for part in p['parts']:
         base = len(verts)
-        if 'c' in part:  # baked colours, triangle soup
-            pts = np.array(part['p'], dtype=np.float64).reshape(-1, 3)
-            cs = np.array(part['c'], dtype=np.float64).reshape(-1, 3)
-            cs = np.where(cs <= 0.04045, cs / 12.92, ((cs + 0.055) / 1.055) ** 2.4) if cs.max() <= 1.0 else cs / 255
-            for v in pts:
-                verts.append(three_to_blender(v))
-            vcols.extend(cs.tolist())
-            for i in range(0, len(pts), 3):
-                faces.append((base + i, base + i + 1, base + i + 2)); mat_ids.append(0); uvs.append(None)
+        pts = np.array(part['p'], dtype=np.float64).reshape(-1, 3) / 1000.0  # millimetres
+        for v in pts:
+            verts.append(three_to_blender(v))
+        if 'c' in part:  # baked: triangle soup, one sRGB hex colour per face
+            for f, hx in enumerate(part['c']):
+                rgb = np.array([(hx >> 16) & 255, (hx >> 8) & 255, hx & 255], dtype=np.float64) / 255.0
+                rgb = np.where(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055) ** 2.4)
+                vcols.extend([rgb.tolist()] * 3)
+                faces.append((base + f * 3, base + f * 3 + 1, base + f * 3 + 2)); mat_ids.append(0); uvs.append(None)
             if not mats:
                 mats.append(None)
         else:
-            pts = np.array(part['p'], dtype=np.float64).reshape(-1, 3)
-            uv = np.array(part['uv'], dtype=np.float64).reshape(-1, 2) if part.get('uv') else None
+            uv = np.array(part['uv'], dtype=np.float64).reshape(-1, 2) / 10000.0 if part.get('uv') else None
             idx = np.array(part['i'], dtype=np.int64).reshape(-1, 3)
-            for v in pts:
-                verts.append(three_to_blender(v))
             vcols.extend([[1, 1, 1]] * len(pts))
             mat = kit_material(kit_id, data['mats'], part['mat'])
             if mat not in mats:

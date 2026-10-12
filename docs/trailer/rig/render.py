@@ -44,6 +44,13 @@ def main():
     sc = bpy.context.scene
     sc.frame_end = max(1, int(round(dur * FPS)))
     print('built shot %d in %.1fs, %d frames' % (n, time.time() - t0, sc.frame_end))
+    import game_assets as ga
+    want = None
+    if 'frame' in a:
+        want = [int(x) for x in a['frame'].split(',')]
+    elif a.get('sheet'):
+        want = list(range(1, sc.frame_end + 1, FPS // 2)) + [sc.frame_end]
+    ga.bake_heads(want)
     if a.get('save'):
         os.makedirs(os.path.join(BUILD, 'blend'), exist_ok=True)
         bpy.ops.wm.save_as_mainfile(filepath=os.path.join(BUILD, 'blend', 's%02d.blend' % n))
