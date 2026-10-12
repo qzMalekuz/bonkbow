@@ -61,3 +61,11 @@ __pycache__/
 # Real-person hero likenesses (retired heroes): never commit
 docs/trailer/rig/assets/heroes/
 docs/trailer/rig/assets/heads/
+docs/trailer/rig/assets/head360/
+docs/trailer/rig/assets/fig360/
+
+# Trailer turnaround scratch frames (rig/turn360/*.py rebuild them)
+docs/trailer/rig/turn360/work/
+
+# Supabase CLI cache
+supabase/.temp/
