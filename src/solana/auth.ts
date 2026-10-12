@@ -19,7 +19,7 @@ import { useGameStore } from '@/game/store';
 //
 // Dashboard: Auth → Providers → enable "Web3 Wallet". Add APP_URI to
 // the allowed URLs (Supabase validates the SIWS domain/uri against them).
-const STATEMENT = 'Sign in to Stickchers. This does not cost gas or move funds.';
+const STATEMENT = 'Sign in to Bonk Bow. This does not cost gas or move funds.';
 
 export type WalletAuthState = {
   // A Supabase session that was created by a wallet signature — never the

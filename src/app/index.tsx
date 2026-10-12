@@ -84,8 +84,8 @@ export default function HomeScreen() {
         </View>
         <View style={styles.left}>
           <StaggerIn style={styles.content}>
-            <Text style={styles.wordmark}>STICKCHERS</Text>
-            <Text style={styles.title}>Stickman Archery</Text>
+            <Text style={styles.wordmark}>BONK BOW</Text>
+            <Text style={styles.title}>{'They have bows.\nThat’s about it.'}</Text>
             <View style={styles.levelRow}>
               <View style={styles.lvlBadge}>
                 <Text style={styles.lvlText}>{lvl.level}</Text>
@@ -197,7 +197,7 @@ const styles = StyleSheet.create({
   tipText: { fontFamily: FONT.semi, color: '#FFFFFF', fontSize: 12, textAlign: 'center' },
   content: { gap: 4 },
   wordmark: { fontFamily: FONT.semi, color: 'rgba(255,255,255,0.75)', fontSize: 12, letterSpacing: 4 },
-  title: { fontFamily: FONT.bold, color: '#FFFFFF', fontSize: 36, lineHeight: 40, ...shadow },
+  title: { fontFamily: FONT.bold, color: '#FFFFFF', fontSize: 28, lineHeight: 32, ...shadow },
   levelRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
   lvlBadge: {
     width: 30,

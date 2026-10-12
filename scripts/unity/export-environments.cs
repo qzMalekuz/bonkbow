@@ -15,7 +15,7 @@
 //
 // Run in a live Editor with the three packs imported (docs/ASSETS.md):
 //   unity command eval -- --code "$(cat scripts/unity/export-environments.cs)" --timeout 300000
-var outDir = System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile) + "/Developer/stickchers/assets/licensed/maps/";
+var outDir = System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile) + "/Developer/bonkbow/assets/licensed/maps/";
 System.IO.Directory.CreateDirectory(outDir);
 var ci = System.Globalization.CultureInfo.InvariantCulture;
 var log = new System.Text.StringBuilder();
