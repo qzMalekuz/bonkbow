@@ -1,0 +1,71 @@
+# EAS upload ignore list. When this file exists EAS reads it INSTEAD of
+# .gitignore, so it mirrors .gitignore except that assets/licensed/ (Unity
+# Asset Store models, kept out of the public repo) must ship in the APK.
+# Keep the two files in sync.
+
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# local env files
+.env*.local
+
+# typescript
+*.tsbuildinfo
+
+example
+
+# generated native folders
+/ios
+/android
+
+# dApp Store publishing secrets
+/dapp-store/*.json
+/dapp-store/*.keystore
+/dapp-store/*.jks
+
+# Unity Asset Store files: allowed in the APK, not in a public repo
+# assets/licensed/ IS uploaded: the APK needs the Unity models (see DEV_RULES).
+
+# Trailer build intermediates and rendered video (rebuild with docs/trailer/tools/build-animatic.sh)
+docs/trailer/build/
+docs/trailer/out/
+
+
+# Python bytecode
+__pycache__/
+
+# Not needed to build the app; keeps the upload small.
+docs/
+scripts/
+dapp-store/
+
+# Real-person hero likenesses (retired heroes)
+docs/trailer/rig/assets/heroes/
+docs/trailer/rig/assets/heads/

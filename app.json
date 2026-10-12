@@ -11,6 +11,7 @@
     "scheme": "bonkbow",
     "userInterfaceStyle": "automatic",
     "updates": {
+      "url": "https://u.expo.dev/5e3bdb4f-72ca-46be-ac0c-b38d579fcc6d",
       "fallbackToCacheTimeout": 0
     },
     "android": {
