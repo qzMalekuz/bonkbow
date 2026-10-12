@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy</title>
+<link rel="icon" href="../favicon.png">
+<style>
+:root{--bg:#0B0B0F;--fg:#F2F2F2;--muted:#A7A7B3;--accent:#F7A21B}
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){--bg:#FAF7F0;--fg:#16161A;--muted:#55555F;--accent:#B85C00}}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:680px;margin:0 auto;padding:40px 16px 64px}
+h1{font-size:28px;margin:0 0 4px}h2{font-size:18px;margin:28px 0 6px}
+p,li{color:var(--fg)}small,.muted{color:var(--muted)}a{color:var(--accent)}
+header{display:flex;align-items:center;gap:14px;margin-bottom:24px}header img{width:56px;height:56px;border-radius:14px}
+</style>
+</head>
+<body><main>
+<header><img src="../icon.png" alt=""><div><h1>Privacy Policy</h1><small class="muted">Bonk Bow</small></div></header>
+<p class="muted">Last updated: 13 October 2026</p>
+<h2>What stays on your phone</h2>
+<p>Bonk Bow has no accounts and no game server. Your name, level, coins, settings, best runs and the items you own are stored only on your device. Uninstalling the app or using Settings → Reset local data deletes them.</p>
+<h2>Your wallet</h2>
+<p>When you connect a wallet, the app learns its public address. It never sees your private keys or seed phrase: your wallet app signs every transaction. Payments (duel entry fees and shop items) are public Solana transactions to the Bonk Bow treasury, with a short memo naming what was paid for. Like everything on the blockchain, they are visible to anyone and cannot be deleted. The app reads your wallet's public transaction history from a Solana RPC provider to confirm payments and restore purchases.</p>
+<h2>Diagnostics</h2>
+<p>Release builds may send crash reports (Sentry) and anonymous usage events, such as "match started" (PostHog). These contain no name, wallet address or contact details.</p>
+<h2>Children</h2>
+<p>Bonk Bow is not directed at children under 13 and does not knowingly collect their data.</p>
+<h2>Contact</h2>
+<p>Questions: open an issue at <a href="https://github.com/qzMalekuz/bonkbow/issues">github.com/qzMalekuz/bonkbow</a>.</p>
+</main></body>
+</html>
