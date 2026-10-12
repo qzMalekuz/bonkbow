@@ -71,6 +71,8 @@ docs/trailer/rig/assets/heroes/
 docs/trailer/rig/assets/heads/
 docs/trailer/rig/assets/head360/
 docs/trailer/rig/assets/fig360/
+docs/trailer/refs/
+docs/trailer/rig/assets/gameplay/
 
 # Trailer turnaround scratch frames (rig/turn360/*.py rebuild them)
 docs/trailer/rig/turn360/work/
