@@ -61,7 +61,7 @@ export function randomLoadout(rnd: () => number = Math.random): Loadout {
   return { derp, hat, outfit, bow, arrow };
 }
 
-// `paid`: SOL/SKR purchases (server-verified). `coin`: bought with coins on
+// `paid`: SOL/SKR purchases (verified on-chain). `coin`: bought with coins on
 // this device. ownsProduct keeps the two apart per product.
 export const ownsPart = (l: Loadout, kind: ProductKind, paid: string[], coin: string[]) =>
   ownsProduct(productId(kind, l[kind as keyof Loadout]), paid, coin);

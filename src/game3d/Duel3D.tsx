@@ -205,9 +205,9 @@ function tensionColor(p: number) {
   return `rgb(${r},${g},${b})`;
 }
 
-// Frame-timing log (logcat "[perf]"). On for the current perf pass; set to
-// __DEV__ (or false) once the release build's numbers are confirmed.
-const PERF_LOG = true;
+// Frame-timing log (logcat "[perf]"). Dev builds only: release builds ship
+// without it (DEV_RULES 3D rule 8).
+const PERF_LOG = __DEV__;
 
 const SPAN = { min: -45, max: 120 };
 const TRAIL_N = 20;

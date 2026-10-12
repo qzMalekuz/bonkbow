@@ -8,16 +8,15 @@ import { cleanName, summarize, type MatchStats, type RewardSummary } from '@/gam
 
 export { levelOf, xpForLevel } from '@/game/progression';
 
-// Persistent, device-local game settings, best score, streak and cosmetics
-// cache. Product and map OWNERSHIP is server-authoritative (purchases table,
-// written only by the verify-purchase edge function); `ownedSkins` (every
-// purchased id: derp_*, hat_*, bow_* products and shop maps) here is a cache
-// refreshed on sign-in and when the shop opens, so the shop works offline
-// once loaded. Items bought with coins live in `coinItems` instead, on this
-// device only, and never feed `ownedSkins`. What the archer wears is
+// Persistent, device-local game state: settings, best score, streak, coins,
+// XP and cosmetics. There is no server. `ownedSkins` (every id bought for
+// SOL/SKR: derp_*, hat_*, bow_* products and shop maps) is filled only after
+// solana/payments.ts has read the payment back from the chain, and rebuilt
+// from the wallet's history on a new install. Items bought with coins live
+// in `coinItems` instead, on this device only, and never feed `ownedSkins`. What the archer wears is
 // `loadout` (derp, clothes, hat, bow, arrows).
 
-// A purchase whose on-chain transfer went out but whose server verification
+// A purchase whose on-chain transfer went out but whose confirmation
 // didn't complete (network drop). The shop retries it on open.
 export type PendingPurchase = { signature: string; skinId: string; currency: Currency };
 
@@ -37,9 +36,9 @@ type GameSettings = {
   lastBonusDay: string | null; // the day the daily coin bonus was last paid
   // What the player calls themselves ('' until they pick a name).
   playerName: string;
-  ownedSkins: string[]; // SOL/SKR purchases, server-verified
+  ownedSkins: string[]; // SOL/SKR purchases, verified on-chain
   coinItems: string[]; // product ids bought with coins
-  equippedMap: string; // maps.ts id: where my duels (and rooms I host) happen
+  equippedMap: string; // maps.ts id: where my duels happen
   preferredCurrency: Currency;
   pendingPurchase: PendingPurchase | null;
   // What the archer wears; every part is one I own (or a free one).
@@ -129,9 +128,8 @@ export const useGameStore = create<GameSettings>()(
       equip: (kind, item) => set((s) => ({ loadout: sanitizeLoadout({ ...s.loadout, [kind]: item }) })),
       setLoadout: (l) => set({ loadout: sanitizeLoadout(l) }),
       equipMap: (equippedMap) => set({ equippedMap }),
-      // Server-authoritative ownership replaces the cache; any worn part or
-      // map not in it (signed out, or a different wallet) falls back to a
-      // free one.
+      // Replaces the owned list; any worn part or map not in it falls back
+      // to a free one.
       setOwnedSkins: (ids) =>
         set((s) => {
           const ownedSkins = Array.from(new Set([DEFAULT_SKIN_ID, ...ids.map(canonicalSkinId)]));

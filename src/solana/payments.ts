@@ -4,6 +4,7 @@ import { LEGACY_MEMO_PROGRAM_ADDRESS_V3, getAddMemoInstruction } from '@solana-p
 import { getTransferSolInstruction } from '@solana-program/system';
 import {
   CLUSTER,
+  DUEL_FEE_ENABLED,
   DUEL_FEE_LAMPORTS,
   DUEL_MEMO,
   MEMO_PREFIX,
@@ -383,5 +384,22 @@ export async function payDuelFee(wallet: PaymentWallet | null): Promise<Purchase
   return result;
 }
 
-// The duel is starting: the entry is used up.
-export const spendDuelCredit = () => writeCredit(null);
+// The paid entry of the duel /match is about to open, by seed. In memory only:
+// /game starts a duel only for this seed, so a deep link or a stale route
+// can't skip the fee, and a killed app forfeits nothing (the credit above is
+// what survives a crash before the duel starts).
+let duelTicket: number | null = null;
+
+// The duel is starting: the entry is used up and becomes this seed's ticket.
+export const spendDuelCredit = (seed: number) => {
+  duelTicket = seed;
+  return writeCredit(null);
+};
+
+// May /game run the duel with this seed? Free only when there is no fee.
+export const hasDuelTicket = (seed: number) => !DUEL_FEE_ENABLED || duelTicket === seed;
+
+// The duel is over (or left): its ticket can't start another.
+export const endDuelTicket = (seed: number) => {
+  if (duelTicket === seed) duelTicket = null;
+};

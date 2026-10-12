@@ -31,13 +31,16 @@ restore all talk only to the wallet and the Solana RPC. What is left:
 
 - [x] **Backend.** None needed. Purchases and duel fees are read back from
       the chain by the app and stored on the device.
-- [ ] **Env vars.** Only `EXPO_PUBLIC_TREASURY_ADDRESS` is required (set in
-      EAS, all environments, and in `.env.local`; empty means free duels and
-      no shop). A mainnet build also needs `EXPO_PUBLIC_SOLANA_CLUSTER` +
+- [ ] **Env vars.** None are required: the treasury is built into
+      `src/solana/config.ts` (`EXPO_PUBLIC_TREASURY_ADDRESS` overrides it),
+      so every build charges the duel fee and sells the shop. A mainnet build also needs `EXPO_PUBLIC_SOLANA_CLUSTER` +
       `EXPO_PUBLIC_SOLANA_RPC_URL` (unset means devnet), and
       `EXPO_PUBLIC_SKR_MINT` only for SKR on devnet (blank on mainnet).
-- [x] **EAS project.** `@qzmalekuz/bonkbow`, linked in `app.json`; OTA
-      configured. Builds are started from this machine
+- [ ] **EAS project.** The project behind `extra.eas.projectId` is still
+      named `stickchers` on expo.dev while `app.json` says `bonkbow`, so every
+      `eas` command (build, update, env, workflow) fails with "Slug … does
+      not match". Rename it to `bonkbow` in the project's settings on
+      expo.dev, then check `bunx eas-cli env:list`. OTA is configured. Builds are started from this machine
       (`bunx eas-cli workflow:run build-android.yml` or `npm run build:apk`),
       never from a GitHub push.
 - [ ] **App site.** `site/` (landing page, `icon.png` for the wallet sheet,
@@ -45,10 +48,14 @@ restore all talk only to the wallet and the Solana RPC. What is left:
       publishes it to `https://qzmalekuz.github.io/bonkbow/`, which the app
       already points at. Enable Pages with source "GitHub Actions"; that needs
       the repo public (or a paid plan).
-- [ ] **Hero images in git history.** The real-person hero images under
-      `docs/trailer/rig/assets/heroes/` are removed and gitignored, but one
-      past commit still has them. Scrub them from the history before the repo
-      goes public.
+- [ ] **Hero images in git history.** Real-person likenesses are out of
+      the tree (`docs/trailer/refs/` and `docs/trailer/rig/assets/gameplay/`
+      were untracked and gitignored on 2026-10-13), but history still has
+      them: `assets/faces/`, `assets/heroes/`, `scripts/heroes/`,
+      `archer-boys.pdf`, `docs/trailer/rig/assets/heroes/`, `docs/trailer/refs/`,
+      `docs/trailer/rig/assets/gameplay/` (and two local stashes). Scrub all of
+      them (e.g. `git filter-repo --invert-paths --path …`) and force-push
+      before the repo goes public.
 - [ ] **GitHub.** `main` is pushed and current, but the repo is private.
       Make it public (after the scrub) or install the Radiants Align GitHub
       app on it before submitting. Judges only see commits pushed before the

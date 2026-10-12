@@ -47,17 +47,17 @@ export const SKR_MINT =
   process.env.EXPO_PUBLIC_SKR_MINT || (clusterName === 'mainnet-beta' ? SKR_MAINNET_MINT : '');
 
 // Wallet that receives every payment: shop items (SOL and SKR) and duel entry
-// fees. Public key only.
-export const TREASURY_ADDRESS = process.env.EXPO_PUBLIC_TREASURY_ADDRESS || '';
+// fees. Public key only. Built in so that no build, whatever its env, ever
+// runs as a free game; EXPO_PUBLIC_TREASURY_ADDRESS overrides it.
+export const DEFAULT_TREASURY_ADDRESS = 'D2hNpkGAJSJHEYw2Zs3DCH9hJbJNGvzotEx2KhnZNyR9';
+export const TREASURY_ADDRESS = process.env.EXPO_PUBLIC_TREASURY_ADDRESS || DEFAULT_TREASURY_ADDRESS;
 
 export const SHOP_ENABLED = TREASURY_ADDRESS.length > 0;
 export const SKR_ENABLED = SHOP_ENABLED && SKR_MINT.length > 0;
 
 // What a duel against the AI costs, paid in SOL to the treasury before the
-// match starts. PLACEHOLDER — set the real fee before mainnet.
+// match starts. Bonk Bow is not free to play: every duel pays this.
 export const DUEL_FEE_LAMPORTS = 10_000_000; // 0.01 SOL
-// Duels are free (no wallet needed) when there is no treasury to pay, so a
-// build without EXPO_PUBLIC_TREASURY_ADDRESS stays playable.
 export const DUEL_FEE_ENABLED = SHOP_ENABLED && DUEL_FEE_LAMPORTS > 0;
 
 // Every payment carries an SPL memo "bonkbow:<what>" so the treasury's history
