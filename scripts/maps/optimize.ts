@@ -19,7 +19,7 @@ const CAPS: Record<string, number> = {
   wall1: 500, wall3: 500, fence_1: 300, fence_2: 300, snowman: 400, sign1: 800, sign2: 800, well: 1200,
   snow1: 90, snow2: 90, snow3: 90, snow4: 90, snow5: 90,
 };
-const DIR = fileURLToPath(new URL('../../assets/licensed/maps/', import.meta.url));
+const DIR = fileURLToPath(new URL('../../assets/licensed/maps/', import.meta.url).href);
 
 type BakedPart = { p: number[]; c: number[] };
 type Prop = { min: number[]; max: number[]; parts: (BakedPart | { i: number[] })[] };
