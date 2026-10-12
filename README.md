@@ -1,11 +1,89 @@
-# Stickchers — Stickman Archery for the Solana dApp Store
+# Bonk Bow — the world's least coordinated archers
 
-Repo: https://github.com/qzMalekuz/stickchers
+Formerly *Stickchers*. Repo, package id (`com.bonkbow.app`), URL scheme (`bonkbow://`) and EAS project are all Bonk Bow now.
+
+Repo: https://github.com/qzMalekuz/bonkbow
+
+> **They have bows. That's about it.**
+
+## The idea
+
+Bonk Bow is a turn-based stickman archery duel where **the archers are
+idiots**. Two scrawled stickmen stand on facing cliffs and take turns trying to
+shoot each other. They hold the bow backwards, eat the arrows, fire straight up
+and get hit by their own shot a few seconds later, dodge directly into things,
+and celebrate before anything has landed. They are completely confident the
+whole time.
+
+The joke is the gap between the two halves of the game:
+
+- **The game underneath is a real one.** Drag back like a slingshot, read the
+  dotted arc, release. Fixed-step physics, hit zones, 100 HP, turns, an AI
+  opponent that adapts to how well you shoot, and online rooms where both
+  phones run the same simulation.
+- **The archers on top of it are useless.** Every draw, miss, hit and win is
+  performed by someone who has no idea how a bow, or a body, works.
+
+Winning should feel like an accident you get to take credit for.
+
+### What it should feel like
+
+- **Deadpan.** Nobody in the game knows they are funny. No winking at the
+  player, no joke captions explaining the joke.
+- **Dumb, not mean.** The humour is about fictional stickmen being bad at
+  archery. It is never about real people or real conditions.
+- **Hand-made.** Wobbly ink lines, lumpy heads, heavy-lidded eyes that wander
+  off on their own, a bit of drool, and a "bonk".
+- **Small sounds, big confidence.** A wonky band, slide whistles, a bonk, and a
+  stickman giving a thumbs-up from the floor.
+
+### The archers
+
+There is no fixed cast of heroes. Archers come from a **pool of derps**: the
+same stick body with a different scrawled head and one stupid habit each
+(`src/game/derps.ts`). Every archer does every bit now and then; his habit
+just comes up a lot more.
+
+| Archer | Head | Habit |
+|---|---|---|
+| Gary (free) | bean | Accuracy: no. Confidence: yes. Celebrates early. |
+| Tall Steve | pea, long neck | Neck: too much. Shoots straight up a lot. |
+| Doug | slab | Eats the arrows. |
+| Kevin | bean | Faces the wrong way. Committed to it. |
+| Some Guy | slab | The usual opponent. 847 wins. Visibly bored. |
+
+On top of the head go **hats** (top hat, party hat, propeller cap, traffic
+cone, paper crown, cooking pot, viking helmet, arrow through the head, fish,
+chef hat). They do not help. And there is the **Shovel Bow**, added because
+someone in the comments asked for it. None of it changes a shot: hitboxes,
+damage and physics are the same for every archer.
+
+### Launch video
+
+`docs/trailer/out/bonkbow-60s.mp4` (60 s), `bonkbow-20s.mp4` and
+`bonkbow-game848-30s.mp4`: drawn entirely in code in the game's scrawled style.
+Rebuild with `python3 docs/trailer/tools/derpy60.py` (about two minutes).
+
+## Where the build is today
+
+The app has been pivoted to Bonk Bow. What a match looks like now:
+
+| | The build |
+|---|---|
+| Archers | The derps above: one 3D stick body with a hand-scrawled paper head (ink outline, wandering eyes, heavy lids, drool) that always faces the camera and redraws itself a few times a second like the videos |
+| Behaviour | Deterministic comedy beats on top of a fair duel: wrong-way draws, the odd arrow eaten, shots that go straight up and come back down on the shooter (a harmless bonk), celebrating while the arrow is still flying, noticing a hit a moment late ("...ow."), a deadpan stare at the camera after a miss. Presentation only: the sim decides every outcome the same way as before |
+| HUD | Like the videos: a scrawled "YOUR TURN / HIS TURN" sign that ducks out of the way while anyone aims, "SUDDEN DEATH" when both archers are down to a third of their health, "-N" floating off the bar that was hit, "BONK" / "...ow." / "nailed it" over heads |
+| Shop | Derps, hats, the Shovel Bow and three maps, in SOL or SKR |
+| Maps | Unchanged: the 3D arenas (Classic, plus the three shop maps) |
+| Name | **Bonk Bow** everywhere: app, repo, `com.bonkbow.app`, `bonkbow://`, EAS and Sentry projects |
+| Unchanged | Duel rules, physics, hit zones, AI, multiplayer rooms, wallet sign-in, on-chain purchases, SKR |
+
+## What is in the repo
 
 Turn-based 3D stickman archery, landscape, built with Expo / React Native for
 the **CLOCK IN Solana Mobile hackathon**. Two modes — **vs AI** and
 **multiplayer rooms** with shareable 6-letter codes — plus an **in-game shop**
-of six hero characters and three maps paid in **SOL or SKR**. The wallet **is**
+of derps, hats, the Shovel Bow and three maps paid in **SOL or SKR**. The wallet **is**
 the account: Mobile Wallet Adapter (MWA) authorizes, Sign in with Solana
 creates the Supabase session, purchases are transfers signed in the wallet and
 verified on-chain before anything unlocks.
@@ -17,7 +95,7 @@ Sentry, EAS Build/Update.
 
 ## Hackathon facts (verified 2026-09-29)
 
-- Submissions close **Oct 8, 2026 23:59 PT** (2026-10-09 06:59 UTC). Winners Nov 10.
+- Submissions close **Oct 12, 2026** (extended from Oct 8, 23:59 PT). Winners Nov 10.
 - Required: functional **Android APK**, judge-accessible **GitHub repo** (commit
   history is reviewed), ~3-min on-device **demo video** (judges read the
   transcript), **pitch deck**.
@@ -65,18 +143,19 @@ src/app/
   match.tsx / game.tsx         VS screen, then the duel HUD; /game?mode=ai | ?mode=online&code=&role=&seed=
   result.tsx                   win / lose screen
   lobby.tsx                    create room (code + share) / join by code
-  shop.tsx                     heroes and maps, pay in SOL or SKR, SKR balance, restore, equip
-  style.tsx                    switch between the classic archer and owned heroes
+  shop.tsx                     derps, hats, the Shovel Bow and maps; pay in SOL or SKR, SKR balance, restore, equip
+  style.tsx                    pick your derp, hat and bow from what you own
   leaderboard.tsx              global best runs by wallet, your best + day streak
   settings.tsx                 haptics + audio toggles, sign out, legal, updates, delete account
 src/game/
   skins.ts / maps.ts           what the shop sells, with SOL + SKR prices (placeholders)
-  cosmetics.ts / faces.ts      loadouts and the six heroes
+  derps.ts / cosmetics.ts      the cast, hats and bows as data + drawing instructions; loadouts
   store.ts / haptics.ts / rng  zustand persisted settings, streak, accuracy, ownership; haptics; seeded RNG
 src/game3d/
   sim.ts / world.ts            the duel: fixed-step physics, turns, hit zones, adaptive AI, seeded layouts
   Duel3D.tsx / Arena.ts        the 3D scene and the arenas (themes.ts, mapProps.ts)
-  Stickman3D.ts / StickmanBody the archer rig and its skinned body; HeroHead / HeroMesh for the heroes
+  Stickman3D.ts / StickmanBody the archer rig and its skinned body
+  DerpHead.ts / ink.ts         the scrawled paper heads and hats, drawn as wobbly ink meshes
   Stage.tsx / SkinStage.tsx    3D sets for the menu, shop, style and result screens
 src/solana/
   config.ts                    cluster, RPC, app identity (wallet sheet), SKR mint + treasury
@@ -86,14 +165,13 @@ src/solana/
   WalletButton.tsx             sign in / sign out
 src/audio/                     preloaded SFX pools, per-screen music crossfade, ducking
 src/multiplayer/useRoom.ts     rooms table + Realtime channel (presence, shot/result/skin broadcasts)
-src/ui/                        HUD, emotes, loading screen, shared buttons
+src/ui/                        HUD (turn sign, bars, "-N", head words), emotes, derp thumbnails, loading screen, buttons
 supabase/
   schema.sql                   profiles, scores, leaderboard, purchases, rooms + join_room()
   functions/verify-purchase    checks the transfer on-chain, grants the item (service role)
   functions/delete-account     account deletion
-assets/heroes/                 hero heads and suits built by scripts/heroes/build.sh
 assets/audio/                  CC0 music + SFX (credits in CREDITS.md)
-scripts/                       hero build, map optimizer, Unity export scripts
+scripts/                       map optimizer, Unity export scripts
 docs/                          DEV_RULES, ASSETS (sources + licensing), HACKATHON, SUBMISSION, trailer
 .eas/workflows/                build the dApp Store APK on push to main
 .github/workflows/             PR preview QR (EAS Update) + automated PR review
@@ -106,7 +184,9 @@ previews the shot; release fires. Damage depends on the zone hit (head, body,
 legs); both archers have 100 HP. The duel is one plain simulation object on a
 fixed physics step (`src/game3d/sim.ts`), so both multiplayer phones agree; the
 3D scene only reads it, and discrete events drive haptics, HUD and the
-multiplayer channel.
+multiplayer channel. The comedy (self-bonks, early cheers, late "...ow.",
+arrow eating) is also emitted by the sim as events, so both phones see the
+same gag, and none of it changes who wins.
 
 **Audio** (Settings → Audio): menu, battle and shop music crossfade as you
 navigate and duck under the win/lose jingle. Bow creak and ratchet ticks
@@ -142,8 +222,8 @@ next time the shop opens. Ownership is cached in the zustand store and
 refreshed on sign-in and on shop open. Prices in `src/game/skins.ts` and the
 edge function are placeholders and must match.
 
-**SKR integration.** SKR is the shop's native currency: every hero and map
-has an SKR price (~20% under SOL), the shop remembers "pay in SKR", and shows a
+**SKR integration.** SKR is the shop's native currency: every derp, hat,
+bow and map has an SKR price (~20% under SOL), the shop remembers "pay in SKR", and shows a
 live balance read from the wallet's associated token account through the MWA
 provider's `@solana/kit` RPC client. Mainnet mint
 `SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3` is the default on mainnet-beta;
@@ -168,7 +248,7 @@ loses; a disconnect forfeits.
    can never update):
    ```bash
    mkdir -p dapp-store && keytool -genkey -v -keystore dapp-store/release.keystore \
-     -alias stickchers -keyalg RSA -keysize 2048 -validity 10000
+     -alias bonkbow -keyalg RSA -keysize 2048 -validity 10000
    ```
    Upload it to EAS (`eas credentials -p android`) so the `dapp-store` profile
    signs with it. `dapp-store/*.keystore` and `*.json` are gitignored.
@@ -191,7 +271,7 @@ https://docs.solanamobile.com/dapp-store/build-and-sign-an-apk
 |---|---|
 | Supabase | Create project → `EXPO_PUBLIC_SUPABASE_URL/KEY`. Run `supabase/schema.sql`. **Auth → Providers → enable Web3 Wallet**; add the app identity URL to allowed URLs. `supabase functions deploy verify-purchase delete-account`. `supabase secrets set SOLANA_RPC_URL=… TREASURY_ADDRESS=…`. |
 | Solana | `EXPO_PUBLIC_SOLANA_CLUSTER`, `EXPO_PUBLIC_SOLANA_RPC_URL` (dedicated RPC for mainnet), `EXPO_PUBLIC_TREASURY_ADDRESS`, `EXPO_PUBLIC_SKR_MINT` (devnet test mint; blank on mainnet). Edge function secrets: `SOLANA_RPC_URL`, `TREASURY_ADDRESS`, `SKR_MINT`. |
-| Sentry | `EXPO_PUBLIC_SENTRY_DSN`; `eas secret:create --name SENTRY_AUTH_TOKEN`; project in app.json (`stickchers`); set `SENTRY_ORG` to your org at build time. |
+| Sentry | `EXPO_PUBLIC_SENTRY_DSN`; `eas secret:create --name SENTRY_AUTH_TOKEN`; project in app.json (`bonkbow`); set `SENTRY_ORG` to your org at build time. |
 | PostHog | `EXPO_PUBLIC_POSTHOG_KEY`. Events: `game_started`, `game_over`, `skin_equipped`, `purchase_*`. |
 | EAS | `eas init`; set every `EXPO_PUBLIC_*` as an EAS env var (cloud builds don't read `.env.local`); `eas update:configure` for OTA. |
 | GitHub Actions | repo secret `EXPO_TOKEN`, plus the API key read by the PR review workflow (see `.github/workflows/`). |

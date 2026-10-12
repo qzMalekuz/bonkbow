@@ -37,32 +37,22 @@ unity projects create StickmanSource --path ~/UnityProjects --template com.unity
 unity pipeline install --project-path ~/UnityProjects/StickmanSource
 cd ~/UnityProjects/StickmanSource && unity open .
 # download the pack from your account (no Package Manager clicks needed)
-unity command eval -- --code "$(cat ~/Developer/stickchers/scripts/unity/fetch-stickman.cs)"
+unity command eval -- --code "$(cat ~/Developer/bonkbow/scripts/unity/fetch-stickman.cs)"
 # import it, then export mesh + skeleton + Walk clip for three.js
 unity command eval -- --code 'UnityEditor.AssetDatabase.ImportPackage(System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile) + "/Library/Unity/Asset Store-5.x/PolyOne Studio/3D ModelsCharacters/Free Pack - Stick Man.unitypackage", false); return "ok";'
-unity command eval -- --code "$(cat ~/Developer/stickchers/scripts/unity/export-stickman.cs)" --timeout 300000
+unity command eval -- --code "$(cat ~/Developer/bonkbow/scripts/unity/export-stickman.cs)" --timeout 300000
 ```
 
 Restart Metro with `--clear` after adding or removing the file.
 
-## The heroes: rebuilt from archer-boys.pdf (2026-10-05)
+## The derps' heads: drawn in code (2026-10-07)
 
-The six shop heroes (Akshay, Beeman, Chase, M-it, Mert, Tolly, PDF pages
-1–6) are built from the character sheets themselves:
-
-```bash
-scripts/heroes/build.sh            # all heroes (≈40 s)
-scripts/heroes/build.sh chase      # one hero
-```
-
-Each head is the sheet's own drawings, cut into one atlas: the front once
-per expression, then the right, back and left views (heroes are shown from
-those four sides only); each chibi suit is sculpted in
-code (`scripts/heroes/body.ts`) and skinned to a skeleton with the Unity
-body's bone names, so `StickmanBody.ts` drives it. Outputs in
-`assets/heroes/` are committed. Needs `pdftoppm`, Python 3 with numpy,
-scipy and opencv, bun, and the `meshoptimizer` dev dependency. These are
-likenesses of real people: get each person's OK before mainnet.
+No art files. Heads, faces and hats are drawing instructions in
+`src/game/derps.ts` (outlines from the launch videos' `derpy.py`), rendered
+as wobbly ink in 3D (`src/game3d/ink.ts`, `DerpHead.ts`) and as SVG in the
+UI (`src/ui/DerpThumb.tsx`). The six hero heads and suits built from
+the hero sheet (`assets/heroes/`, `assets/faces/`, `scripts/heroes/`) were
+removed with the pivot; they are in git history before 2026-10-07.
 
 ## The shop maps: three Unity environment packs (2026-10-05)
 
@@ -79,10 +69,10 @@ Recreate the files (same Unity project and CLI as the stick man):
 
 ```bash
 cd ~/UnityProjects/StickmanSource && unity open .
-unity command eval -- --code "$(cat ~/Developer/stickchers/scripts/unity/fetch-environments.cs)"
+unity command eval -- --code "$(cat ~/Developer/bonkbow/scripts/unity/fetch-environments.cs)"
 # import each downloaded .unitypackage (paths under ~/Library/Unity/Asset Store-5.x/)
 unity command eval -- --code 'UnityEditor.AssetDatabase.ImportPackage("<path>.unitypackage", false); return "ok";'
-unity command eval -- --code "$(cat ~/Developer/stickchers/scripts/unity/export-environments.cs)" --timeout 300000
+unity command eval -- --code "$(cat ~/Developer/bonkbow/scripts/unity/export-environments.cs)" --timeout 300000
 bun scripts/maps/optimize.ts          # triangle caps for the baked packs
 ```
 

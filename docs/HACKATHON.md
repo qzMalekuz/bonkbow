@@ -129,11 +129,23 @@ Technical rules:
 - Wallets: https://solanamobile.com/wallets (Phantom, Solflare), faucet https://faucet.solana.com
 - Expo env setup is linked from the site's "Get started" guide, so Expo/RN is an expected path.
 
-## Implications for Stickchers
+## Implications for Bonk Bow
+
+The entry: **Bonk Bow, stickman archery played by idiots** ("They have bows. That's about it."). A
+fair turn-based archery duel (physics, hit zones, adaptive AI, online rooms) performed by derpy stickmen
+who eat the arrows, bonk themselves and celebrate early. Deadpan, dumb, never mean, and never about real
+people: the earlier "six heroes" version (likenesses of judges) is gone.
 
 - Deadline is **Oct 8, 11:59pm PT** (Oct 9 06:59 UTC). Plan to finalize on Align a few hours earlier.
-- Must ship: APK, public/accessible GitHub repo with a real commit history, ~3 min on-device demo video with captions, pitch deck.
-- Add an **SKR integration** (e.g., accept SKR for skins, SKR rewards) to compete for the $10k bonus and the 20-weight platform criterion.
-- Consider a visible **AI** element (e.g., the AI opponent is already a fit; surface it in the pitch) given the platform weights.
-- Emphasize retention/stickiness (daily play, rooms, leaderboards) and mobile-native UX in the deck.
-- Confirm no VC/angel funding, and be ready for Sumsub KYC and a dApp Store listing within 30 days of Nov 10.
+- Must ship: APK, public/accessible GitHub repo with a real commit history, ~3 min on-device demo video
+  with captions, pitch deck.
+- Judges read a **transcript**, not the picture: the comedy has to survive as narration. Say what the
+  archer does ("he has shot straight up; it is coming back down on him") rather than relying on visuals.
+- **SKR integration**: the shop prices every derp, hat, the Shovel Bow and every map in SKR, shows the
+  live balance and verifies transfers on-chain. Pitch it for the $10k bonus and the 20-weight criterion.
+- **AI**: the adaptive opponent (aim tightens with your lifetime hit rate) is the honest AI story. Don't
+  claim more.
+- **Stickiness**: short duels, daily streak, rooms, leaderboard, new derps and hats as drops, and
+  community requests that make it into the game (the Shovel Bow).
+- Confirm no VC/angel funding, and be ready for Sumsub KYC and a dApp Store listing within 30 days of
+  Nov 10.
