@@ -30,9 +30,9 @@ export const CLUSTER = {
 // must be https and `icon` is resolved relative to it — host a real icon at
 // this path before shipping. Also the SIWS domain Supabase validates against.
 // The site is the repo's GitHub Pages; the trailing slash keeps `icon` under it.
-export const APP_URI = 'https://qzmalekuz.github.io/stickchers/';
+export const APP_URI = 'https://qzmalekuz.github.io/bonkbow/';
 export const APP_IDENTITY: AppIdentity = {
-  name: 'Stickchers',
+  name: 'Bonk Bow',
   uri: APP_URI,
   icon: 'favicon.ico',
 };

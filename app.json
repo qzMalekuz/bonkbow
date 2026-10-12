@@ -1,20 +1,20 @@
 {
   "expo": {
-    "name": "Stickchers",
-    "slug": "stickchers",
+    "name": "Bonk Bow",
+    "slug": "bonkbow",
     "version": "1.0.0",
     "runtimeVersion": {
       "policy": "appVersion"
     },
     "orientation": "landscape",
     "icon": "./assets/images/icon.png",
-    "scheme": "stickchers",
+    "scheme": "bonkbow",
     "userInterfaceStyle": "automatic",
     "updates": {
       "fallbackToCacheTimeout": 0
     },
     "android": {
-      "package": "com.stickchers.app",
+      "package": "com.bonkbow.app",
       "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#0B0B0F",
@@ -33,7 +33,7 @@
       ]
     },
     "ios": {
-      "bundleIdentifier": "com.stickchers.app",
+      "bundleIdentifier": "com.bonkbow.app",
       "supportsTablet": false
     },
     "web": {
@@ -55,7 +55,7 @@
         "@sentry/react-native",
         {
           "url": "https://sentry.io/",
-          "project": "stickchers"
+          "project": "bonkbow"
         }
       ],
       "expo-updates",

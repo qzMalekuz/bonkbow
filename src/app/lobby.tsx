@@ -73,7 +73,7 @@ export default function LobbyScreen() {
   const share = () => {
     if (!hosting) return;
     haptic.tap();
-    Share.share({ message: `Duel me in Stickchers — room code ${hosting.code}` }).catch(() => {});
+    Share.share({ message: `Come miss me in Bonk Bow. Room code ${hosting.code}` }).catch(() => {});
   };
 
   return (

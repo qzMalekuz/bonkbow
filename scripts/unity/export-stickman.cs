@@ -1,4 +1,4 @@
-// Exports the Free Pack - Stick Man model for the Stickchers three.js rig.
+// Exports the Free Pack - Stick Man model for the Bonk Bow three.js rig.
 // Unity is left-handed; three.js is right-handed: mirror X on everything
 // (positions/normals x → -x, quaternions (x, -y, -z, w), bind matrices S·M·S,
 // triangle winding reversed).
@@ -96,6 +96,6 @@ try {
 }
 sb.Append("}}");
 
-var outPath = System.Environment.GetEnvironmentVariable("STICKMAN_OUT") ?? (System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile) + "/Developer/stickchers/assets/licensed/stickman/stickman.json");
+var outPath = System.Environment.GetEnvironmentVariable("STICKMAN_OUT") ?? (System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile) + "/Developer/bonkbow/assets/licensed/stickman/stickman.json");
 System.IO.File.WriteAllText(outPath, sb.ToString());
 return "bones=" + bones.Count + " verts=" + v.Length + " tris=" + tris.Length / 3 + " " + report + " bytes=" + sb.Length;
