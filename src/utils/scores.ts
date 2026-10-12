@@ -1,30 +1,32 @@
-import { ensureSession, isSupabaseConfigured, supabase } from '@/utils/supabase';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Best-effort leaderboard write. The device-local high score (game/store.ts)
-// is the source of truth for the UI; this just mirrors finished runs to the
-// `scores` table when Supabase is configured. The wallet address on the row
-// is stamped server-side from the caller's SIWS identity (schema.sql), so a
-// guest's runs show up on the board only after they sign in. Never throws.
-export const submitScore = async (score: number): Promise<void> => {
-  if (!isSupabaseConfigured || score <= 0) return;
+// Device-local leaderboard: the best vs-AI runs played on this phone. The
+// all-time high score itself lives in game/store.ts; this keeps the top runs
+// with their date so the board has rows. Never throws.
+const KEY = 'bonkbow.bestRuns';
+const KEEP = 20;
+
+export type RunRow = { score: number; at: number };
+
+export const fetchBestRuns = async (): Promise<RunRow[]> => {
   try {
-    const userId = await ensureSession();
-    if (!userId) return;
-    await supabase.from('scores').insert({ user_id: userId, score });
-  } catch {
-    // offline / RLS / not configured — silently skip
-  }
-};
-
-export type LeaderboardRow = { wallet_address: string | null; best: number };
-
-export const fetchLeaderboard = async (limit = 20): Promise<LeaderboardRow[]> => {
-  if (!isSupabaseConfigured) return [];
-  try {
-    const { data, error } = await supabase.from('leaderboard').select('wallet_address, best').limit(limit);
-    if (error || !data) return [];
-    return data as LeaderboardRow[];
+    const raw = await AsyncStorage.getItem(KEY);
+    const rows = raw ? (JSON.parse(raw) as RunRow[]) : [];
+    return Array.isArray(rows) ? rows : [];
   } catch {
     return [];
   }
 };
+
+export const submitScore = async (score: number): Promise<void> => {
+  if (score <= 0) return;
+  try {
+    const rows = await fetchBestRuns();
+    const next = [...rows, { score, at: Date.now() }].sort((a, b) => b.score - a.score || a.at - b.at).slice(0, KEEP);
+    await AsyncStorage.setItem(KEY, JSON.stringify(next));
+  } catch {
+    // storage unavailable — the store's high score still updates
+  }
+};
+
+export const clearBestRuns = () => AsyncStorage.removeItem(KEY).catch(() => {});

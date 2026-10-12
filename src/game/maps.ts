@@ -3,12 +3,10 @@
 // shop: each is dressed with one of the owner's Unity environment packs
 // (game3d/mapProps.ts) and bought in SOL or SKR like a derp or a hat.
 //
-// The chosen map rides in the match seed's low two bits, so both phones of
-// an online match land on the host's map with no protocol change, and a
-// guest sees it even without owning it.
+// The chosen map rides in the match seed's low two bits.
 //
-// PRICES ARE PLACEHOLDERS. Keep supabase/functions/verify-purchase PRICES in
-// sync; purchases are recorded under the map id, like skins.
+// PRICES ARE PLACEHOLDERS. solana/payments.ts checks payments against them;
+// purchases are recorded under the map id, like skins.
 import { SKR_DECIMALS } from '@/solana/config';
 
 const skr = (whole: number) => Math.round(whole * 10 ** SKR_DECIMALS);

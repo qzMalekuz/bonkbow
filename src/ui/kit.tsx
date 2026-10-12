@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSequence, withTiming } from 'react-native-reanimated';
-import Svg, { Path } from 'react-native-svg';
+import Svg, { Circle, Path } from 'react-native-svg';
 import { HapticTouchable } from '@/components/haptic-touchable';
 import type { Sfx } from '@/audio/sound';
 
@@ -60,6 +60,32 @@ export function GameButton({
         </Text>
       </View>
     </HapticTouchable>
+  );
+}
+
+// The coin: what matches pay and the coin shop spends.
+export function CoinIcon({ size = 18 }: { size?: number }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 26 26">
+      <Circle cx={13} cy={13} r={11} fill="#F7A21B" stroke="#B85C00" strokeWidth={2} />
+      <Circle cx={13} cy={13} r={7} fill="#FFC83D" />
+      <Path d="M10 9.5h6M13 9.5v7" stroke="#B85C00" strokeWidth={1.8} strokeLinecap="round" />
+    </Svg>
+  );
+}
+
+// Coin balance chip; pops whenever the balance changes.
+export function CoinPill({ coins, style }: { coins: number; style?: StyleProp<ViewStyle> }) {
+  const pop = useSharedValue(1);
+  useEffect(() => {
+    pop.value = withSequence(withTiming(1.18, { duration: 110 }), withTiming(1, { duration: 260 }));
+  }, [coins, pop]);
+  const popStyle = useAnimatedStyle(() => ({ transform: [{ scale: pop.value }] }));
+  return (
+    <Animated.View style={[styles.coinPill, popStyle, style]}>
+      <CoinIcon size={18} />
+      <Text style={styles.coinText}>{coins.toLocaleString()}</Text>
+    </Animated.View>
   );
 }
 
@@ -176,6 +202,8 @@ export const TIPS = [
   'Shoot straight up and it comes straight back down. On you.',
   'The other guy gets better as you do. He will not say how.',
   'Hats, heads and the shovel bow change nothing. Wear them anyway.',
+  'Every match pays coins. Your first match of the day pays extra.',
+  'Coins buy clothes, arrows and new idiots. They still do not help.',
   'Tap the chat bubble to say something. He will not listen.',
 ];
 
@@ -196,6 +224,19 @@ const styles = StyleSheet.create({
   btnFaceSmall: { paddingVertical: 8, paddingHorizontal: 12 },
   btnText: { fontFamily: FONT.bold, fontSize: 18, letterSpacing: 0.5 },
   btnTextSmall: { fontSize: 14 },
+  coinPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderRadius: 10,
+    paddingLeft: 6,
+    paddingRight: 12,
+    paddingVertical: 5,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,200,61,0.45)',
+  },
+  coinText: { fontFamily: FONT.bold, fontSize: 15, color: '#FFFFFF' },
   stat: { flexDirection: 'row', alignItems: 'center' },
   statRight: { flexDirection: 'row-reverse' },
   statIcon: { zIndex: 2, marginRight: -8, marginLeft: -8 },

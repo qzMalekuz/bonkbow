@@ -28,29 +28,42 @@ export const CLUSTER = {
 
 // Shown in the wallet's approval sheet (Seed Vault, Phantom, Solflare). `uri`
 // must be https and `icon` is resolved relative to it — host a real icon at
-// this path before shipping. Also the SIWS domain Supabase validates against.
-// The site is the repo's GitHub Pages; the trailing slash keeps `icon` under it.
+// this path before shipping. The site is the repo's GitHub Pages; the trailing
+// slash keeps `icon` under it.
 export const APP_URI = 'https://qzmalekuz.github.io/bonkbow/';
 export const APP_IDENTITY: AppIdentity = {
   name: 'Bonk Bow',
   uri: APP_URI,
-  icon: 'favicon.ico',
+  icon: 'icon.png',
 };
 
 // SKR — the Seeker ecosystem token (SPL, 6 decimals). Verified against mainnet
 // getTokenSupply on 2026-09-29 and docs.solanamobile.com/solana-mobile-stack/skr.
 // On devnet there is no SKR, so create any 6-decimal test mint and set
-// EXPO_PUBLIC_SKR_MINT to it (the edge function reads its own SKR_MINT secret).
+// EXPO_PUBLIC_SKR_MINT to it.
 export const SKR_MAINNET_MINT = 'SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3';
 export const SKR_DECIMALS = 6;
 export const SKR_MINT =
   process.env.EXPO_PUBLIC_SKR_MINT || (clusterName === 'mainnet-beta' ? SKR_MAINNET_MINT : '');
 
-// Wallet that receives skin payments (SOL and SKR). Public key only.
+// Wallet that receives every payment: shop items (SOL and SKR) and duel entry
+// fees. Public key only.
 export const TREASURY_ADDRESS = process.env.EXPO_PUBLIC_TREASURY_ADDRESS || '';
 
 export const SHOP_ENABLED = TREASURY_ADDRESS.length > 0;
 export const SKR_ENABLED = SHOP_ENABLED && SKR_MINT.length > 0;
+
+// What a duel against the AI costs, paid in SOL to the treasury before the
+// match starts. PLACEHOLDER — set the real fee before mainnet.
+export const DUEL_FEE_LAMPORTS = 10_000_000; // 0.01 SOL
+// Duels are free (no wallet needed) when there is no treasury to pay, so a
+// build without EXPO_PUBLIC_TREASURY_ADDRESS stays playable.
+export const DUEL_FEE_ENABLED = SHOP_ENABLED && DUEL_FEE_LAMPORTS > 0;
+
+// Every payment carries an SPL memo "bonkbow:<what>" so the treasury's history
+// reads as a ledger and purchases can be restored from the wallet's history.
+export const MEMO_PREFIX = 'bonkbow:';
+export const DUEL_MEMO = `${MEMO_PREFIX}duel`;
 
 export const shortAddress = (address: string, chars = 4) =>
   address.length <= chars * 2 + 1 ? address : `${address.slice(0, chars)}…${address.slice(-chars)}`;

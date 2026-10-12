@@ -1,6 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { BackHandler, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, ZoomIn, useAnimatedStyle, useSharedValue, withSequence, withTiming, Easing } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useKeepAwake } from 'expo-keep-awake';
@@ -13,20 +13,18 @@ import { HP } from '@/game3d/world';
 import { haptic } from '@/game/haptics';
 import { accuracyOf, useGameStore } from '@/game/store';
 import { randomSeed } from '@/game/maps';
-import { lookFor, sanitizeLoadout, DEFAULT_LOADOUT, type Loadout } from '@/game/cosmetics';
+import { lookFor, sanitizeLoadout, type Loadout } from '@/game/cosmetics';
 import { HapticTouchable } from '@/components/haptic-touchable';
 import { useScreenMusic } from '@/audio/useScreenMusic';
 import { duckMusic, playAmbience, playSfx } from '@/audio/sound';
 import { submitScore } from '@/utils/scores';
-import { supabase } from '@/utils/supabase';
-import { useRoomChannel, type Role } from '@/multiplayer/useRoom';
 import { LoadingScreen, nextLoadingVariant } from '@/ui/LoadingScreen';
 import { BloodEdge, ChatPanel, FloatingNumber, Plate, Scrawl, SkullMarker, SpeechBubble, TurnSign, type BarHit, type Bubble, type Floater } from '@/ui/hud';
 import { EMOTES, type EmoteId } from '@/ui/emotes';
 import { FONT, GameButton, INK } from '@/ui/kit';
 
 type Turn = 'player' | 'enemy' | 'over';
-type Outcome = 'win' | 'lose' | 'left';
+type Outcome = 'win' | 'lose';
 
 // What each emote / quick message makes the archer act out.
 const EMOTE_ACT: Record<EmoteId, [Gesture, Mood]> = {
@@ -62,52 +60,49 @@ const SUDDEN_DEATH_HP = Math.floor(HP.max / 3);
 // What an archer says while his arrow is still in the air.
 const EARLY_CHEERS = ['nailed it', 'called it', 'easy', 'got him'];
 
-// Route params and network payloads are untyped strings; sanitizeLoadout
+// Route params are untyped strings; sanitizeLoadout
 // keeps only ids it knows and maps a legacy `head` from older builds.
-type LooseLoadout = { derp?: string; hat?: string; bow?: string; head?: string };
+type LooseLoadout = { derp?: string; hat?: string; outfit?: string; bow?: string; arrow?: string; head?: string };
 const loadoutFrom = (l: LooseLoadout | undefined) => sanitizeLoadout(l as Parameters<typeof sanitizeLoadout>[0]);
 
-// The duel screen: the 3D duel plus HUD, chat, AI reactions, and the side
-// effects that belong on JS (haptics, audio, persistence, analytics, the
-// multiplayer channel). /game?mode=ai&seed=… | ?mode=online&code=&role=&seed=
+// The duel screen: the 3D duel against the AI plus HUD, chat, AI reactions,
+// and the side effects that belong on JS (haptics, audio, persistence,
+// analytics). /game?seed=…&rivalDerp=…  (the entry fee is paid on /match).
 export default function GameScreen() {
   useScreenMusic('battle');
   useKeepAwake();
   const params = useLocalSearchParams<{
-    mode?: string;
-    code?: string;
-    role?: string;
     seed?: string;
     rivalDerp?: string;
     rivalHat?: string;
     rivalBow?: string;
+    rivalOutfit?: string;
+    rivalArrow?: string;
     rivalName?: string;
   }>();
-  const mode: GameMode = params.mode === 'online' ? 'online' : 'ai';
-  const role: Role = params.role === 'guest' ? 'guest' : 'host';
-  const code = mode === 'online' ? params.code : undefined;
-  const online = mode === 'online';
+  const mode: GameMode = 'ai';
   const [fallbackSeed] = useState(() => randomSeed(useGameStore.getState().equippedMap));
   const seed = params.seed ? Number(params.seed) : fallbackSeed;
-  const rivalName = params.rivalName || (online ? 'Opponent' : 'Rival');
+  const rivalName = params.rivalName || 'Rival';
+  const playerName = useGameStore((s) => s.playerName);
 
   const posthog = usePostHog();
   const recordGame = useGameStore((s) => s.recordGame);
-  const grantRewards = useGameStore((s) => s.grantRewards);
+  const finishMatch = useGameStore((s) => s.finishMatch);
   const skill = useGameStore((s) => accuracyOf(s.shots, s.hits));
   const loadout = useGameStore((s) => s.loadout);
   const blocked = useGameStore((s) => s.blockOpponentMessages);
   const setBlocked = useGameStore((s) => s.setBlockOpponentMessages);
   const look = useMemo(() => lookFor(loadout), [loadout]);
-  const [rivalLoadout, setRivalLoadout] = useState<Loadout>(() =>
-    online ? DEFAULT_LOADOUT : loadoutFrom({ derp: params.rivalDerp, hat: params.rivalHat, bow: params.rivalBow }),
+  const [rivalLoadout] = useState<Loadout>(() =>
+    loadoutFrom({ derp: params.rivalDerp, hat: params.rivalHat, outfit: params.rivalOutfit, bow: params.rivalBow, arrow: params.rivalArrow }),
   );
   const rivalLook = useMemo(() => lookFor(rivalLoadout), [rivalLoadout]);
 
   const duel = useRef<DuelHandle>(null);
   const anchors = useSharedValue<Anchors>(emptyAnchors);
   const [score, setScore] = useState(0);
-  const [hp, setHp] = useState({ me: HP.max, meShield: HP.shield, them: HP.max, themShield: online ? HP.shield : 0 });
+  const [hp, setHp] = useState({ me: HP.max, meShield: HP.shield, them: HP.max, themShield: 0 });
   const [turn, setTurn] = useState<Turn>('enemy');
   const [timer, setTimer] = useState<{ who: 'player' | 'enemy'; endsAt: number; seconds: number } | null>(null);
   const [sign, setSign] = useState<{ id: number; who: 'player' | 'enemy' } | null>(null);
@@ -195,34 +190,15 @@ export default function GameScreen() {
   // AI rival chatter: occasional, with a cooldown, hidden while blocked.
   const rivalSays = useCallback(
     (kind: 'emote' | 'text', value: string, chance: number, delay = 700) => {
-      if (online || Math.random() > chance) return;
+      if (Math.random() > chance) return;
       if (Date.now() - rivalEmoteAt.current < 3500) return;
       rivalEmoteAt.current = Date.now();
       setTimeout(() => {
         if (!useGameStore.getState().blockOpponentMessages) showBubble('enemy', kind, value);
       }, delay);
     },
-    [online, showBubble],
+    [showBubble],
   );
-
-  // ---- multiplayer channel ---------------------------------------------------------
-  const room = useRoomChannel(code, online ? role : undefined, {
-    onShot: (s) => {
-      setTurn('enemy');
-      setSignUp(false);
-      duel.current?.fireRemote(s);
-    },
-    onResult: (r) => duel.current?.applyRemoteResult(r),
-    // The payload is whatever the other phone sent: a Loadout, or { head, bow, trail } from older builds.
-    onLook: (l) => setRivalLoadout(loadoutFrom(l as LooseLoadout)),
-    onEmote: (e) => {
-      if (!useGameStore.getState().blockOpponentMessages) showBubble('enemy', e.kind, e.value);
-    },
-    onOpponentPresence: (present) => {
-      if (present) room.send('look', loadout);
-    },
-    onOpponentLeft: () => endRef.current('left'),
-  });
 
   useEffect(() => {
     posthog.capture('game_started', { mode });
@@ -239,41 +215,38 @@ export default function GameScreen() {
       clearTicks();
       duckMusic(true);
       const st = runStats.current;
-      const won = online ? outcome !== 'lose' : null;
-      const xp = online ? (outcome === 'lose' ? 25 : 60) : 15 + score * 20 + st.headshots * 5;
-      const coins = online ? (outcome === 'lose' ? 10 : 30) : score * 8 + st.headshots * 2;
-      const prevXp = useGameStore.getState().xp;
-      grantRewards({ xp, coins, won });
+      const reward = finishMatch({ online: false, outcome: 'run', kills: score, headshots: st.headshots });
       posthog.capture('game_over', { mode, score, outcome, shots: st.shots, hits: st.hits });
-      if (!online) {
-        recordGame(score, st.shots, st.hits);
-        submitScore(score);
-      } else if (outcome !== 'lose') {
-        supabase.auth.getUser().then(({ data }) => room.finish(data.user?.id ?? null));
-      }
+      recordGame(score, st.shots, st.hits);
+      submitScore(score);
       // Let the death / victory celebration play before the ceremony.
       setTimeout(() => {
         router.replace({
           pathname: '/result',
           params: {
             mode,
-            outcome: online ? outcome : 'run',
+            outcome: 'run',
             score: String(score),
             shots: String(st.shots),
             hits: String(st.hits),
             headshots: String(st.headshots),
-            xp: String(xp),
-            coins: String(coins),
-            prevXp: String(prevXp),
+            xp: String(reward.xp),
+            coins: String(reward.coins),
+            matchCoins: String(reward.matchCoins),
+            dailyBonus: String(reward.dailyBonus),
+            levelBonus: String(reward.levelBonus),
+            prevXp: String(reward.prevXp),
             rivalName,
             rivalDerp: rivalLoadout.derp,
             rivalHat: rivalLoadout.hat,
             rivalBow: rivalLoadout.bow,
+            rivalOutfit: rivalLoadout.outfit,
+            rivalArrow: rivalLoadout.arrow,
           },
         });
       }, 2600);
     },
-    [online, score, grantRewards, posthog, mode, recordGame, room, rivalName, rivalLoadout],
+    [score, finishMatch, posthog, mode, recordGame, rivalName, rivalLoadout],
   );
   useEffect(() => {
     endRef.current = endMatch;
@@ -342,12 +315,10 @@ export default function GameScreen() {
           break;
         case 'shotFired':
           runStats.current.shots += 1;
-          if (online) room.send('shot', { angle: e.angle, power: e.power });
           break;
         case 'shotResolved':
           if (e.zone !== 'miss') runStats.current.hits += 1;
           if (e.zone === 'head') runStats.current.headshots += 1;
-          if (online) room.send('result', { zone: e.zone, hp: e.hp, shield: e.shield });
           break;
         case 'playerMiss':
           if (e.long) runStats.current.long += 1;
@@ -375,12 +346,9 @@ export default function GameScreen() {
             haptic.kill();
             setTimeout(() => playSfx('body_drop'), 420);
             setTimeout(() => playSfx('laugh'), 500);
-            if (online) endMatch('win');
-            else {
-              playSfx('jingle_kill');
-              setScore((s) => s + 1);
-              scorePop.set(withSequence(withTiming(1.15, { duration: 110 }), withTiming(1, { duration: 220, easing: Easing.out(Easing.cubic) })));
-            }
+            playSfx('jingle_kill');
+            setScore((s) => s + 1);
+            scorePop.set(withSequence(withTiming(1.15, { duration: 110 }), withTiming(1, { duration: 220, easing: Easing.out(Easing.cubic) })));
           } else {
             if (shieldOnly) haptic.shieldHit();
             else haptic.bodyHit();
@@ -437,7 +405,7 @@ export default function GameScreen() {
           break;
       }
     },
-    [online, room, showPopup, addFloater, barDamage, rivalSays, endMatch, damage, scorePop],
+    [showPopup, addFloater, barDamage, rivalSays, endMatch, damage, scorePop],
   );
 
   // Sudden death: announced once with a slam when the sign first shows it.
@@ -463,10 +431,6 @@ export default function GameScreen() {
     setChatOpen(false);
     playSfx('chat_send');
     showBubble('player', kind, value);
-    if (online) {
-      room.send('emote', { kind, value });
-      return;
-    }
     // The AI sometimes answers back.
     if (kind === 'emote') rivalSays('emote', EMOTES[Math.floor(Math.random() * EMOTES.length)].id, 0.55, 1300);
     else rivalSays('text', value === 'Well played' || value === 'Nice shot!' ? 'Thanks!' : value === 'Greetings' ? 'Greetings' : 'Wow!', 0.55, 1300);
@@ -479,6 +443,19 @@ export default function GameScreen() {
     router.back();
   };
 
+  // Android back never drops the duel: it opens the pause sheet (or closes
+  // whatever sheet is open). Leaving is the sheet's "Quit duel".
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (ended.current) return true;
+      if (chatOpen) setChatOpen(false);
+      else setPaused((p) => !p);
+      haptic.tap();
+      return true;
+    });
+    return () => sub.remove();
+  }, [chatOpen]);
+
   const signText = sudden ? 'SUDDEN DEATH' : sign?.who === 'player' ? 'YOUR TURN' : 'HIS TURN';
   const signSub = sudden ? (sign?.who === 'player' ? '(your turn)' : '(his turn)') : undefined;
 
@@ -488,13 +465,13 @@ export default function GameScreen() {
         ref={duel}
         mode={mode}
         seed={seed}
-        role={role}
-        myTurnFirst={!online || role === 'host'}
+        role="host"
+        myTurnFirst
         look={look}
         opponentLook={rivalLook}
         score={score}
         skill={skill}
-        inputEnabled={(!online || room.opponentPresent) && !paused && !chatOpen}
+        inputEnabled={!paused && !chatOpen}
         overview={overview}
         anchors={anchors}
         onEvent={onEvent}
@@ -528,7 +505,7 @@ export default function GameScreen() {
       <SafeAreaView style={styles.hud} edges={['top', 'left', 'right']} pointerEvents="box-none">
         <View style={styles.hudRow} pointerEvents="box-none">
           <Plate
-            name="You"
+            name={playerName || 'You'}
             hp={hp.me}
             shield={hp.meShield}
             timer={timer?.who === 'player' ? timer : null}
@@ -539,14 +516,10 @@ export default function GameScreen() {
             <HapticTouchable onPress={() => setPaused(true)} hitSlop={10} style={styles.pause} sound="ui_open">
               <Ionicons name="pause" size={18} color="#FFFFFF" />
             </HapticTouchable>
-            {online ? (
-              <Text style={styles.roomCode}>{code}</Text>
-            ) : (
-              <Animated.View style={[styles.kills, scoreStyle]}>
-                <Ionicons name="skull" size={14} color="#FFFFFF" />
-                <Text style={styles.killsText}>{score}</Text>
-              </Animated.View>
-            )}
+            <Animated.View style={[styles.kills, scoreStyle]}>
+              <Ionicons name="skull" size={14} color="#FFFFFF" />
+              <Text style={styles.killsText}>{score}</Text>
+            </Animated.View>
           </View>
           <Plate
             name={rivalName}
@@ -558,7 +531,6 @@ export default function GameScreen() {
             onHitDone={dropBarHit}
           />
         </View>
-        {online && !room.opponentPresent && turn !== 'over' && <Text style={styles.waiting}>Waiting for opponent to connect…</Text>}
       </SafeAreaView>
 
       {/* Bottom-right: magnifier (hold to see the whole field) + chat */}
@@ -607,12 +579,6 @@ export default function GameScreen() {
   );
 }
 
-const textShadow = {
-  textShadowColor: 'rgba(0,0,0,0.8)',
-  textShadowOffset: { width: 0, height: 2 },
-  textShadowRadius: 3,
-};
-
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#000000' },
   hud: { position: 'absolute', top: 0, left: 0, right: 0 },
@@ -629,8 +595,6 @@ const styles = StyleSheet.create({
     paddingVertical: 1,
   },
   killsText: { fontFamily: FONT.bold, fontSize: 16, color: '#FFFFFF' },
-  roomCode: { fontFamily: FONT.bold, color: '#FFFFFF', fontSize: 16, letterSpacing: 4, ...textShadow },
-  waiting: { fontFamily: FONT.semi, color: 'rgba(255,255,255,0.8)', fontSize: 13, textAlign: 'center', marginTop: 8, ...textShadow },
   corner: { position: 'absolute', right: 0, bottom: 0 },
   cornerRow: { flexDirection: 'row', alignItems: 'center', gap: 12, margin: 14 },
   roundBtn: {

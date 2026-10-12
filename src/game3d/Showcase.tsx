@@ -65,7 +65,7 @@ class ShowcaseView {
   private root = new THREE.Group();
   private turn = new THREE.Group();
   private rig: StickmanRig;
-  private arrow = makeProjectile({ bow: 'bow', trail: '#E63946' });
+  private arrow = makeProjectile({ bow: 'bow', arrow: 'classic' });
   private arrowBow: Look['bow'] = 'bow';
   private shot = { live: false, t: 0, x: 0, y: 0, vx: 0, vy: 0 };
   private state: ShowState;

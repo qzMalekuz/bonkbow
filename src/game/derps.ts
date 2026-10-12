@@ -14,9 +14,24 @@ export type HeadShape = 'bean' | 'pea' | 'slab';
 // A derp's signature bit of comedy; every archer does all of them now and
 // then, the habit just a lot more often.
 export type Habit = 'celebrate' | 'bonk' | 'eat' | 'backwards' | 'yawn';
-export type DerpId = 'gary' | 'steve' | 'doug' | 'kevin' | 'someguy';
-export type HatId = 'none' | 'tophat' | 'party' | 'propeller' | 'cone' | 'crown' | 'pot' | 'viking' | 'arrow' | 'fish' | 'chef';
-export type BowId = 'bow' | 'shovel';
+export type DerpId = 'gary' | 'steve' | 'doug' | 'kevin' | 'someguy' | 'chad' | 'timmy' | 'carl' | 'bob';
+export type HatId =
+  | 'none'
+  | 'tophat'
+  | 'party'
+  | 'propeller'
+  | 'cone'
+  | 'crown'
+  | 'pot'
+  | 'viking'
+  | 'arrow'
+  | 'fish'
+  | 'chef'
+  | 'beanie'
+  | 'bucket'
+  | 'cowboy'
+  | 'halo';
+export type BowId = 'bow' | 'shovel' | 'toy' | 'candy' | 'bone' | 'golden';
 
 export type DerpDef = {
   id: DerpId;
@@ -35,6 +50,11 @@ export const DERPS: Record<DerpId, DerpDef> = {
   doug: { id: 'doug', name: 'Doug', tagline: 'Eats the arrows.', shape: 'slab', neck: 0, habit: 'eat', seed: 7, color: '#8BC34A' },
   kevin: { id: 'kevin', name: 'Kevin', tagline: 'Faces the wrong way. Committed to it.', shape: 'bean', neck: 0.04, habit: 'backwards', seed: 11, color: '#E05A9C' },
   someguy: { id: 'someguy', name: 'Some Guy', tagline: '847 wins. Visibly bored.', shape: 'slab', neck: 0.02, habit: 'yawn', seed: 5, color: '#9E9E9E' },
+  // Coin derps (skins.ts): bought with the coins earned in matches.
+  chad: { id: 'chad', name: 'Chad', tagline: 'Celebrates every shot. Hits some.', shape: 'slab', neck: 0.06, habit: 'celebrate', seed: 13, color: '#FF7043' },
+  timmy: { id: 'timmy', name: 'Lil Timmy', tagline: 'Tiny head. Big bow. Same arrows.', shape: 'pea', neck: 0.1, habit: 'backwards', seed: 17, color: '#FFD54F' },
+  carl: { id: 'carl', name: 'Carl', tagline: 'Snacks between rounds. Snacks during them.', shape: 'bean', neck: 0.08, habit: 'eat', seed: 19, color: '#26A69A' },
+  bob: { id: 'bob', name: 'Bob', tagline: 'Has never held a bow. Holding one now.', shape: 'bean', neck: 0.14, habit: 'bonk', seed: 23, color: '#7E57C2' },
 };
 export const DERP_IDS = Object.keys(DERPS) as DerpId[];
 
@@ -51,16 +71,29 @@ export const HATS: Record<HatId, HatDef> = {
   arrow: { id: 'arrow', name: 'Arrow Through Head', tagline: 'From practice.' },
   fish: { id: 'fish', name: 'Fish', tagline: 'Nobody knows why.' },
   chef: { id: 'chef', name: 'Chef Hat', tagline: 'Cooked. Every round.' },
+  // Coin hats (skins.ts).
+  beanie: { id: 'beanie', name: 'Beanie', tagline: 'Keeps the head warm. The aim stays cold.' },
+  bucket: { id: 'bucket', name: 'Bucket Hat', tagline: 'Gone fishing. Came back with arrows.' },
+  cowboy: { id: 'cowboy', name: 'Cowboy Hat', tagline: 'Fastest draw in the west. Worst aim.' },
+  halo: { id: 'halo', name: 'Halo', tagline: 'Too good for this. Still misses.' },
 };
 export const HAT_IDS = Object.keys(HATS) as HatId[];
 
-export type BowDef = { id: BowId; name: string; tagline: string };
+// `wood` and `accent` colour the recurve (limbs; grip and nocks), `scale`
+// sizes it. Every bow shoots the same shot: looks only.
+export type BowDef = { id: BowId; name: string; tagline: string; wood: string; accent: string; scale: number };
 export const BOWS: Record<BowId, BowDef> = {
-  bow: { id: 'bow', name: 'Bow', tagline: 'It is a bow.' },
+  bow: { id: 'bow', name: 'Bow', tagline: 'It is a bow.', wood: '#8B5A2B', accent: '#E9D8A6', scale: 1 },
   // Promised in the game-848 video, from a fan comment. Same shot as a bow
   // (the duel stays fair); it throws the shooter and digs into the cliff.
-  shovel: { id: 'shovel', name: 'Shovel Bow', tagline: 'Someone in the comments said add this. So we did.' },
+  shovel: { id: 'shovel', name: 'Shovel Bow', tagline: 'Someone in the comments said add this. So we did.', wood: '#6B4A2B', accent: '#2B2B2B', scale: 1.7 },
+  // Coin bows (skins.ts).
+  toy: { id: 'toy', name: 'Toy Bow', tagline: 'Ages 3 and up. He qualifies.', wood: '#2F80ED', accent: '#FFD23F', scale: 0.8 },
+  candy: { id: 'candy', name: 'Candy Bow', tagline: 'Sweet. Sticky. Same damage.', wood: '#FF6FA8', accent: '#FFFFFF', scale: 1 },
+  bone: { id: 'bone', name: 'Bone Bow', tagline: 'Somebody else’s bones. Probably.', wood: '#E8E2D0', accent: '#5A4A3A', scale: 1.05 },
+  golden: { id: 'golden', name: 'Golden Bow', tagline: 'Expensive. Misses in style.', wood: '#E0B12B', accent: '#FFF4C2', scale: 1.1 },
 };
+export const BOW_IDS = Object.keys(BOWS) as BowId[];
 
 export const INK = '#0C0C0C';
 export const PAPER = '#FFFFFF';
@@ -417,6 +450,29 @@ function hatFront(hat: HatId, A: Anchors, t: number): InkPrim[] {
         { k: 'blob', pts: pts([[-0.34, 0], [0.34, 0], [0.36, 0.3], [0.5, 0.52], [0.36, 0.78], [0.1, 0.84], [-0.14, 0.82], [-0.42, 0.74], [-0.5, 0.48], [-0.36, 0.3]]), fill: PAPER, w: LINE },
         { k: 'line', pts: pts([[-0.34, 0.26], [0.35, 0.27]]), w: 0.05 },
       ];
+    case 'beanie':
+      return [
+        { k: 'blob', pts: pts([[-0.42, 0], [-0.4, 0.24], [-0.22, 0.42], [0.22, 0.42], [0.4, 0.24], [0.42, 0]]), fill: '#E53935', w: LINE },
+        { k: 'line', pts: pts([[-0.44, 0.06], [0.44, 0.06]]), w: 0.12, col: '#B71C1C' },
+        { k: 'dot', c: F(0, 0.5), r: 0.11, col: '#FFFFFF' },
+      ];
+    case 'bucket':
+      return [
+        { k: 'blob', pts: pts([[-0.33, 0.12], [-0.28, 0.48], [0.28, 0.48], [0.33, 0.12]]), fill: '#C9B98A', w: LINE },
+        { k: 'blob', pts: pts([[-0.6, 0.0], [0.6, 0.0], [0.36, 0.14], [-0.36, 0.14]]), fill: '#C9B98A', w: LINE },
+        { k: 'line', pts: pts([[-0.31, 0.2], [0.31, 0.2]]), w: 0.07, col: '#6D5F3A' },
+      ];
+    case 'cowboy':
+      return [
+        { k: 'blob', pts: pts([[-0.32, 0.06], [0.32, 0.06], [0.3, 0.46], [0.12, 0.54], [0, 0.45], [-0.12, 0.54], [-0.3, 0.46]]), fill: '#A0703A', w: LINE },
+        { k: 'line', pts: pts([[-0.31, 0.14], [0.31, 0.14]]), w: 0.08, col: '#4A2C14' },
+        { k: 'blob', pts: pts([[-0.8, 0.14], [-0.58, 0.0], [0.58, 0.0], [0.8, 0.14], [0.55, 0.08], [-0.55, 0.08]]), fill: '#A0703A', w: LINE },
+      ];
+    case 'halo': {
+      const bob = Math.sin(t * 2.4) * 0.03;
+      const ring = ellipse(0, 0.5 + bob, 0.38, 0.09, 14).map(([x, y]) => F(x, y));
+      return [{ k: 'line', pts: [...ring, ring[0]], w: 0.075, col: '#FFC400' }];
+    }
     default:
       return [];
   }

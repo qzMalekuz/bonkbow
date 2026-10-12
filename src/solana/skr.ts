@@ -20,8 +20,8 @@ import { SKR_DECIMALS, SKR_ENABLED, SKR_MINT, TREASURY_ADDRESS } from '@/solana/
 //      even if the treasury never held SKR) followed by a TransferChecked,
 //      which pins the mint + decimals so a wallet can't be tricked into
 //      moving a different token.
-// The wallet signs and sends via MWA; the server (verify-purchase) checks the
-// transfer on-chain before granting anything.
+// The wallet signs and sends via MWA; payments.ts reads the transfer back
+// from the cluster before unlocking anything.
 
 export type SkrWallet = ReturnType<typeof useMobileWallet>;
 

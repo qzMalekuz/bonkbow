@@ -12,7 +12,6 @@ import * as Sentry from '@sentry/react-native';
 import { PostHogProvider } from 'posthog-react-native';
 import { MobileWalletProvider } from '@wallet-ui/react-native-kit';
 import { APP_IDENTITY, CLUSTER } from '@/solana/config';
-import { ensureSession } from '@/utils/supabase';
 import { useOTAUpdates } from '@/hooks/useOTAUpdates';
 import { initAudio } from '@/audio/sound';
 
@@ -74,13 +73,7 @@ function RootLayout() {
   }, [navigationRef]);
 
   useEffect(() => {
-    // Guest identity for the leaderboard — silent no-op when Supabase isn't
-    // configured. Wallet linking happens on connect (WalletButton → scores).
-    ensureSession()
-      .then((id) => {
-        if (id) Sentry.setUser({ id });
-      })
-      .finally(() => SplashScreen.hideAsync());
+    SplashScreen.hideAsync();
   }, []);
 
   return (
@@ -106,7 +99,6 @@ function RootLayout() {
                 <Stack.Screen name="game" options={{ gestureEnabled: false }} />
                 <Stack.Screen name="result" options={{ gestureEnabled: false }} />
                 <Stack.Screen name="style" />
-                <Stack.Screen name="lobby" />
                 <Stack.Screen name="shop" />
                 <Stack.Screen name="leaderboard" />
                 <Stack.Screen name="settings" options={{ presentation: 'modal' }} />
