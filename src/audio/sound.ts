@@ -191,30 +191,34 @@ export function initAudio() {
   attempt(() => (Object.keys(SFX) as Sfx[]).forEach(poolFor));
 
   // Pause music in the background; resume on return.
-  AppState.addEventListener('change', (state) => {
-    if (!current) return;
-    const p = musicPlayer(current);
-    if (state === 'active') {
-      if (musicOn()) {
-        attempt(() => p.play());
-        fadeTo(p, targetVolume(), 400);
+  AppState.addEventListener('change', (state) =>
+    attempt(() => {
+      if (!current) return;
+      const p = musicPlayer(current);
+      if (state === 'active') {
+        if (musicOn()) {
+          attempt(() => p.play());
+          fadeTo(p, targetVolume(), 400);
+        }
+      } else {
+        attempt(() => p.pause());
       }
-    } else {
-      attempt(() => p.pause());
-    }
-  });
+    }),
+  );
 
   // React to the Settings toggles immediately.
-  useGameStore.subscribe((s, prev) => {
-    if (s.musicEnabled === prev.musicEnabled || !current) return;
-    const p = musicPlayer(current);
-    if (s.musicEnabled) {
-      attempt(() => p.play());
-      fadeTo(p, targetVolume());
-    } else {
-      fadeTo(p, 0, 250);
-    }
-  });
+  useGameStore.subscribe((s, prev) =>
+    attempt(() => {
+      if (s.musicEnabled === prev.musicEnabled || !current) return;
+      const p = musicPlayer(current);
+      if (s.musicEnabled) {
+        attempt(() => p.play());
+        fadeTo(p, targetVolume());
+      } else {
+        fadeTo(p, 0, 250);
+      }
+    }),
+  );
 }
 
 export function playSfx(name: Sfx, volume = 1) {
@@ -232,6 +236,12 @@ export function playSfx(name: Sfx, volume = 1) {
 // Crossfade to a screen's track. Same track → no-op, so screens can call this
 // on every focus without restarting the song.
 export function playMusic(track: MusicTrack) {
+  // Creating a player can throw (Android rejects it while the app is
+  // closing), so the whole switch is guarded.
+  attempt(() => switchMusic(track));
+}
+
+function switchMusic(track: MusicTrack) {
   if (current === track) {
     if (musicOn()) {
       const p = musicPlayer(track);
@@ -257,7 +267,7 @@ export function playMusic(track: MusicTrack) {
 export function duckMusic(on: boolean) {
   ducked = on;
   if (!current || !musicOn()) return;
-  fadeTo(musicPlayer(current), targetVolume(), 350);
+  attempt(() => fadeTo(musicPlayer(current!), targetVolume(), 350));
 }
 
 // Start (or switch, or stop with null) the map's ambience bed.

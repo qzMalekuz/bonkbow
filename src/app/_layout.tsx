@@ -83,9 +83,11 @@ function RootLayout() {
         options={{
           host: 'https://us.i.posthog.com',
           disabled: !posthogKey,
-          enableSessionReplay: true,
+          // No session replay and no touch capture: screens show the wallet
+          // address, and the privacy policy promises events without one.
+          enableSessionReplay: false,
         }}
-        autocapture
+        autocapture={{ captureScreens: true, captureTouches: false }}
       >
         {/* Mobile Wallet Adapter session + @solana/kit RPC client. The auth
             token is cached in AsyncStorage so reconnects are silent. */}

@@ -167,7 +167,7 @@ const GAG = {
   cheerMiss: 0.7,
   backwards: 0.12, // start a turn facing the wrong way
   snack: 0.3, // eat an arrow while the other one aims
-  aiUp: 0.05, // AI fires straight up
+  aiUp: 0.05, // AI fires straight up (seeded, never raised by a habit)
   aiBackwards: 0.15, // AI draws the wrong way first
   habit: 0.75, // chance of the beat when it is his habit
   owDelay: 0.6, // seconds before a hit archer reacts
@@ -489,15 +489,17 @@ export class DuelSim {
   }
 
   // Did this archer's comedy beat come up? His habit makes it likely.
+  // Presentation only, so Math.random(): the seeded stream that the AI's aim
+  // draws from must not shift with the archers' looks.
   private gag(a: Archer, habit: Habit, chance: number) {
-    return this.rand() < (a.habit === habit ? Math.max(chance, GAG.habit) : chance);
+    return Math.random() < (a.habit === habit ? Math.max(chance, GAG.habit) : chance);
   }
 
   // While the other one aims, the idle archer may get peckish (or bored).
   private snackLater(a: Archer, whileTurn: Who) {
     const yawn = a.habit === 'yawn';
     if (!this.gag(a, yawn ? 'yawn' : 'eat', GAG.snack)) return;
-    this.later(1.6 + this.rand() * 3, () => {
+    this.later(1.6 + Math.random() * 3, () => {
       const still = whileTurn === 'player' ? this.phase === 'player' : this.phase === 'enemyThink' || this.phase === 'waitRemote';
       if (!still || a.death || a.gesture || a.walk > 0 || this.arrow.active) return;
       a.gesture = yawn ? 'yawn' : 'eat';
@@ -586,8 +588,8 @@ export class DuelSim {
       shooter.gesture = null;
       this.setMood(shooter, 'camera', 1.6);
       this.later(1.6, () => {
-        if (shooter.death || shooter.gesture || this.rand() < 0.5) return;
-        this.gesture(shooterWho, this.rand() < 0.5 ? 'shrug' : 'facepalm', 'sad');
+        if (shooter.death || shooter.gesture || Math.random() < 0.5) return;
+        this.gesture(shooterWho, Math.random() < 0.5 ? 'shrug' : 'facepalm', 'sad');
       });
       if (!victim.death) this.setMood(victim, 'smug', 1.4);
     }
@@ -717,7 +719,9 @@ export class DuelSim {
     a += (this.rand() * 2 - 1) * enemyNoise(this.score, this.skill);
     this.plannedPower = AI.speedFraction;
     // Now and then he aims straight up instead. It ends how you'd think.
-    if (this.gag(e, 'bonk', GAG.aiUp)) {
+    // It decides a shot, so it is seeded and the same for every look (a
+    // bonk habit doesn't make it likelier: nothing sold changes a shot).
+    if (this.rand() < GAG.aiUp) {
       a = Math.PI / 2 + (this.rand() - 0.5) * 0.004;
       this.plannedPower = 0.5;
     }

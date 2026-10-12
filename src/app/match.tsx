@@ -187,7 +187,7 @@ export default function MatchScreen() {
         rivalName: match.rivalName,
       });
       // The paid entry is used by this duel.
-      spendDuelCredit();
+      spendDuelCredit(match.seed);
       router.replace(`/game?${q.toString()}`);
     }, match.searchMs + 2600);
     return () => {
@@ -233,7 +233,7 @@ export default function MatchScreen() {
           <View style={styles.searching}>
             <PaperPlaneSpinner />
             <Text style={styles.searchText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
-              Searching for an opponent
+              Finding your AI rival
             </Text>
           </View>
         )
@@ -263,7 +263,7 @@ export default function MatchScreen() {
                   {formatSol(DUEL_FEE_LAMPORTS)}
                 </Text>
                 <Text style={styles.feeSub}>
-                  {wallet.account ? `From ${shortAddress(wallet.account.address)} to the Bonk Bow treasury` : 'Paid from your Solana wallet'}
+                  {wallet.account ? `One duel vs the AI. From ${shortAddress(wallet.account.address)} to the Bonk Bow treasury` : 'One duel vs the AI, paid from your Solana wallet'}
                 </Text>
                 {phase !== 'fee' && (
                   <View style={styles.feeBusy}>
@@ -274,16 +274,16 @@ export default function MatchScreen() {
                 {!!note && <Text style={styles.feeNote}>{note}</Text>}
               </ScrollView>
               {phase === 'fee' && (
-                <>
-                  <GameButton
-                    label={unconfirmed ? 'Check payment' : wallet.account ? `Pay ${formatSol(DUEL_FEE_LAMPORTS)} & fight` : 'Connect wallet & pay'}
-                    color="green"
-                    onPress={onPay}
-                    style={styles.feeBtn}
-                  />
-                  <GameButton label="Back" color="red" small onPress={() => router.back()} style={styles.feeBack} sound="ui_back" />
-                </>
+                <GameButton
+                  label={unconfirmed ? 'Check payment' : wallet.account ? `Pay ${formatSol(DUEL_FEE_LAMPORTS)} & fight` : 'Connect wallet & pay'}
+                  color="green"
+                  onPress={onPay}
+                  style={styles.feeBtn}
+                />
               )}
+              {/* Back stays while a payment is checked or confirmed: a fee
+                  already sent is kept as a credit for the next duel. */}
+              <GameButton label="Back" color="red" small onPress={() => router.back()} style={styles.feeBack} sound="ui_back" />
             </Animated.View>
           )}
         </View>

@@ -202,9 +202,16 @@ here (in the right section) in the same change that applies it.
    payments against (memo = id, amount ≥ price). Never rename a paid item's
    id, and don't raise a price casually: older purchases would stop
    restoring.
-4. Keep `.easignore` in sync with `.gitignore` (EAS reads it instead), but
+4. **Bonk Bow is not free to play.** Every duel costs `DUEL_FEE_LAMPORTS`
+   (0.01 SOL) to the treasury, paid on /match. The treasury is built into
+   `solana/config.ts` (`DEFAULT_TREASURY_ADDRESS`), so a build with no env
+   still charges; never add a free path. /match turns the paid entry into
+   a ticket for that match's seed (`spendDuelCredit(seed)`) and /game runs
+   a duel only with `hasDuelTicket(seed)`, otherwise it sends the player to
+   /match. Any new way into a duel goes through /match.
+5. Keep `.easignore` in sync with `.gitignore` (EAS reads it instead), but
    keep `assets/licensed/` uploaded: the APK needs the Unity models.
-5. Start EAS builds from the local machine (`bunx eas-cli workflow:run
+6. Start EAS builds from the local machine (`bunx eas-cli workflow:run
    build-android.yml` or `eas build`), never from a GitHub push: a checkout
    has no `assets/licensed/`.
 

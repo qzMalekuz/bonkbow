@@ -4,11 +4,12 @@
 //
 // Two ways to pay:
 // - SOL or SKR (the Seeker token, ~20% under the SOL price): the original
-//   derps, hats and the shovel bow. Recorded server-side under the product
-//   id; `ownedSkins` in the store is that server-verified list.
+//   derps, hats and the shovel bow. Paid wallet → treasury with the product
+//   id as memo and read back from the chain (solana/payments.ts);
+//   `ownedSkins` in the store is that chain-verified list.
 // - Coins, earned by playing (progression.ts): every newer item. Bought on
-//   the device, kept in the store's `coinItems`, never sent to the server
-//   and never mixed into `ownedSkins`.
+//   the device, kept in the store's `coinItems` and never mixed into
+//   `ownedSkins`.
 // An item is sold one way only. Gary, no hat, no clothes, the plain bow and
 // the plain arrow are free.
 //
@@ -118,7 +119,7 @@ export const isPaidSkin = (s: Skin) => s.priceLamports > 0 || s.priceSkr > 0;
 export const isFreeSkin = (s: Skin) => !isPaidSkin(s) && !isCoinSkin(s);
 
 // Owned = free, or bought the way it is sold: a SOL/SKR item only through
-// the server-verified `paid` list, a coin item only through `coin`.
+// the chain-verified `paid` list, a coin item only through `coin`.
 export const ownsProduct = (id: string, paid: string[], coin: string[] = []) => {
   const s = getSkin(id);
   if (!s) return false;

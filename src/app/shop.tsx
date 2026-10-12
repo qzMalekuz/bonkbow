@@ -43,7 +43,7 @@ const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
 ];
 const BLURB: Record<Tab, string> = {
   ...(Object.fromEntries(SECTIONS.map((s) => [s.kind, s.blurb])) as Record<ProductKind, string>),
-  maps: 'Where your duels happen. Online, the host picks.',
+  maps: 'Where your duels happen. Equip one and every duel is fought there.',
 };
 // Each section lists what's for sale: the free default of every slot but
 // the derps (Gary stays, to switch back to) is left out.
@@ -181,7 +181,7 @@ export default function ShopScreen() {
         else equip(skin.kind, skin.item);
         haptic.kill();
         playSfx('coins');
-        posthog.capture('purchase_completed', { skin: skin.id, currency: cur, signature: result.signature });
+        posthog.capture('purchase_completed', { skin: skin.id, currency: cur });
         if (cur === 'SKR') skrBalance.refresh();
         celebrate(`${skin.name}: yours.${!isMap(skin) && skin.kind === 'hat' ? ' It does not help.' : ''}`);
       } else if (result.reason === 'cancelled') {

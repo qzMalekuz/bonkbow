@@ -1,4 +1,4 @@
-import { router, useLocalSearchParams } from 'expo-router';
+import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BackHandler, StyleSheet, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, ZoomIn, useAnimatedStyle, useSharedValue, withSequence, withTiming, Easing } from 'react-native-reanimated';
@@ -12,7 +12,7 @@ import type { Theme } from '@/game3d/themes';
 import { HP } from '@/game3d/world';
 import { haptic } from '@/game/haptics';
 import { accuracyOf, useGameStore } from '@/game/store';
-import { randomSeed } from '@/game/maps';
+import { endDuelTicket, hasDuelTicket } from '@/solana/payments';
 import { lookFor, sanitizeLoadout, type Loadout } from '@/game/cosmetics';
 import { HapticTouchable } from '@/components/haptic-touchable';
 import { useScreenMusic } from '@/audio/useScreenMusic';
@@ -76,8 +76,20 @@ const loadoutFrom = (l: LooseLoadout | undefined) => sanitizeLoadout(l as Parame
 
 // The duel screen: the 3D duel against the AI plus HUD, chat, AI reactions,
 // and the side effects that belong on JS (haptics, audio, persistence,
-// analytics). /game?seed=…&rivalDerp=…  (the entry fee is paid on /match).
+// analytics). /game?seed=…&rivalDerp=…
+//
+// The entry fee is paid on /match, which hands this seed a ticket: without
+// it (a deep link, a stale route) the player goes to /match to pay.
 export default function GameScreen() {
+  const { seed: seedParam } = useLocalSearchParams<{ seed?: string }>();
+  const seed = Number(seedParam);
+  const [paid] = useState(() => Number.isFinite(seed) && hasDuelTicket(seed));
+  useEffect(() => () => endDuelTicket(seed), [seed]);
+  if (!paid) return <Redirect href="/match" />;
+  return <Duel seed={seed} />;
+}
+
+function Duel({ seed }: { seed: number }) {
   useScreenMusic('battle');
   useKeepAwake();
   const styles = useStyles();
@@ -88,7 +100,6 @@ export default function GameScreen() {
   // insets, padding and centre column; Plate shortens its bars to fit.
   const plateRoom = ((m.width - insets.left - insets.right) / m.scale - HUD_PAD * 2 - HUD_CENTER) / 2;
   const params = useLocalSearchParams<{
-    seed?: string;
     rivalDerp?: string;
     rivalHat?: string;
     rivalBow?: string;
@@ -97,8 +108,6 @@ export default function GameScreen() {
     rivalName?: string;
   }>();
   const mode: GameMode = 'ai';
-  const [fallbackSeed] = useState(() => randomSeed(useGameStore.getState().equippedMap));
-  const seed = params.seed ? Number(params.seed) : fallbackSeed;
   const rivalName = params.rivalName || 'Rival';
   const playerName = useGameStore((s) => s.playerName);
 
@@ -141,6 +150,9 @@ export default function GameScreen() {
   const lastEmoteAt = useRef(0);
   const rivalEmoteAt = useRef(0);
   const ended = useRef(false);
+  // The result ceremony's timer: cleared if the player quits before it fires.
+  const resultTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(resultTimer.current), []);
   const tickTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const endRef = useRef<(o: Outcome) => void>(() => {});
   const suddenAnnounced = useRef(false);
@@ -236,7 +248,7 @@ export default function GameScreen() {
       recordGame(score, st.shots, st.hits);
       submitScore(score);
       // Let the death / victory celebration play before the ceremony.
-      setTimeout(() => {
+      resultTimer.current = setTimeout(() => {
         router.replace({
           pathname: '/result',
           params: {
