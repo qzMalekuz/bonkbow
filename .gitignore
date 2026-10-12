@@ -57,3 +57,7 @@ docs/trailer/out/
 
 # Python bytecode
 __pycache__/
+
+# Real-person hero likenesses (retired heroes): never commit
+docs/trailer/rig/assets/heroes/
+docs/trailer/rig/assets/heads/
