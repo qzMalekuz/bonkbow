@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { HapticTouchable } from '@/components/haptic-touchable';
 import { lookFor } from '@/game/cosmetics';
 import { BOWS, DERPS, DERP_IDS, HATS, HAT_IDS, type BowId, type DerpId, type HatId } from '@/game/derps';
+import { ARROWS, ARROW_IDS, OUTFITS, OUTFIT_IDS, type ArrowId, type OutfitId } from '@/game/gear';
 import { Showcase, type ShowAction, type ShowAngle, type ShowState } from '@/game3d/Showcase';
 import type { Mood } from '@/game3d/sim';
 import { FONT } from '@/ui/kit';
@@ -39,14 +40,16 @@ export default function ShowcaseScreen() {
   const [derp, setDerp] = useState<DerpId>(DERP_IDS[0]);
   const [hat, setHat] = useState<HatId>('none');
   const [bow, setBow] = useState<BowId>('bow');
+  const [outfit, setOutfit] = useState<OutfitId>('none');
+  const [arrow, setArrow] = useState<ArrowId>('classic');
   const [action, setAction] = useState<ShowAction>('idle');
   const [angle, setAngle] = useState<ShowAngle>('front');
   const [mood, setMood] = useState<Mood | 'auto'>('auto');
   const [zoom, setZoom] = useState(4.8);
   const [wire, setWire] = useState(false);
   const state = useMemo<ShowState>(
-    () => ({ look: lookFor({ derp, hat, bow }), action, mood, angle, zoom, wire }),
-    [derp, hat, bow, action, mood, angle, zoom, wire],
+    () => ({ look: lookFor({ derp, hat, outfit, bow, arrow }), action, mood, angle, zoom, wire }),
+    [derp, hat, outfit, bow, arrow, action, mood, angle, zoom, wire],
   );
   if (!__DEV__) return <Redirect href="/" />;
 
@@ -71,9 +74,19 @@ export default function ShowcaseScreen() {
               <Chip key={id} label={HATS[id].name} on={hat === id} onPress={() => setHat(id)} />
             ))}
           </Group>
+          <Group label="Clothes">
+            {OUTFIT_IDS.map((id) => (
+              <Chip key={id} label={OUTFITS[id].name} on={outfit === id} onPress={() => setOutfit(id)} />
+            ))}
+          </Group>
           <Group label="Bow">
             {(Object.keys(BOWS) as BowId[]).map((id) => (
               <Chip key={id} label={BOWS[id].name} on={bow === id} onPress={() => setBow(id)} />
+            ))}
+          </Group>
+          <Group label="Arrow">
+            {ARROW_IDS.map((id) => (
+              <Chip key={id} label={ARROWS[id].name} on={arrow === id} onPress={() => setArrow(id)} />
             ))}
           </Group>
           <Group label="Action">

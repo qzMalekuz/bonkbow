@@ -38,20 +38,26 @@ export default function ResultScreen() {
     headshots?: string;
     xp?: string;
     coins?: string;
+    matchCoins?: string;
+    dailyBonus?: string;
+    levelBonus?: string;
     prevXp?: string;
     rivalName?: string;
     rivalDerp?: string;
     rivalHat?: string;
     rivalBow?: string;
+    rivalOutfit?: string;
+    rivalArrow?: string;
   }>();
-  const online = p.mode === 'online';
-  const won = p.outcome === 'win' || p.outcome === 'left';
   const score = Number(p.score ?? 0);
   const shots = Number(p.shots ?? 0);
   const hits = Number(p.hits ?? 0);
   const headshots = Number(p.headshots ?? 0);
   const xpGain = Number(p.xp ?? 0);
   const coinGain = Number(p.coins ?? 0);
+  const dailyBonus = Number(p.dailyBonus ?? 0);
+  const levelBonus = Number(p.levelBonus ?? 0);
+  const playerName = useGameStore((s) => s.playerName);
   const prevXp = Number(p.prevXp ?? 0);
   const highScore = useGameStore((s) => s.highScore);
   const coins = useGameStore((s) => s.coins);
@@ -59,12 +65,15 @@ export default function ResultScreen() {
   const me = useMemo(() => lookFor(loadout), [loadout]);
   // The rival's loadout rides in the params as plain strings.
   const rival = useMemo(
-    () => lookFor(sanitizeLoadout({ derp: p.rivalDerp, hat: p.rivalHat, bow: p.rivalBow } as Partial<Loadout>)),
-    [p.rivalDerp, p.rivalHat, p.rivalBow],
+    () =>
+      lookFor(
+        sanitizeLoadout({ derp: p.rivalDerp, hat: p.rivalHat, outfit: p.rivalOutfit, bow: p.rivalBow, arrow: p.rivalArrow } as Partial<Loadout>),
+      ),
+    [p.rivalDerp, p.rivalHat, p.rivalOutfit, p.rivalBow, p.rivalArrow],
   );
 
   // vs AI the run always ends with me down, but kills make it a good run.
-  const iWon = online ? won : false;
+  const iWon = false;
   const actors = useMemo<Actor[]>(
     () => [
       { look: me, x: -1.25, facing: 1, performance: iWon ? 'cheer' : score > 0 ? 'sad' : 'stomp' },
@@ -92,7 +101,7 @@ export default function ResultScreen() {
 
   const playAgain = () => {
     haptic.release();
-    router.replace(online ? '/lobby' : '/match?mode=ai');
+    router.replace('/match');
   };
 
   return (
@@ -103,7 +112,9 @@ export default function ResultScreen() {
       {/* Name plates with laurel badges */}
       <Animated.View entering={FadeInDown.duration(400)} style={[styles.side, styles.left]}>
         <View style={styles.nameBox}>
-          <Text style={styles.name}>You</Text>
+          <Text style={styles.name} numberOfLines={1}>
+            {playerName || 'You'}
+          </Text>
         </View>
         <Animated.View entering={ZoomIn.delay(500).duration(240)}>
           <LaurelBadge label={iWon ? 'WON. SOMEHOW.' : 'LOST'} win={iWon} />
@@ -121,15 +132,27 @@ export default function ResultScreen() {
       </Animated.View>
 
       <CoinCounter from={coins - coinGain} to={coins} />
+      {(dailyBonus > 0 || levelBonus > 0) && (
+        <View style={styles.bonuses} pointerEvents="none">
+          {dailyBonus > 0 && (
+            <Animated.Text entering={FadeInDown.delay(1300).duration(300)} style={styles.bonus}>
+              +{dailyBonus} daily bonus
+            </Animated.Text>
+          )}
+          {levelBonus > 0 && (
+            <Animated.Text entering={FadeInDown.delay(2000).duration(300)} style={styles.bonus}>
+              +{levelBonus} level-up bonus
+            </Animated.Text>
+          )}
+        </View>
+      )}
 
       {/* Centre: run summary */}
-      {!online && (
-        <Animated.View entering={FadeIn.delay(700).duration(400)} style={styles.summary}>
-          <Text style={styles.kills}>{score}</Text>
-          <Text style={styles.killsLabel}>{score === 1 ? 'GUY BONKED' : 'GUYS BONKED'}</Text>
-          {score > 0 && score >= highScore && <Text style={styles.best}>NEW BEST. NOBODY SAW.</Text>}
-        </Animated.View>
-      )}
+      <Animated.View entering={FadeIn.delay(700).duration(400)} style={styles.summary}>
+        <Text style={styles.kills}>{score}</Text>
+        <Text style={styles.killsLabel}>{score === 1 ? 'GUY BONKED' : 'GUYS BONKED'}</Text>
+        {score > 0 && score >= highScore && <Text style={styles.best}>NEW BEST. NOBODY SAW.</Text>}
+      </Animated.View>
 
       {/* Bottom: stats, XP, buttons */}
       <View style={styles.bottom}>
@@ -165,15 +188,20 @@ function CoinCounter({ from, to }: { from: number; to: number }) {
     if (to <= from) return;
     let v = from;
     const step = Math.max(1, Math.round((to - from) / 20));
+    let id: ReturnType<typeof setInterval> | undefined;
     const start = setTimeout(() => {
       playSfx('coin_gain');
-      const id = setInterval(() => {
+      haptic.xpTick();
+      id = setInterval(() => {
         v = Math.min(to, v + step);
         setShown(v);
         if (v >= to) clearInterval(id);
       }, 45);
     }, 900);
-    return () => clearTimeout(start);
+    return () => {
+      clearTimeout(start);
+      clearInterval(id);
+    };
   }, [from, to]);
   return (
     <Animated.View entering={FadeIn.delay(300)} style={styles.purse}>
@@ -273,6 +301,8 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
   },
   purseText: { fontFamily: FONT.bold, fontSize: 16, color: '#FFFFFF' },
+  bonuses: { position: 'absolute', top: 96, left: 16, gap: 2 },
+  bonus: { fontFamily: FONT.bold, fontSize: 13, color: '#FFC83D', ...shadow },
   summary: { position: 'absolute', top: '24%', alignSelf: 'center', alignItems: 'center' },
   kills: { fontFamily: FONT.bold, fontSize: 64, color: '#FFFFFF', ...shadow },
   killsLabel: { fontFamily: FONT.bold, fontSize: 14, letterSpacing: 3, color: 'rgba(255,255,255,0.85)', ...shadow, marginTop: -8 },

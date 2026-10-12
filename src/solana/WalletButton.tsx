@@ -2,15 +2,14 @@ import { ActivityIndicator, Alert, StyleSheet, Text } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { HapticTouchable } from '@/components/haptic-touchable';
 import { shortAddress } from '@/solana/config';
-import { useWalletAuth } from '@/solana/auth';
+import { isUserRejection, useWalletAuth } from '@/solana/auth';
 import { haptic } from '@/game/haptics';
-import { isSupabaseConfigured } from '@/utils/supabase';
 
-// "Sign in with wallet": MWA authorize → Sign in with Solana → Supabase
-// session. Tapping again when signed in signs out (wallet + session).
+// "Sign in with wallet": one MWA sheet connects the wallet (Phantom, Solflare,
+// Seed Vault). Tapping again when connected disconnects it.
 export function WalletButton() {
-  const { address, session, signingIn, signIn, signOut } = useWalletAuth();
-  const signedIn = !!address && (session != null || !isSupabaseConfigured);
+  const { address, signingIn, signIn, signOut } = useWalletAuth();
+  const signedIn = !!address;
 
   const onPress = async () => {
     if (signingIn) return;
@@ -24,7 +23,7 @@ export function WalletButton() {
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (!/cancel|declin|reject/i.test(msg)) {
+      if (!isUserRejection(msg)) {
         Alert.alert(
           'Wallet sign-in failed',
           /wallet|MWA|intent|activity/i.test(msg)

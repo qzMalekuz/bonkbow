@@ -1,8 +1,9 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, ScrollView, StyleSheet, Text, View } from 'react-native';
+import Animated, { FadeInDown, FadeOut, ZoomIn } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useMobileWallet } from '@wallet-ui/react-native-kit';
 import { usePostHog } from 'posthog-react-native';
 import { HapticTouchable } from '@/components/haptic-touchable';
@@ -10,43 +11,48 @@ import { useScreenMusic } from '@/audio/useScreenMusic';
 import { playSfx } from '@/audio/sound';
 import { COLORS } from '@/game/constants';
 import { haptic } from '@/game/haptics';
-import { SHOP_BOWS, SHOP_DERPS, SHOP_HATS, SKINS, formatSol, ownsProduct, type Currency, type Skin } from '@/game/skins';
-import type { DerpId, HatId } from '@/game/derps';
-import { DerpThumb } from '@/ui/DerpThumb';
+import { SKINS, isCoinSkin, isFreeSkin, ownsProduct, productId, type Currency, type ProductKind, type Skin } from '@/game/skins';
 import { SkinStage } from '@/game3d/SkinStage';
 import { Stage } from '@/game3d/Stage';
 import { MAPS, isFreeMap, type GameMap } from '@/game/maps';
-import { lookFor, sanitizeLoadout } from '@/game/cosmetics';
+import { DEFAULT_LOADOUT, lookFor, sanitizeLoadout, type Loadout } from '@/game/cosmetics';
 import { useGameStore } from '@/game/store';
-import { sessionWalletAddress, useWalletAuth } from '@/solana/auth';
+import { isUserRejection, useWalletAuth } from '@/solana/auth';
 import { CLUSTER, SHOP_ENABLED, SKR_ENABLED } from '@/solana/config';
-import { buySkin, restorePendingPurchase } from '@/solana/payments';
+import { buySkin, restorePendingPurchase, restorePurchasesFromChain } from '@/solana/payments';
 import { formatSkr, useSkrBalance } from '@/solana/skr';
-import { isSupabaseConfigured } from '@/utils/supabase';
+import { CoinIcon, CoinPill, FONT } from '@/ui/kit';
+import { PartThumb, PriceTag, SECTIONS, priceOf } from '@/ui/PartThumb';
 
-// In-game shop, three tabs: the derps (who you play as; Gary is free), hats
-// (they do not help) with the shovel bow on top, and the maps (Classic is
-// free; the three Unity environment maps are locked until bought). All are
-// paid in SOL or SKR through the connected wallet (MWA signs and sends a
-// transfer to the treasury); ownership is granted server-side after
-// on-chain verification. Prices are placeholders — skins.ts and maps.ts.
+// In-game shop, one tab per section: characters, clothes, hats, bows,
+// arrows (skins.ts) and maps (maps.ts). The newer items cost coins, earned
+// by playing; the originals (four derps, ten hats, the shovel bow, the three
+// Unity maps) are paid in SOL or SKR through the connected wallet (MWA signs
+// and sends a transfer to the treasury) and unlocked on this device once the
+// transfer is confirmed on-chain (solana/payments.ts). Free defaults (Gary,
+// Classic) are listed too.
 type Product = Skin | GameMap;
 const isMap = (p: Product): p is GameMap => 'theme' in p;
 
-type Tab = 'derps' | 'hats' | 'maps';
-const TABS: { id: Tab; label: string }[] = [
-  { id: 'derps', label: 'Derps' },
-  { id: 'hats', label: 'Hats' },
-  { id: 'maps', label: 'Maps' },
+type Tab = ProductKind | 'maps';
+const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
+  ...SECTIONS.map((s) => ({ id: s.kind as Tab, label: s.label, icon: s.icon })),
+  { id: 'maps', label: 'Maps', icon: <Ionicons name="map" size={15} color="#FFFFFF" /> },
 ];
-const TAB_BLURB: Record<Tab, string | null> = {
-  derps: 'Same stick body. Same bow. Different idiot.',
-  hats: 'They do not help.',
-  maps: null,
+const BLURB: Record<Tab, string> = {
+  ...(Object.fromEntries(SECTIONS.map((s) => [s.kind, s.blurb])) as Record<ProductKind, string>),
+  maps: 'Where your duels happen. Online, the host picks.',
 };
-const SHOVEL = SHOP_BOWS.find((b) => b.item === 'shovel');
-const tabOf = (p: Skin): Tab => (p.kind === 'derp' ? 'derps' : 'hats');
-const productById = (id: string | undefined) => [...SHOP_DERPS, ...SHOP_HATS, ...SHOP_BOWS].find((s) => s.id === id);
+// Each section lists what's for sale: the free default of every slot but
+// the derps (Gary stays, to switch back to) is left out.
+const LISTS: Record<ProductKind, Skin[]> = Object.fromEntries(
+  SECTIONS.map(({ kind }) => [kind, SKINS.filter((s) => s.kind === kind && (kind === 'derp' || !isFreeSkin(s)))]),
+) as Record<ProductKind, Skin[]>;
+const ALL_SKINS = Object.values(LISTS).flat();
+const productById = (id: string | undefined) => ALL_SKINS.find((s) => s.id === id);
+// Old links say derps / hats.
+const tabParam = (t: string | undefined): Tab | null =>
+  t === 'derps' ? 'derp' : t === 'hats' ? 'hat' : TABS.some((x) => x.id === t) ? (t as Tab) : null;
 
 // The map preview: my archer on a ledge, framed wide enough to see the set.
 const MAP_CAMERA = { x: 0.6, y: 2.1, z: 7, lookX: 1.4, lookY: 2.3, fov: 50, drift: 0.25 };
@@ -60,9 +66,12 @@ const MAP_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
 export default function ShopScreen() {
   useScreenMusic('shop');
   const wallet = useMobileWallet();
-  const { session, signIn, signingIn, refreshOwnedSkins } = useWalletAuth();
+  const { signIn, signingIn } = useWalletAuth();
   const posthog = usePostHog();
   const owned = useGameStore((s) => s.ownedSkins);
+  const coinItems = useGameStore((s) => s.coinItems);
+  const coins = useGameStore((s) => s.coins);
+  const buyWithCoins = useGameStore((s) => s.buyWithCoins);
   const equip = useGameStore((s) => s.equip);
   const equippedMap = useGameStore((s) => s.equippedMap);
   const equipMap = useGameStore((s) => s.equipMap);
@@ -74,25 +83,27 @@ export default function ShopScreen() {
   const currency: Currency = SKR_ENABLED ? preferred : 'SOL';
   const skrBalance = useSkrBalance();
   const [buying, setBuying] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
   // What the derp on the stage is doing (the derp reel).
   const [step, setStep] = useState('');
   // Opens on the tab and item we were sent to (from "Choose your style"),
-  // else on the derps with the one I'm wearing.
+  // else on the characters with the one I'm wearing.
   const params = useLocalSearchParams<{ skin?: string; tab?: string }>();
   const sentTo = productById(params.skin);
-  const [tab, setTabState] = useState<Tab>(() =>
-    params.tab === 'maps' || params.tab === 'hats' || params.tab === 'derps' ? params.tab : sentTo ? tabOf(sentTo) : 'derps',
-  );
+  const [tab, setTabState] = useState<Tab>(() => tabParam(params.tab) ?? sentTo?.kind ?? 'derp');
   const [mapId, setMapId] = useState(equippedMap);
   const previewMap = MAPS.find((m) => m.id === mapId) ?? MAPS[0];
   const myLook = useMemo(() => lookFor(loadout), [loadout]);
   const mapActors = useMemo(() => [{ look: myLook, x: 0, facing: 1 as const, performance: 'idle' as const }], [myLook]);
-  // The product on the 3D stage: what I wear of that tab's kind by default.
-  const wornFor = (t: Tab) =>
-    t === 'derps' ? `derp_${loadout.derp}` : loadout.bow === 'shovel' ? 'bow_shovel' : loadout.hat !== 'none' ? `hat_${loadout.hat}` : SHOP_HATS[0].id;
+  // The product on the 3D stage: what I wear of that section, else its first.
+  const wornFor = (t: Tab) => {
+    if (t === 'maps') return '';
+    const id = productId(t, loadout[t as keyof Loadout]);
+    return LISTS[t].some((s) => s.id === id) ? id : LISTS[t][0].id;
+  };
   const [previewId, setPreviewId] = useState(() => sentTo?.id ?? wornFor(tab));
-  const preview = productById(previewId) ?? (tab === 'hats' ? SHOP_HATS[0] : SHOP_DERPS[0]);
-  // A derp keeps my hat and bow; a hat or the shovel bow goes on my derp.
+  const preview = productById(previewId) ?? LISTS.derp[0];
+  // The part goes on my archer; everything else stays as I wear it.
   const previewLook = useMemo(() => lookFor(sanitizeLoadout({ ...loadout, [preview.kind]: preview.item })), [loadout, preview]);
   const setTab = (t: Tab) => {
     setTabState(t);
@@ -102,58 +113,43 @@ export default function ShopScreen() {
   // run it on the next render, when `wallet` reflects the connected account.
   const queued = useRef<{ skin: Product; cur: Currency } | null>(null);
 
-  // On open: pull server-side ownership and finish any purchase whose
-  // verification was interrupted last time. `pending` clears itself in the
-  // store once the server confirms the grant.
+  // "Yours." banner after a purchase; a new one restarts the timer.
+  const toastSeq = useRef(0);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(toastTimer.current), []);
+  const celebrate = (text: string) => {
+    toastSeq.current += 1;
+    setToast({ id: toastSeq.current, text });
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2000);
+  };
+
+  // ---- SOL / SKR purchases --------------------------------------------------------
+  // On open: finish any payment whose confirmation was interrupted last time
+  // (`pending` clears itself once the chain shows it), and, with a wallet
+  // connected, pull back items this wallet bought on another install (its
+  // "bonkbow:<item>" memos to the treasury).
+  const walletAddress = wallet.account?.address;
   useEffect(() => {
-    if (!isSupabaseConfigured || !session) return;
-    refreshOwnedSkins().catch(() => {});
-    if (pending) {
-      restorePendingPurchase().then((id) => {
-        if (id) {
-          haptic.success();
-          const name = [...SKINS, ...MAPS].find((s) => s.id === id)?.name ?? 'Your item';
-          Alert.alert('Purchase restored', `${name} is now unlocked.`);
-        }
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session]);
-
-  const onEquip = (item: Product) => {
-    haptic.release();
-    if (isMap(item)) {
-      equipMap(item.id);
-      posthog.capture('map_equipped', { map: item.id });
-    } else {
-      equip(item.kind, item.item);
-      posthog.capture('skin_equipped', { skin: item.id });
-    }
-  };
-
-  // Hats and the shovel bow come off again; a derp is swapped, not removed.
-  const onTakeOff = (item: Skin) => {
-    haptic.release();
-    equip(item.kind, item.kind === 'bow' ? 'bow' : 'none');
-  };
+    if (!SHOP_ENABLED) return;
+    const unlocked = (ids: string[]) => {
+      if (!ids.length) return;
+      haptic.success();
+      const names = ids.map((id) => [...SKINS, ...MAPS].find((s) => s.id === id)?.name ?? id);
+      Alert.alert('Purchases restored', `${names.join(', ')} ${ids.length === 1 ? 'is' : 'are'} unlocked again.`);
+    };
+    restorePendingPurchase()
+      .then((id) => unlocked(id ? [id] : []))
+      .then(() => (walletAddress ? restorePurchasesFromChain(walletAddress) : []))
+      .then(unlocked)
+      .catch(() => {});
+  }, [walletAddress]);
 
   const purchase = async (skin: Product, cur: Currency) => {
     if (!wallet.account) return; // guarded by callers
     const price = cur === 'SKR' ? skin.priceSkr : skin.priceLamports;
     setBuying(skin.id);
     try {
-      // The server grants the skin to the account that signed in. If the
-      // wallet has since switched accounts, paying would burn funds from the
-      // wrong one — stop before any transfer.
-      const sessionAddr = sessionWalletAddress(session);
-      if (sessionAddr && sessionAddr !== wallet.account.address) {
-        haptic.warning();
-        Alert.alert(
-          'Wallet changed',
-          `You signed in as ${sessionAddr.slice(0, 4)}… but the wallet is on ${wallet.account.address.slice(0, 4)}…. Sign out and back in with the account you want to buy with.`,
-        );
-        return;
-      }
       if (cur === 'SKR' && skrBalance.baseUnits !== null && skrBalance.baseUnits < BigInt(price)) {
         haptic.warning();
         Alert.alert(
@@ -177,7 +173,7 @@ export default function ShopScreen() {
         playSfx('coins');
         posthog.capture('purchase_completed', { skin: skin.id, currency: cur, signature: result.signature });
         if (cur === 'SKR') skrBalance.refresh();
-        Alert.alert('Yours.', `${skin.name} unlocked and equipped.${!isMap(skin) && skin.kind === 'hat' ? ' It does not help.' : ''}`);
+        celebrate(`${skin.name}: yours.${!isMap(skin) && skin.kind === 'hat' ? ' It does not help.' : ''}`);
       } else if (result.reason === 'cancelled') {
         haptic.tap();
       } else if (result.reason === 'verify-failed') {
@@ -186,7 +182,7 @@ export default function ShopScreen() {
           result.retryable ? 'Payment sent, unlock pending' : 'Payment sent, not accepted',
           result.retryable
             ? `The transfer went through but we couldn't confirm it yet. Reopen the shop in a moment and it will retry automatically.\n\n${result.detail ?? ''}`
-            : `The transfer was sent but the server rejected it, so it won't be retried. Keep this signature and contact support:\n${result.signature ?? ''}\n\n${result.detail ?? ''}`,
+            : `The transfer was sent but it doesn't pay the treasury the price of this item, so it won't be retried. Keep this signature:\n${result.signature ?? ''}\n\n${result.detail ?? ''}`,
         );
       } else {
         haptic.warning();
@@ -200,11 +196,11 @@ export default function ShopScreen() {
   // Runs the queued purchase once the connected account is visible to this render.
   useEffect(() => {
     const q = queued.current;
-    if (!q || !wallet.account || !session) return;
+    if (!q || !wallet.account) return;
     queued.current = null;
     Promise.resolve().then(() => purchase(q.skin, q.cur));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wallet.account, session]);
+  }, [wallet.account]);
 
   const onBuy = async (skin: Product, cur: Currency) => {
     if (buying || queued.current) return;
@@ -212,15 +208,11 @@ export default function ShopScreen() {
       Alert.alert('Shop not configured', 'Set EXPO_PUBLIC_TREASURY_ADDRESS to enable purchases.');
       return;
     }
-    if (!isSupabaseConfigured) {
-      Alert.alert('Shop needs a backend', 'Purchases are verified server-side. Configure Supabase (README → Services).');
-      return;
-    }
-    if (wallet.account && session) {
+    if (wallet.account) {
       await purchase(skin, cur);
       return;
     }
-    // Not signed in: wallet sheet → SIWS → session, then the effect above buys
+    // No wallet yet: connect sheet first, then the effect above buys
     // (it takes over the spinner via `buying`).
     setBuying(skin.id);
     try {
@@ -230,14 +222,60 @@ export default function ShopScreen() {
       queued.current = null;
       setBuying(null);
       const msg = e instanceof Error ? e.message : String(e);
-      if (!/cancel|declin|reject/i.test(msg)) Alert.alert('Sign-in failed', msg);
+      if (!isUserRejection(msg)) Alert.alert('Wallet not connected', msg);
+    }
+  };
+  // ---- end SOL / SKR purchases ----------------------------------------------------
+
+  // Coin items: confirm, spend, put it on.
+  const onBuyCoins = (item: Skin) => {
+    if (coins < item.priceCoins) {
+      haptic.warning();
+      playSfx('ui_error');
+      Alert.alert(
+        'Not enough coins',
+        `${item.name} costs ${item.priceCoins.toLocaleString()} coins. You need ${(item.priceCoins - coins).toLocaleString()} more.\n\nEvery match pays coins, and your first match each day pays a bonus.`,
+      );
+      return;
+    }
+    haptic.tap();
+    Alert.alert(`Buy ${item.name}?`, `${item.priceCoins.toLocaleString()} coins. You'll have ${(coins - item.priceCoins).toLocaleString()} left.`, [
+      { text: 'Not yet', style: 'cancel' },
+      {
+        text: 'Buy it',
+        onPress: () => {
+          if (!buyWithCoins(item.id)) return;
+          equip(item.kind, item.item);
+          haptic.kill();
+          playSfx('coins');
+          posthog.capture('coin_purchase', { skin: item.id, price: item.priceCoins });
+          celebrate(`${item.name}: yours.`);
+        },
+      },
+    ]);
+  };
+
+  const onEquip = (item: Product) => {
+    haptic.release();
+    if (isMap(item)) {
+      equipMap(item.id);
+      posthog.capture('map_equipped', { map: item.id });
+    } else {
+      equip(item.kind, item.item);
+      posthog.capture('skin_equipped', { skin: item.id });
     }
   };
 
-  const isOwned = (item: Product) => (isMap(item) ? isFreeMap(item) || owned.includes(item.id) : ownsProduct(item.id, owned));
-  const isWorn = (item: Product) => (isMap(item) ? equippedMap === item.id : loadout[item.kind] === item.item);
+  // Everything but a derp comes off again, back to the slot's free default.
+  const onTakeOff = (item: Skin) => {
+    haptic.release();
+    equip(item.kind, DEFAULT_LOADOUT[item.kind as keyof Loadout]);
+  };
 
-  // Equip / take off / buy, for a card or the shovel-bow banner.
+  const isOwned = (item: Product) => (isMap(item) ? isFreeMap(item) || owned.includes(item.id) : ownsProduct(item.id, owned, coinItems));
+  const isWorn = (item: Product) => (isMap(item) ? equippedMap === item.id : loadout[item.kind as keyof Loadout] === item.item);
+
+  // Equip / take off / buy, for a card.
   const action = (item: Product) => {
     const map = isMap(item) ? item : null;
     const worn = isWorn(item);
@@ -255,19 +293,30 @@ export default function ShopScreen() {
         </HapticTouchable>
       );
     }
-    // An item not sold in the selected currency falls back to the other.
-    const cur: Currency = currency === 'SKR' ? (item.priceSkr > 0 ? 'SKR' : 'SOL') : item.priceLamports > 0 ? 'SOL' : 'SKR';
-    const label = cur === 'SKR' ? formatSkr(item.priceSkr) : formatSol(item.priceLamports);
+    if (!map && isCoinSkin(item as Skin)) {
+      const price = (item as Skin).priceCoins;
+      const short = coins < price;
+      return (
+        <HapticTouchable style={[styles.cta, styles.ctaCoins, short && styles.ctaShort]} onPress={() => onBuyCoins(item as Skin)} sound={null}>
+          <CoinIcon size={16} />
+          <Text style={[styles.ctaText, styles.ctaCoinsText]}>{price.toLocaleString()}</Text>
+        </HapticTouchable>
+      );
+    }
+    const price = priceOf({ priceCoins: 0, priceLamports: item.priceLamports, priceSkr: item.priceSkr }, currency);
+    const cur = price.kind === 'coins' ? 'SOL' : price.kind;
     const sellable = cur === 'SOL' ? item.priceLamports > 0 : SKR_ENABLED && item.priceSkr > 0;
     return (
       <HapticTouchable style={[styles.cta, !sellable && styles.ctaDisabled]} onPress={() => onBuy(item, cur)} disabled={!!buying || !sellable}>
-        {buying === item.id ? <ActivityIndicator color="#0B0B0F" /> : <Text style={styles.ctaText}>{sellable ? label : 'Needs SKR'}</Text>}
+        {buying === item.id ? <ActivityIndicator color="#0B0B0F" /> : <Text style={styles.ctaText}>{sellable ? price.label : 'Needs SKR'}</Text>}
       </HapticTouchable>
     );
   };
 
-  const data: Product[] = tab === 'maps' ? MAPS : tab === 'derps' ? SHOP_DERPS : SHOP_HATS;
-  const blurb = TAB_BLURB[tab];
+  const data: Product[] = tab === 'maps' ? MAPS : LISTS[tab];
+  // Wallet, currency and balance only matter where something is sold in SOL/SKR.
+  const paidHere = data.some((p) => p.priceLamports > 0 || p.priceSkr > 0);
+  const stageItem: Product = tab === 'maps' ? previewMap : preview;
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom', 'left', 'right']}>
@@ -285,45 +334,54 @@ export default function ShopScreen() {
               <Text style={styles.stepText}>{step}</Text>
             </View>
           )}
-          {(tab === 'maps' ? !isOwned(previewMap) : !isOwned(preview)) && (
+          {!isOwned(stageItem) && (
             <View style={[styles.stepChip, styles.lockChip, tab !== 'maps' && styles.lockChipRight]} pointerEvents="none">
               <Ionicons name="lock-closed" size={12} color="#FFFFFF" />
               <Text style={styles.stepText}>Locked</Text>
             </View>
           )}
-          <View style={styles.stageInfo} pointerEvents="none">
-            <Text style={styles.stageName}>{tab === 'maps' ? previewMap.name : preview.name}</Text>
+          <Animated.View key={stageItem.id} entering={FadeInDown.duration(260)} style={styles.stageInfo} pointerEvents="none">
+            <Text style={styles.stageName}>{stageItem.name}</Text>
             <Text style={styles.stageDesc} numberOfLines={3}>
-              {tab === 'maps' ? previewMap.description : preview.description}
+              {stageItem.description}
             </Text>
-          </View>
+            {!isOwned(stageItem) &&
+              (isMap(stageItem) ? (
+                <Text style={styles.stagePrice}>{priceOf({ priceCoins: 0, priceLamports: stageItem.priceLamports, priceSkr: stageItem.priceSkr }, currency).label}</Text>
+              ) : (
+                <PriceTag part={stageItem} currency={currency} style={styles.stageTag} />
+              ))}
+          </Animated.View>
         </View>
         <View style={styles.listCol}>
           <View style={styles.header}>
-            <HapticTouchable onPress={() => router.back()} hitSlop={12} sound="ui_back">
-              <Ionicons name="chevron-back" size={26} color="#FFFFFF" />
+            <HapticTouchable onPress={() => router.back()} hitSlop={12} sound="ui_back" style={styles.back}>
+              <Ionicons name="chevron-back" size={24} color="#FFFFFF" />
             </HapticTouchable>
             <Text style={styles.title}>Shop</Text>
-            <View style={styles.tabs}>
-              {TABS.map((t) => (
-                <HapticTouchable key={t.id} style={[styles.tab, tab === t.id && styles.tabActive]} onPress={() => setTab(t.id)} sound="ui_click">
-                  <Text style={[styles.tabText, tab === t.id && styles.tabTextActive]}>{t.label}</Text>
-                </HapticTouchable>
-              ))}
-            </View>
+            <CoinPill coins={coins} />
             <Text style={styles.cluster}>{CLUSTER.name}</Text>
           </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabsScroll} contentContainerStyle={styles.tabs}>
+            {TABS.map((t) => (
+              <HapticTouchable key={t.id} style={[styles.tab, tab === t.id && styles.tabActive]} onPress={() => setTab(t.id)} sound="ui_click">
+                {t.icon}
+                <Text style={[styles.tabText, tab === t.id && styles.tabTextActive]}>{t.label}</Text>
+              </HapticTouchable>
+            ))}
+          </ScrollView>
 
           <FlatList<Product>
             key={tab}
             data={data}
             keyExtractor={(s) => s.id}
             numColumns={tab === 'maps' ? 2 : 3}
-            columnWrapperStyle={{ gap: 12 }}
+            columnWrapperStyle={{ gap: 10 }}
             contentContainerStyle={styles.grid}
             ListHeaderComponent={
               <View style={styles.headerBlock}>
-                {SKR_ENABLED && (
+                <Text style={styles.tabBlurb}>{BLURB[tab]}</Text>
+                {paidHere && SKR_ENABLED && (
                   <View style={styles.segment}>
                     {(['SKR', 'SOL'] as Currency[]).map((c) => (
                       <HapticTouchable
@@ -336,89 +394,84 @@ export default function ShopScreen() {
                     ))}
                   </View>
                 )}
-                <View style={styles.balanceRow}>
-                  <Ionicons name="wallet-outline" size={16} color="rgba(255,255,255,0.7)" />
-                  <Text style={styles.blurb}>
-                    {!wallet.account
-                      ? 'Purchases stay tied to your wallet. Sign in when you buy.'
-                      : SKR_ENABLED
-                        ? skrBalance.loading
-                          ? 'Reading SKR balance…'
-                          : skrBalance.baseUnits === null
-                            ? 'SKR balance unavailable'
-                            : `${formatSkr(skrBalance.baseUnits)} in wallet`
-                        : 'Paid in SOL from your wallet.'}
-                    {signingIn ? ' Confirm in your wallet…' : ''}
-                  </Text>
-                </View>
-                {SKR_ENABLED && currency === 'SKR' && <Text style={styles.hint}>SKR prices run ~20% under SOL.</Text>}
-                {pending && session && (
+                {paidHere ? (
+                  <View style={styles.balanceRow}>
+                    <Ionicons name="wallet-outline" size={15} color="rgba(255,255,255,0.7)" />
+                    <Text style={styles.hint}>
+                      {!wallet.account
+                        ? 'Paid from your wallet. Connect it when you buy.'
+                        : SKR_ENABLED
+                          ? skrBalance.loading
+                            ? 'Reading SKR balance…'
+                            : skrBalance.baseUnits === null
+                              ? 'SKR balance unavailable'
+                              : `${formatSkr(skrBalance.baseUnits)} in wallet`
+                          : 'Paid in SOL from your wallet.'}
+                      {signingIn ? ' Confirm in your wallet…' : ''}
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={styles.balanceRow}>
+                    <CoinIcon size={14} />
+                    <Text style={styles.hint}>Earned in every match. Your first match each day pays a bonus.</Text>
+                  </View>
+                )}
+                {pending && paidHere && (
                   <Text style={styles.hint}>A payment is waiting for confirmation. It retries each time you open the shop.</Text>
                 )}
-                {tab === 'hats' && SHOVEL && (
-                  // The promised community item: its own banner above the hats.
-                  <HapticTouchable
-                    style={[styles.shovel, isWorn(SHOVEL) && styles.cardEquipped, previewId === SHOVEL.id && styles.cardPreview]}
-                    onPress={() => setPreviewId(SHOVEL.id)}
-                    sound="ui_click"
-                  >
-                    <View style={styles.shovelIcon}>
-                      <MaterialCommunityIcons name="shovel" size={34} color="#0B0B0F" />
-                    </View>
-                    <View style={styles.shovelText}>
-                      <Text style={styles.shovelKicker}>BY REQUEST</Text>
-                      <Text style={styles.name}>{SHOVEL.name}</Text>
-                      <Text style={styles.desc}>{SHOVEL.description}</Text>
-                    </View>
-                    <View style={styles.shovelCta}>{action(SHOVEL)}</View>
-                  </HapticTouchable>
-                )}
-                {!!blurb && <Text style={styles.tabBlurb}>{blurb}</Text>}
               </View>
             }
-            renderItem={({ item }) => {
+            renderItem={({ item, index }) => {
               const map = isMap(item) ? item : null;
               const skin = map ? null : (item as Skin);
               const isPreview = map ? item.id === mapId : item.id === previewId;
               return (
-                <HapticTouchable
-                  style={[styles.card, isWorn(item) && styles.cardEquipped, isPreview && styles.cardPreview]}
-                  onPress={() => (map ? setMapId(item.id) : setPreviewId(item.id))}
-                  sound="ui_click"
-                >
-                  {map ? (
-                    <View style={[styles.mapSwatch, { backgroundColor: map.color }]}>
-                      <Ionicons name={MAP_ICONS[map.id] ?? 'map'} size={22} color="#0B0B0F" />
-                      {!isOwned(item) && (
-                        <View style={styles.mapLock}>
-                          <Ionicons name="lock-closed" size={12} color="#FFFFFF" />
-                        </View>
-                      )}
-                    </View>
-                  ) : (
-                    skin && (
-                      <View style={[styles.faceWrap, { borderColor: skin.color }]}>
-                        {skin.kind === 'derp' ? (
-                          <DerpThumb derp={skin.item as DerpId} size={44} />
-                        ) : (
-                          <DerpThumb derp={loadout.derp} hat={skin.item as HatId} size={44} />
+                <Animated.View entering={FadeInDown.delay(Math.min(index, 9) * 35).duration(260)} style={styles.cardWrap}>
+                  <HapticTouchable
+                    style={[styles.card, isWorn(item) && styles.cardEquipped, isPreview && styles.cardPreview]}
+                    onPress={() => (map ? setMapId(item.id) : setPreviewId(item.id))}
+                    sound="ui_click"
+                  >
+                    {map ? (
+                      <View style={[styles.mapSwatch, { backgroundColor: map.color }]}>
+                        <Ionicons name={MAP_ICONS[map.id] ?? 'map'} size={22} color="#0B0B0F" />
+                        {!isOwned(item) && (
+                          <View style={styles.mapLock}>
+                            <Ionicons name="lock-closed" size={12} color="#FFFFFF" />
+                          </View>
                         )}
                       </View>
-                    )
-                  )}
-                  <Text style={styles.name} numberOfLines={1}>
-                    {item.name}
-                  </Text>
-                  {action(item)}
-                </HapticTouchable>
+                    ) : (
+                      skin && (
+                        <View style={styles.thumbRow}>
+                          <PartThumb part={skin} derp={loadout.derp} size={48} />
+                          {skin.id === 'bow_shovel' && <Text style={styles.kicker}>BY REQUEST</Text>}
+                          {isWorn(item) && <Ionicons name="checkmark-circle" size={18} color="#7CC23A" style={styles.wornTick} />}
+                        </View>
+                      )
+                    )}
+                    <Text style={styles.name} numberOfLines={1}>
+                      {item.name}
+                    </Text>
+                    {action(item)}
+                  </HapticTouchable>
+                </Animated.View>
               );
             }}
           />
+          {toast && (
+            <Animated.View key={toast.id} entering={ZoomIn.duration(220)} exiting={FadeOut.duration(250)} style={styles.toast} pointerEvents="none">
+              <Ionicons name="sparkles" size={18} color="#FFD23F" />
+              <Text style={styles.toastText}>{toast.text}</Text>
+            </Animated.View>
+          )}
         </View>
       </View>
     </SafeAreaView>
   );
 }
+
+const textShadow = { textShadowColor: 'rgba(0,0,0,0.7)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 };
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.skyTop },
@@ -428,88 +481,94 @@ const styles = StyleSheet.create({
   clip: { overflow: 'hidden' },
   lockChip: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   lockChipRight: { top: 52 }, // under the reel's step chip
-  tabs: { flexDirection: 'row', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 10, padding: 3, marginRight: 8 },
-  tab: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 8 },
-  tabActive: { backgroundColor: '#FFFFFF' },
-  tabText: { color: 'rgba(255,255,255,0.7)', fontWeight: '800', fontSize: 13 },
-  tabTextActive: { color: '#0B0B0F' },
   mapSwatch: { height: 48, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
   mapLock: { position: 'absolute', top: 6, right: 6, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 9, padding: 3 },
-  stageInfo: { position: 'absolute', left: 28, right: 16, bottom: 26 },
+  stageInfo: { position: 'absolute', left: 28, right: 16, bottom: 26, gap: 2 },
   stepChip: { position: 'absolute', top: 22, left: 24, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 4 },
-  stepText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800', letterSpacing: 0.6, textTransform: 'uppercase' },
-  stageName: {
-    color: '#FFFFFF',
-    fontSize: 22,
-    fontWeight: '900',
-    textShadowColor: 'rgba(0,0,0,0.6)',
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 5,
-  },
-  stageDesc: {
-    color: 'rgba(255,255,255,0.85)',
-    fontSize: 12,
-    lineHeight: 16,
-    textShadowColor: 'rgba(0,0,0,0.7)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
-  },
+  stepText: { fontFamily: FONT.bold, color: '#FFFFFF', fontSize: 12, letterSpacing: 0.6, textTransform: 'uppercase' },
+  stageName: { fontFamily: FONT.bold, color: '#FFFFFF', fontSize: 24, ...textShadow, textShadowOffset: { width: 0, height: 2 } },
+  stageDesc: { fontFamily: FONT.medium, color: 'rgba(255,255,255,0.88)', fontSize: 12, lineHeight: 16, ...textShadow },
+  stageTag: { alignSelf: 'flex-start', backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3, marginTop: 4 },
+  stagePrice: { fontFamily: FONT.bold, fontSize: 13, color: '#D9C6FF', marginTop: 4, ...textShadow },
   listCol: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 4 },
-  title: { color: '#FFFFFF', fontSize: 22, fontWeight: '700', flex: 1 },
-  cluster: { color: 'rgba(255,255,255,0.5)', fontSize: 12, textTransform: 'uppercase', letterSpacing: 1 },
-  headerBlock: { gap: 10, marginBottom: 12 },
-  segment: { flexDirection: 'row', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 12, padding: 4 },
-  segmentItem: { flex: 1, paddingVertical: 10, borderRadius: 9, alignItems: 'center' },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 },
+  back: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.35)' },
+  title: { fontFamily: FONT.bold, color: '#FFFFFF', fontSize: 24, flex: 1 },
+  cluster: { fontFamily: FONT.semi, color: 'rgba(255,255,255,0.45)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1 },
+  tabsScroll: { flexGrow: 0, flexShrink: 0 },
+  tabs: { gap: 6, paddingHorizontal: 16, paddingVertical: 6 },
+  tab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  tabActive: { backgroundColor: '#8E6CEF', borderColor: '#F7C948' },
+  tabText: { fontFamily: FONT.bold, color: 'rgba(255,255,255,0.75)', fontSize: 13 },
+  tabTextActive: { color: '#FFFFFF' },
+  headerBlock: { gap: 8, marginBottom: 10 },
+  segment: { flexDirection: 'row', backgroundColor: 'rgba(0,0,0,0.3)', borderRadius: 12, padding: 4 },
+  segmentItem: { flex: 1, paddingVertical: 8, borderRadius: 9, alignItems: 'center' },
   segmentActive: { backgroundColor: COLORS.arrow },
-  segmentText: { color: 'rgba(255,255,255,0.7)', fontWeight: '700', fontSize: 14 },
+  segmentText: { fontFamily: FONT.bold, color: 'rgba(255,255,255,0.7)', fontSize: 13 },
   segmentTextActive: { color: '#0B0B0F' },
   balanceRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  blurb: { flex: 1, color: 'rgba(255,255,255,0.7)', fontSize: 14, lineHeight: 20 },
-  hint: { color: 'rgba(255,255,255,0.5)', fontSize: 12, lineHeight: 16 },
+  hint: { flex: 1, fontFamily: FONT.medium, color: 'rgba(255,255,255,0.6)', fontSize: 12, lineHeight: 16 },
+  tabBlurb: { fontFamily: FONT.semi, color: 'rgba(255,255,255,0.85)', fontSize: 14 },
   grid: { paddingHorizontal: 16, paddingTop: 4, gap: 10, paddingBottom: 24 },
+  cardWrap: { flex: 1 },
   card: {
     flex: 1,
     backgroundColor: 'rgba(255,255,255,0.07)',
-    borderRadius: 18,
+    borderRadius: 16,
     padding: 10,
     gap: 4,
-    borderWidth: 1,
+    borderWidth: 2,
     borderColor: 'transparent',
   },
   cardEquipped: { borderColor: COLORS.arrow },
-  cardPreview: { backgroundColor: 'rgba(255,255,255,0.14)' },
-  shovel: {
+  cardPreview: { backgroundColor: 'rgba(255,255,255,0.15)' },
+  thumbRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 2 },
+  wornTick: { marginLeft: 'auto' },
+  kicker: { fontFamily: FONT.bold, color: '#FFD23F', fontSize: 9, letterSpacing: 1, marginLeft: 6, marginTop: 2 },
+  name: { fontFamily: FONT.bold, color: '#FFFFFF', fontSize: 15 },
+  cta: {
+    flexDirection: 'row',
+    gap: 5,
+    justifyContent: 'center',
+    backgroundColor: COLORS.arrow,
+    borderRadius: 11,
+    paddingVertical: 8,
+    alignItems: 'center',
+    marginTop: 2,
+    borderBottomWidth: 3,
+    borderBottomColor: '#B86B2E',
+  },
+  ctaDisabled: { opacity: 0.45 },
+  ctaText: { fontFamily: FONT.bold, color: '#0B0B0F', fontSize: 14 },
+  ctaCoins: { backgroundColor: '#2A2440', borderBottomColor: '#15122A', borderWidth: 1.5, borderColor: 'rgba(255,200,61,0.6)' },
+  ctaCoinsText: { color: '#FFC83D' },
+  ctaShort: { opacity: 0.55 },
+  ctaGhost: { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.35)', borderBottomWidth: 1.5, borderBottomColor: 'rgba(255,255,255,0.35)' },
+  ctaGhostText: { color: 'rgba(255,255,255,0.75)' },
+  toast: {
+    position: 'absolute',
+    top: 56,
+    alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    padding: 12,
-    borderRadius: 18,
-    backgroundColor: 'rgba(150,96,45,0.35)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,210,63,0.5)',
-  },
-  shovelIcon: { width: 56, height: 56, borderRadius: 16, backgroundColor: '#FFD23F', alignItems: 'center', justifyContent: 'center' },
-  shovelText: { flex: 1, gap: 2 },
-  shovelKicker: { color: '#FFD23F', fontSize: 11, fontWeight: '900', letterSpacing: 1.5 },
-  shovelCta: { width: 120 },
-  tabBlurb: { color: 'rgba(255,255,255,0.75)', fontSize: 14, fontStyle: 'italic' },
-  faceWrap: {
-    width: 48,
-    height: 48,
+    gap: 8,
+    backgroundColor: '#1B1A33',
     borderRadius: 14,
-    borderWidth: 2,
-    overflow: 'hidden',
-    marginBottom: 2,
-    backgroundColor: '#E9E4D8', // paper, so the ink reads
-    alignItems: 'center',
-    justifyContent: 'center',
+    borderWidth: 2.5,
+    borderColor: '#F7C948',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
   },
-  name: { color: '#FFFFFF', fontSize: 16, fontWeight: '800' },
-  desc: { color: 'rgba(255,255,255,0.55)', fontSize: 12, minHeight: 32 },
-  cta: { backgroundColor: COLORS.arrow, borderRadius: 12, paddingVertical: 10, alignItems: 'center', marginTop: 4 },
-  ctaDisabled: { opacity: 0.45 },
-  ctaText: { color: '#0B0B0F', fontWeight: '800', fontSize: 14 },
-  ctaGhost: { backgroundColor: 'transparent', borderWidth: 1, borderColor: 'rgba(255,255,255,0.35)' },
-  ctaGhostText: { color: 'rgba(255,255,255,0.7)' },
+  toastText: { fontFamily: FONT.bold, color: '#FFFFFF', fontSize: 15 },
 });

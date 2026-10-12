@@ -1,6 +1,6 @@
-import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { router } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   Easing,
   FadeIn,
@@ -19,18 +19,28 @@ import { Stage, type Actor } from '@/game3d/Stage';
 import { arenaTheme } from '@/game3d/themes';
 import { randomSeed } from '@/game/maps';
 import { layoutFor } from '@/game3d/world';
-import { DEFAULT_LOADOUT, lookFor, randomLoadout, type Loadout } from '@/game/cosmetics';
+import { useMobileWallet } from '@wallet-ui/react-native-kit';
+import { lookFor, randomLoadout, type Loadout } from '@/game/cosmetics';
 import { mulberry32 } from '@/game/rng';
 import { useGameStore, levelOf } from '@/game/store';
 import { haptic } from '@/game/haptics';
 import { playSfx } from '@/audio/sound';
 import { useScreenMusic } from '@/audio/useScreenMusic';
-import { FONT, TIPS } from '@/ui/kit';
+import { FONT, GameButton, TIPS } from '@/ui/kit';
+import { formatSol } from '@/game/skins';
+import { DUEL_FEE_ENABLED, DUEL_FEE_LAMPORTS, shortAddress } from '@/solana/config';
+import { isUserRejection, useWalletAuth } from '@/solana/auth';
+import { duelCreditStatus, payDuelFee, spendDuelCredit } from '@/solana/payments';
 
 // Matchmaking / VS screen: you on the left, a VS badge in the middle, and an
-// opponent slot that searches, then reveals the rival dropping into the
+// opponent slot that searches, then reveals the AI rival dropping into the
 // colosseum. Picks the duel's seed (and so its map) and hands everything to
 // /game.
+//
+// Every duel has an entry fee in SOL, paid from the player's wallet to the
+// treasury through Mobile Wallet Adapter before the search starts. A fee
+// already paid but not yet played (app killed, slow confirmation) is a
+// credit the next duel uses instead of charging again (payments.ts).
 
 const RIVAL_NAMES = [
   'ShadowQuiver',
@@ -49,25 +59,23 @@ const RIVAL_NAMES = [
 
 export default function MatchScreen() {
   useScreenMusic('menu');
-  const params = useLocalSearchParams<{ mode?: string; code?: string; role?: string; seed?: string }>();
-  const online = params.mode === 'online';
   const loadout = useGameStore((s) => s.loadout);
   const xp = useGameStore((s) => s.xp);
+  const playerName = useGameStore((s) => s.playerName);
   const me = useMemo(() => lookFor(loadout), [loadout]);
 
   // Everything about the match is decided up front from one seed.
   const [match] = useState(() => {
-    // The duel happens on my chosen map (online, the host's: it's in the room's seed).
-    const seed = params.seed ? Number(params.seed) : randomSeed(useGameStore.getState().equippedMap);
+    // The duel happens on my chosen map.
+    const seed = randomSeed(useGameStore.getState().equippedMap);
     const rnd = mulberry32(seed ^ 0xa11ce);
-    // Online, the real opponent's style arrives over the room channel in-game.
-    const rivalLoadout: Loadout = online ? DEFAULT_LOADOUT : randomLoadout(rnd);
+    const rivalLoadout: Loadout = randomLoadout(rnd);
     return {
       seed,
       rivalLoadout,
-      rivalName: online ? 'Opponent' : RIVAL_NAMES[Math.floor(rnd() * RIVAL_NAMES.length)],
+      rivalName: RIVAL_NAMES[Math.floor(rnd() * RIVAL_NAMES.length)],
       rivalLevel: Math.max(1, levelOf(xp).level + Math.floor(rnd() * 5) - 2),
-      searchMs: online ? 1100 : 1700 + rnd() * 1500,
+      searchMs: 1700 + rnd() * 1500,
       tip: TIPS[Math.floor(rnd() * TIPS.length)],
     };
   });
@@ -75,7 +83,87 @@ export default function MatchScreen() {
   const arena = arenaTheme(match.seed, layoutFor(match.seed, 0).theme);
   const [found, setFound] = useState(false);
 
+  // ---- entry fee -------------------------------------------------------------------
+  // checking: looking for an unused paid entry · fee: waiting for the player
+  // to pay · paying: wallet sheet / confirmation · search: paid, matchmaking.
+  const [phase, setPhase] = useState<'checking' | 'fee' | 'paying' | 'search'>(DUEL_FEE_ENABLED ? 'checking' : 'search');
+  // A payment that went out but isn't confirmed yet: the button re-checks it
+  // instead of charging again.
+  const [unconfirmed, setUnconfirmed] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const wallet = useMobileWallet();
+  const { signIn } = useWalletAuth();
+  const queued = useRef(false);
+
+  const checkCredit = useCallback(async () => {
+    const status = await duelCreditStatus();
+    if (status === 'ready') {
+      setUnconfirmed(false);
+      setPhase('search');
+      return;
+    }
+    setUnconfirmed(status === 'pending');
+    setNote(status === 'pending' ? 'Your last entry fee is still confirming. Check again in a moment.' : null);
+    setPhase('fee');
+  }, []);
+
   useEffect(() => {
+    // Deferred so no state is set synchronously in the effect.
+    if (phase === 'checking') Promise.resolve().then(checkCredit);
+    // Only on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const pay = useCallback(async () => {
+    if (!wallet.account) return;
+    setPhase('paying');
+    setNote(null);
+    const result = await payDuelFee({ address: wallet.account.address, sendTransactions: wallet.sendTransactions });
+    if (result.ok) {
+      haptic.success();
+      playSfx('coins');
+      setPhase('search');
+      return;
+    }
+    haptic.warning();
+    setPhase('fee');
+    if (result.reason === 'cancelled') setNote(null);
+    else if (result.reason === 'verify-failed' && result.retryable) {
+      setUnconfirmed(true);
+      setNote("Payment sent, but it isn't confirmed yet. Check again in a moment. You won't be charged twice.");
+    } else if (result.reason === 'verify-failed') setNote(`Payment not accepted: ${result.detail ?? 'unknown error'}`);
+    else setNote(result.detail ?? 'The payment did not go through.');
+  }, [wallet.account, wallet.sendTransactions]);
+
+  // Pays once a connect started from the button has gone through and this
+  // render sees the account (the kit's send closes over the selected account).
+  useEffect(() => {
+    if (!queued.current || !wallet.account) return;
+    queued.current = false;
+    Promise.resolve().then(pay);
+  }, [wallet.account, pay]);
+
+  const onPay = async () => {
+    if (phase !== 'fee') return;
+    if (unconfirmed) {
+      setPhase('paying');
+      await checkCredit();
+      return;
+    }
+    if (wallet.account) return pay();
+    queued.current = true;
+    try {
+      await signIn();
+    } catch (e) {
+      queued.current = false;
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!isUserRejection(msg)) setNote('Connect a Solana wallet (Phantom, Solflare or Seed Vault) to pay the entry fee.');
+    }
+  };
+
+  // ---- search → duel -----------------------------------------------------------------
+  useEffect(() => {
+    if (phase !== 'search') return;
     playSfx('search_loop');
     const loop = setInterval(() => playSfx('search_loop'), 1600);
     const t1 = setTimeout(() => {
@@ -87,14 +175,16 @@ export default function MatchScreen() {
     }, match.searchMs);
     const t2 = setTimeout(() => {
       const q = new URLSearchParams({
-        mode: online ? 'online' : 'ai',
         seed: String(match.seed),
         rivalDerp: match.rivalLoadout.derp,
         rivalHat: match.rivalLoadout.hat,
         rivalBow: match.rivalLoadout.bow,
+        rivalOutfit: match.rivalLoadout.outfit,
+        rivalArrow: match.rivalLoadout.arrow,
         rivalName: match.rivalName,
-        ...(online ? { code: params.code ?? '', role: params.role ?? 'host' } : {}),
       });
+      // The paid entry is used by this duel.
+      spendDuelCredit();
       router.replace(`/game?${q.toString()}`);
     }, match.searchMs + 2600);
     return () => {
@@ -102,7 +192,7 @@ export default function MatchScreen() {
       clearTimeout(t1);
       clearTimeout(t2);
     };
-  }, [match, online, params.code, params.role]);
+  }, [match, phase]);
 
   const actors = useMemo<Actor[]>(
     () => [
@@ -118,7 +208,9 @@ export default function MatchScreen() {
       <LinearGradient colors={['rgba(0,0,0,0.35)', 'rgba(0,0,0,0)', 'rgba(0,0,0,0.65)']} style={StyleSheet.absoluteFill} pointerEvents="none" />
 
       <Animated.View entering={FadeInDown.duration(400)} style={[styles.plate, styles.plateLeft]}>
-        <Text style={styles.plateName}>You</Text>
+        <Text style={styles.plateName} numberOfLines={1}>
+          {playerName || 'You'}
+        </Text>
         <Text style={styles.plateLevel}>Lv {levelOf(xp).level}</Text>
       </Animated.View>
 
@@ -127,16 +219,39 @@ export default function MatchScreen() {
           <Text style={styles.plateName} numberOfLines={1}>
             {match.rivalName}
           </Text>
-          {!online && <Text style={styles.plateLevel}>Lv {match.rivalLevel}</Text>}
+          <Text style={styles.plateLevel}>Lv {match.rivalLevel}</Text>
         </Animated.View>
-      ) : (
+      ) : phase === 'search' ? (
         <View style={styles.searching}>
           <PaperPlaneSpinner />
           <Text style={styles.searchText}>Searching for an opponent</Text>
         </View>
+      ) : (
+        <Animated.View entering={FadeIn.duration(250)} style={styles.feeCard}>
+          <Text style={styles.feeLabel}>ENTRY FEE</Text>
+          <Text style={styles.feeAmount}>{formatSol(DUEL_FEE_LAMPORTS)}</Text>
+          <Text style={styles.feeSub}>
+            {wallet.account ? `From ${shortAddress(wallet.account.address)} to the Bonk Bow treasury` : 'Paid from your Solana wallet'}
+          </Text>
+          {phase === 'fee' ? (
+            <GameButton
+              label={unconfirmed ? 'Check payment' : wallet.account ? `Pay ${formatSol(DUEL_FEE_LAMPORTS)} & fight` : 'Connect wallet & pay'}
+              color="green"
+              onPress={onPay}
+              style={styles.feeBtn}
+            />
+          ) : (
+            <View style={styles.feeBusy}>
+              <ActivityIndicator color="#FFFFFF" />
+              <Text style={styles.feeSub}>{phase === 'checking' ? 'Checking your wallet…' : 'Confirm in your wallet…'}</Text>
+            </View>
+          )}
+          {!!note && <Text style={styles.feeNote}>{note}</Text>}
+          {phase === 'fee' && <GameButton label="Back" color="red" small onPress={() => router.back()} style={styles.feeBack} sound="ui_back" />}
+        </Animated.View>
       )}
 
-      <VsBadge slammed={found} />
+      {phase === 'search' && <VsBadge slammed={found} />}
 
       {found && (
         <Animated.View entering={FadeIn.delay(500).duration(400)} style={styles.arenaTag}>
@@ -227,6 +342,24 @@ const styles = StyleSheet.create({
   arenaTag: { position: 'absolute', alignSelf: 'center', top: '62%', alignItems: 'center' },
   arenaLabel: { fontFamily: FONT.semi, fontSize: 11, letterSpacing: 3, color: 'rgba(255,255,255,0.75)', ...shadow },
   arenaName: { fontFamily: FONT.bold, fontSize: 22, color: '#FFFFFF', ...shadow },
+  feeCard: {
+    position: 'absolute',
+    right: '6%',
+    top: '16%',
+    width: 300,
+    alignItems: 'center',
+    gap: 6,
+    padding: 18,
+    borderRadius: 18,
+    backgroundColor: 'rgba(11,11,15,0.88)',
+  },
+  feeLabel: { fontFamily: FONT.semi, fontSize: 11, letterSpacing: 3, color: 'rgba(255,255,255,0.7)' },
+  feeAmount: { fontFamily: FONT.bold, fontSize: 30, color: '#FFFFFF' },
+  feeSub: { fontFamily: FONT.semi, fontSize: 13, color: 'rgba(255,255,255,0.75)', textAlign: 'center' },
+  feeBtn: { alignSelf: 'stretch', marginTop: 8 },
+  feeBusy: { alignItems: 'center', gap: 6, marginTop: 8 },
+  feeNote: { fontFamily: FONT.semi, fontSize: 12, color: '#F7C948', textAlign: 'center' },
+  feeBack: { marginTop: 4 },
   tip: {
     position: 'absolute',
     bottom: 14,

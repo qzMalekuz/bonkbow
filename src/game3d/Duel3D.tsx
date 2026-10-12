@@ -372,7 +372,7 @@ class DuelView {
     this.flying.visible = a.active;
     if (a.active) {
       const shot = a.shooter === 'player' ? p.look : p.opponentLook;
-      const fk = `${shot.bow}|${shot.trail}`;
+      const fk = `${shot.bow}|${shot.arrow}`;
       if (fk !== this.flyingKey) {
         this.flyingKey = fk;
         this.root.remove(this.flying);

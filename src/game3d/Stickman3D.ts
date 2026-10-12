@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { ARM_REACH, ARROW_LEN, BODY, HIP_Y } from '@/game3d/world';
 import type { Death, Gesture, Mood } from '@/game3d/sim';
 import type { Look } from '@/game/cosmetics';
+import { BOWS } from '@/game/derps';
+import { ARROWS, OUTFITS, type ArrowDef, type ArrowId, type OutfitDef } from '@/game/gear';
 import { DerpHead } from '@/game3d/DerpHead';
 import { STICKMAN_DATA, StickmanBody, WALK_STRIDE, type BodyTargets } from '@/game3d/StickmanBody';
 
@@ -140,38 +142,57 @@ function mesh(geo: THREE.BufferGeometry, mat: THREE.Material) {
 const BLACK = new THREE.MeshBasicMaterial({ color: BODY_BLACK });
 
 // An arrow whose TIP is at the local origin, pointing along +x. Shaft, head
-// and three vanes are merged into one vertex-coloured mesh (one draw call per
-// arrow), cached per fletching colour.
+// and three vanes (or the pencil's eraser) are merged into one
+// vertex-coloured mesh (one draw call per arrow), cached per arrow style.
 const ARROW_MAT = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
-const arrowGeos = new Map<string, THREE.BufferGeometry>();
+const arrowGeos = new Map<ArrowId, THREE.BufferGeometry>();
 
-export function makeArrow(fletch: string, shaft = '#D9C39A') {
-  const key = `${fletch}|${shaft}`;
-  let geo = arrowGeos.get(key);
+// Along +x, spanning x = to … from (from < to).
+const rod = (r: number, from: number, to: number, sides = 5) =>
+  new THREE.CylinderGeometry(r, r, to - from, sides).rotateZ(Math.PI / 2).translate((from + to) / 2, 0, 0);
+// A cone (or frustum) whose wide end is at `back`, pointing +x.
+const nose = (rBack: number, rFront: number, back: number, len: number, sides = 6) =>
+  new THREE.CylinderGeometry(rFront, rBack, len, sides).rotateZ(-Math.PI / 2).translate(back + len / 2, 0, 0);
+
+export function makeArrow(a: ArrowDef = ARROWS.classic) {
+  let geo = arrowGeos.get(a.id);
   if (!geo) {
-    const shaftGeo = new THREE.CylinderGeometry(0.012, 0.012, ARROW_LEN - 0.08, 5);
-    shaftGeo.rotateZ(Math.PI / 2);
-    shaftGeo.translate(-(ARROW_LEN - 0.08) / 2 - 0.08, 0, 0);
-    const headGeo = new THREE.ConeGeometry(0.035, 0.1, 5);
-    headGeo.rotateZ(-Math.PI / 2);
-    headGeo.translate(-0.05, 0, 0);
-    const shape = new THREE.Shape();
-    shape.moveTo(0, 0);
-    shape.lineTo(0.16, 0);
-    shape.lineTo(0.2, 0.05);
-    shape.lineTo(0.03, 0.05);
-    const vanes = [0, Math.PI, Math.PI / 2].map((rx) => {
-      const v = new THREE.ShapeGeometry(shape);
-      v.translate(-ARROW_LEN, 0, 0);
-      v.rotateX(rx);
-      return v;
-    });
-    geo = mergeColored([
-      [shaftGeo, shaft],
-      [headGeo, '#C8CCD2'],
-      ...vanes.map((v) => [v, fletch] as [THREE.BufferGeometry, string]),
-    ]);
-    arrowGeos.set(key, geo);
+    const parts: [THREE.BufferGeometry, string][] = [];
+    const back = -ARROW_LEN;
+    const front = -0.08;
+    if (a.stripes) {
+      const n = 9;
+      const step = (front - back) / n;
+      for (let i = 0; i < n; i++) parts.push([rod(0.013, back + i * step, back + (i + 1) * step), i % 2 ? a.stripes : a.shaft]);
+    } else {
+      parts.push([rod(a.tip === 'pencil' ? 0.02 : 0.012, back, front, a.tip === 'pencil' ? 6 : 5), a.shaft]);
+    }
+    if (a.tip === 'plunger') {
+      // Rubber cup, open side forward.
+      parts.push([nose(0.018, 0.062, -0.085, 0.085, 10), a.head]);
+    } else if (a.tip === 'pencil') {
+      parts.push([nose(0.02, 0.006, -0.08, 0.07), a.head]);
+      parts.push([nose(0.0075, 0.001, -0.026, 0.026), '#3A3A3A']);
+      parts.push([rod(0.021, back + 0.05, back + 0.075, 8), '#B9B6AE']);
+      parts.push([rod(0.021, back, back + 0.05, 8), a.fletch]);
+    } else {
+      parts.push([nose(0.035, 0, -0.1, 0.1, 5), a.head]);
+    }
+    if (a.tip !== 'pencil') {
+      const shape = new THREE.Shape();
+      shape.moveTo(0, 0);
+      shape.lineTo(0.16, 0);
+      shape.lineTo(0.2, 0.05);
+      shape.lineTo(0.03, 0.05);
+      for (const rx of [0, Math.PI, Math.PI / 2]) {
+        const v = new THREE.ShapeGeometry(shape);
+        v.translate(-ARROW_LEN, 0, 0);
+        v.rotateX(rx);
+        parts.push([v, a.fletch]);
+      }
+    }
+    geo = mergeColored(parts);
+    arrowGeos.set(a.id, geo);
   }
   const g = new THREE.Group();
   g.add(new THREE.Mesh(geo, ARROW_MAT));
@@ -211,7 +232,84 @@ export function makeShovel() {
 }
 
 // What a look shoots: arrows, or shovels from the shovel bow.
-export const makeProjectile = (look: Pick<Look, 'bow' | 'trail'>) => (look.bow === 'shovel' ? makeShovel() : makeArrow(look.trail));
+export const makeProjectile = (look: Pick<Look, 'bow' | 'arrow'>) => (look.bow === 'shovel' ? makeShovel() : makeArrow(ARROWS[look.arrow]));
+
+// Clothes: one merged, vertex-coloured mesh per outfit, in the torso's frame
+// (+x up the spine from the hip joint, −y the chest, +y the back, z across
+// the shoulders), sized to the Unity stick body (~0.35 m wide, ~0.27 m deep);
+// the rig squeezes it onto the thin capsule body when that's in use.
+const OUTFIT_MAT = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+const outfitGeos = new Map<string, THREE.BufferGeometry | null>();
+
+// A ring round the spine at height x: an elliptical torus.
+const ring = (x: number, depth: number, width: number, tube: number) =>
+  new THREE.TorusGeometry(1, tube, 6, 18).rotateY(Math.PI / 2).scale(1, depth, width).translate(x, 0, 0);
+
+function outfitGeo(o: OutfitDef): THREE.BufferGeometry | null {
+  if (outfitGeos.has(o.id)) return outfitGeos.get(o.id) ?? null;
+  const parts: [THREE.BufferGeometry, string][] = [];
+  switch (o.acc) {
+    case 'scarf': {
+      // A thick wrap round the neck, its tail hanging down the chest (the
+      // paper head covers the neck itself).
+      parts.push([new THREE.TorusGeometry(1, 0.06, 6, 18).rotateY(Math.PI / 2).scale(1, 0.14, 0.15).translate(0.5, 0, 0), o.color]);
+      parts.push([new THREE.BoxGeometry(0.3, 0.035, 0.085).translate(0.33, -0.15, 0.07), o.color]);
+      parts.push([new THREE.BoxGeometry(0.045, 0.037, 0.088).translate(0.2, -0.151, 0.07), o.trim]);
+      parts.push([new THREE.BoxGeometry(0.045, 0.037, 0.088).translate(0.29, -0.151, 0.07), o.trim]);
+      break;
+    }
+    case 'tie': {
+      parts.push([new THREE.BoxGeometry(0.05, 0.03, 0.06).translate(0.5, -0.14, 0), o.trim]);
+      const blade = new THREE.BoxGeometry(0.3, 0.02, 0.085);
+      const pos = blade.getAttribute('position');
+      // Narrow at the knot, widest low down, then a point.
+      for (let i = 0; i < pos.count; i++) {
+        const top = pos.getX(i) > 0;
+        pos.setZ(i, pos.getZ(i) * (top ? 0.55 : 1));
+      }
+      blade.translate(0.32, -0.145, 0);
+      parts.push([blade, o.color]);
+      // The point, below the blade.
+      parts.push([new THREE.ConeGeometry(0.0425, 0.05, 4, 1).rotateZ(Math.PI / 2).scale(1, 0.4, 1).translate(0.145, -0.145, 0), o.color]);
+      break;
+    }
+    case 'cape': {
+      const top = 0.56;
+      const cape = new THREE.BoxGeometry(0.8, 0.015, 0.42, 1, 1, 1);
+      const pos = cape.getAttribute('position');
+      for (let i = 0; i < pos.count; i++) {
+        const x = pos.getX(i) + top - 0.4; // 0.56 at the shoulders down to −0.24
+        const k = (top - x) / 0.8;
+        pos.setX(i, x);
+        pos.setZ(i, pos.getZ(i) * (0.75 + k * 0.45)); // flares toward the hem
+        pos.setY(i, pos.getY(i) + 0.165 + k * 0.12); // and swings off the back
+      }
+      cape.computeVertexNormals();
+      parts.push([cape, o.color]);
+      parts.push([ring(0.56, 0.12, 0.15, 0.025), o.trim]);
+      break;
+    }
+    case 'tutu': {
+      for (const [x, rTop, rBot, col] of [
+        [0.06, 0.2, 0.36, o.color],
+        [0.1, 0.19, 0.3, o.trim],
+      ] as const) {
+        parts.push([new THREE.CylinderGeometry(rTop, rBot, 0.08, 16, 1, true).rotateZ(-Math.PI / 2).scale(1, 0.8, 1).translate(x, 0, 0), col]);
+      }
+      break;
+    }
+    case 'belt':
+      parts.push([ring(0.1, 0.15, 0.185, 0.035), o.trim]);
+      parts.push([new THREE.BoxGeometry(0.13, 0.03, 0.17).translate(0.1, -0.16, 0), o.color]);
+      parts.push([new THREE.SphereGeometry(0.03, 8, 6).scale(1, 0.5, 1).translate(0.1, -0.18, 0), '#E53935']);
+      break;
+    default:
+      break;
+  }
+  const geo = parts.length ? mergeColored(parts) : null;
+  outfitGeos.set(o.id, geo);
+  return geo;
+}
 
 // Concatenate geometries into one non-indexed geometry with per-part colours.
 // With `keep`, parts that already have vertex colours keep them.
@@ -284,6 +382,9 @@ export class StickmanRig {
   private flagProp: THREE.Group;
   // The arrow he is eating (the 'eat' emote), held across the mouth.
   private snack: THREE.Group;
+  // Clothes on the torso (null = none) and the stick body's colour.
+  private outfit: THREE.Mesh | null = null;
+  private bodyColor = new THREE.Color(BODY_BLACK);
   private shieldBubble: THREE.Mesh;
   private shadow: THREE.Mesh;
   private lookKey = '';
@@ -386,11 +487,11 @@ export class StickmanRig {
     str.frustumCulled = false;
     this.arms.add(str);
 
-    this.nocked = makeArrow(look.trail);
+    this.nocked = makeArrow(ARROWS[look.arrow]);
     this.arms.add(this.nocked);
 
     // The snack: one arrow, held level across the mouth while he chews.
-    this.snack = makeArrow(look.trail);
+    this.snack = makeArrow(ARROWS[look.arrow]);
     this.snack.visible = false;
     this.arms.add(this.snack);
 
@@ -439,9 +540,10 @@ export class StickmanRig {
     this.lookKey = look.key;
     this.trail = look.trail;
     this.shovel = look.bow === 'shovel';
-    this.bowScale = this.shovel ? 1.7 : 1;
+    this.bowScale = (BOWS[look.bow] ?? BOWS.bow).scale;
     this.buildBow(look);
     this.useBody();
+    this.dress(OUTFITS[look.outfit] ?? OUTFITS.none);
     this.derp.set(look.shape, look.hat, look.seed);
     // Head on the neck; a long-necked derp shows the extra as a thin stalk.
     const { torso, neck } = BODY;
@@ -455,10 +557,30 @@ export class StickmanRig {
     const hc = this.derp.clearance;
     this.headClearance = hc;
 
-    // Nocked arrow (or shovel) takes the trail colour for its fletching
+    // Nocked arrow (or shovel) and the snack in this look's arrow style
     this.arms.remove(this.nocked);
     this.nocked = makeProjectile(look);
     this.arms.add(this.nocked);
+    this.arms.remove(this.snack);
+    this.snack = makeArrow(ARROWS[look.arrow]);
+    this.snack.visible = false;
+    this.arms.add(this.snack);
+  }
+
+  // Body colour and the clothes on the torso. On the thin capsule body the
+  // clothes are squeezed to fit (they're sized for the Unity body).
+  private dress(o: OutfitDef) {
+    this.bodyColor.set(o.body);
+    this.bodyMat.color.copy(this.bodyColor);
+    this.skinMat?.color.copy(this.bodyColor);
+    if (this.outfit) this.torso.remove(this.outfit);
+    const geo = outfitGeo(o);
+    this.outfit = geo ? new THREE.Mesh(geo, OUTFIT_MAT) : null;
+    if (this.outfit) {
+      const k = this.skin ? 1 : 0.42;
+      this.outfit.scale.set(1, k, k);
+      this.torso.add(this.outfit);
+    }
   }
 
   private buildBow(look: Look) {
@@ -467,9 +589,7 @@ export class StickmanRig {
     // tips, string nocked where they turn (BOW_TIP); wrapped grip with metal
     // ferrules either side, as on the character sheets. One merged,
     // vertex-coloured mesh per look (one draw call).
-    const shovel = look.bow === 'shovel';
-    const wood = shovel ? '#6B4A2B' : '#8B5A2B';
-    const accent = shovel ? '#2B2B2B' : '#E9D8A6';
+    const { wood, accent } = BOWS[look.bow] ?? BOWS.bow;
     const key = `bow|${wood}|${accent}`;
     const geo = cached(key, () => {
       const limb = recurveGeo();

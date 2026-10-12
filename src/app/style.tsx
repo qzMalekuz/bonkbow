@@ -1,58 +1,53 @@
 import { router, useIsFocused } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import Animated, { FadeIn, ZoomIn } from 'react-native-reanimated';
+import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import Animated, { FadeIn, FadeInRight, ZoomIn } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GestureDetector } from 'react-native-gesture-handler';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { Canvas, useFrame, useThree } from '@react-three/fiber/native';
 import * as THREE from 'three';
 import { StickmanRig } from '@/game3d/Stickman3D';
 import { Turntable, useSpinGesture, type Spinnable } from '@/game3d/Turntable';
 import type { Mood } from '@/game3d/sim';
 import { lookFor, sanitizeLoadout, type Loadout, type Look } from '@/game/cosmetics';
-import type { DerpId, HatId } from '@/game/derps';
-import { SKINS, formatSol, ownsProduct, type ProductKind, type Skin } from '@/game/skins';
-import { formatSkr } from '@/solana/skr';
-import { DerpThumb } from '@/ui/DerpThumb';
+import { SKINS, isCoinSkin, ownsProduct, type ProductKind, type Skin } from '@/game/skins';
 import { useGameStore } from '@/game/store';
 import { haptic } from '@/game/haptics';
 import { playSfx } from '@/audio/sound';
 import { useScreenMusic } from '@/audio/useScreenMusic';
 import { HapticTouchable } from '@/components/haptic-touchable';
-import { FONT, GameButton } from '@/ui/kit';
+import { CoinIcon, CoinPill, FONT, GameButton } from '@/ui/kit';
+import { PartThumb, SECTIONS, priceOf } from '@/ui/PartThumb';
 
-// "Choose your style!": pick a derp, a hat and a bow among the ones you own.
-// Three character cards — you as you are, you in the part you're looking
-// at, and a featured part you don't own yet — over a slot switcher and a
-// strip of that slot's parts; drag a card's archer sideways to spin it.
-// A locked part shows its price and links to the shop.
+// "Choose your style!": pick a character, clothes, a hat, a bow and arrows
+// among the ones you own. Three character cards — you as you are, you in the
+// part you're looking at, and a featured part you don't own yet — over a
+// section switcher and a strip of that section's parts; drag a card's
+// archer sideways to spin it. A locked part shows its price: coin parts are
+// bought right here, SOL/SKR parts in the shop.
 
-const SLOTS: { kind: ProductKind; label: string }[] = [
-  { kind: 'derp', label: 'Derp' },
-  { kind: 'hat', label: 'Hat' },
-  { kind: 'bow', label: 'Bow' },
-];
-const PARTS: Record<ProductKind, Skin[]> = {
-  derp: SKINS.filter((s) => s.kind === 'derp'),
-  hat: SKINS.filter((s) => s.kind === 'hat'),
-  bow: SKINS.filter((s) => s.kind === 'bow'),
-};
+const PARTS = Object.fromEntries(SECTIONS.map(({ kind }) => [kind, SKINS.filter((s) => s.kind === kind)])) as Record<ProductKind, Skin[]>;
+const wornItem = (l: Loadout, kind: ProductKind) => l[kind as keyof Loadout] as string;
 const wearing = (l: Loadout, part: Skin): Loadout => sanitizeLoadout({ ...l, [part.kind]: part.item });
 
 export default function StyleScreen() {
   useScreenMusic('shop');
   const loadout = useGameStore((s) => s.loadout);
   const ownedSkins = useGameStore((s) => s.ownedSkins);
+  const coinItems = useGameStore((s) => s.coinItems);
+  const coins = useGameStore((s) => s.coins);
+  const buyWithCoins = useGameStore((s) => s.buyWithCoins);
+  const preferred = useGameStore((s) => s.preferredCurrency);
   const equip = useGameStore((s) => s.equip);
   const [slot, setSlot] = useState<ProductKind>('derp');
   const [selected, setSelected] = useState<string>(loadout.derp);
   const [wardrobe] = useState(() => new WardrobeView());
   const spinPan = useSpinGesture(wardrobe);
   const parts = PARTS[slot];
-  const owns = (p: Skin) => ownsProduct(p.id, ownedSkins);
-  const worn = (p: Skin) => loadout[p.kind] === p.item;
+  const owns = (p: Skin) => ownsProduct(p.id, ownedSkins, coinItems);
+  const worn = (p: Skin) => wornItem(loadout, p.kind) === p.item;
   const selPart = parts.find((p) => p.item === selected) ?? parts[0];
   // Featured: the last part of this slot you don't own yet, else any.
   const featured =
@@ -67,21 +62,47 @@ export default function StyleScreen() {
 
   const pickSlot = (k: ProductKind) => {
     setSlot(k);
-    setSelected(loadout[k]);
+    setSelected(wornItem(loadout, k));
   };
   const onEquip = (p: Skin) => {
     equip(p.kind, p.item);
     haptic.success();
     playSfx('ui_confirm');
   };
-  const buy = (p: Skin) => router.push({ pathname: '/shop', params: { tab: p.kind === 'derp' ? 'derps' : 'hats', skin: p.id } });
+  // Coin parts are bought here (after a confirm); wallet parts in the shop.
+  const buy = (p: Skin) => {
+    if (!isCoinSkin(p)) {
+      router.push({ pathname: '/shop', params: { tab: p.kind, skin: p.id } });
+      return;
+    }
+    if (coins < p.priceCoins) {
+      haptic.warning();
+      playSfx('ui_error');
+      Alert.alert('Not enough coins', `${p.name} costs ${p.priceCoins.toLocaleString()} coins. You need ${(p.priceCoins - coins).toLocaleString()} more. Every match pays coins.`);
+      return;
+    }
+    Alert.alert(`Buy ${p.name}?`, `${p.priceCoins.toLocaleString()} coins. You'll have ${(coins - p.priceCoins).toLocaleString()} left.`, [
+      { text: 'Not yet', style: 'cancel' },
+      {
+        text: 'Buy it',
+        onPress: () => {
+          if (!buyWithCoins(p.id)) return;
+          equip(p.kind, p.item);
+          haptic.kill();
+          playSfx('coins');
+        },
+      },
+    ]);
+  };
   const action = (p: Skin) =>
     worn(p) ? (
       <GameButton label="EQUIPPED" color="dark" small disabled />
     ) : owns(p) ? (
       <GameButton label="EQUIP" color="green" small onPress={() => onEquip(p)} />
+    ) : isCoinSkin(p) ? (
+      <GameButton label={p.priceCoins.toLocaleString()} color={coins >= p.priceCoins ? 'orange' : 'dark'} small icon={<CoinIcon size={16} />} onPress={() => buy(p)} />
     ) : (
-      <GameButton label={priceLabel(p)} color="orange" small onPress={() => buy(p)} />
+      <GameButton label={priceOf(p, preferred).label} color="purple" small onPress={() => buy(p)} />
     );
 
   return (
@@ -99,7 +120,7 @@ export default function StyleScreen() {
               <Text style={styles.title}>Choose your style!</Text>
             </LinearGradient>
           </Animated.View>
-          <View style={styles.back} />
+          <CoinPill coins={coins} />
         </View>
 
         {/* The open middle, where the archers stand: drag here to spin one. */}
@@ -123,38 +144,40 @@ export default function StyleScreen() {
           </View>
         </View>
 
-        {/* Slot switcher + that slot's parts */}
+        {/* Section switcher + that section's parts */}
         <View style={styles.picker}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.strip}>
-            <View style={styles.slots}>
-              {SLOTS.map((s) => (
-                <HapticTouchable key={s.kind} style={[styles.slot, slot === s.kind && styles.slotOn]} onPress={() => pickSlot(s.kind)}>
-                  <Text style={[styles.slotText, slot === s.kind && styles.slotTextOn]}>{s.label}</Text>
-                </HapticTouchable>
-              ))}
-            </View>
-            {parts.map((p) => {
+          <View style={styles.slots}>
+            {SECTIONS.map((s) => (
+              <HapticTouchable key={s.kind} style={[styles.slot, slot === s.kind && styles.slotOn]} onPress={() => pickSlot(s.kind)}>
+                {s.icon}
+                <Text style={[styles.slotText, slot === s.kind && styles.slotTextOn]}>{s.label}</Text>
+              </HapticTouchable>
+            ))}
+          </View>
+          <ScrollView key={slot} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.strip}>
+            {parts.map((p, i) => {
               const own = owns(p);
               const on = selPart.id === p.id;
               return (
-                <HapticTouchable
-                  key={p.id}
-                  style={[styles.chip, { borderColor: on ? '#FFFFFF' : p.color, backgroundColor: on ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.45)' }]}
-                  onPress={() => setSelected(p.item)}
-                >
-                  <PartIcon part={p} derp={loadout.derp} />
-                  <Text style={styles.chipText} numberOfLines={1}>
-                    {p.name}
-                  </Text>
-                  {worn(p) ? (
-                    <Ionicons name="checkmark-circle" size={14} color="#7CC23A" />
-                  ) : !own ? (
-                    <>
-                      <Ionicons name="lock-closed" size={12} color="rgba(255,255,255,0.7)" />
-                      <Text style={styles.chipPrice}>{priceLabel(p)}</Text>
-                    </>
-                  ) : null}
-                </HapticTouchable>
+                <Animated.View key={p.id} entering={FadeInRight.delay(Math.min(i, 8) * 30).duration(220)}>
+                  <HapticTouchable
+                    style={[styles.chip, { borderColor: on ? '#FFFFFF' : p.color, backgroundColor: on ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.45)' }]}
+                    onPress={() => setSelected(p.item)}
+                  >
+                    <PartThumb part={p} derp={loadout.derp} size={28} />
+                    <Text style={styles.chipText} numberOfLines={1}>
+                      {p.name}
+                    </Text>
+                    {worn(p) ? (
+                      <Ionicons name="checkmark-circle" size={14} color="#7CC23A" />
+                    ) : !own ? (
+                      <>
+                        {isCoinSkin(p) ? <CoinIcon size={13} /> : <Ionicons name="lock-closed" size={12} color="rgba(255,255,255,0.7)" />}
+                        <Text style={[styles.chipPrice, !isCoinSkin(p) && styles.chipPriceSol]}>{priceOf(p, preferred).label}</Text>
+                      </>
+                    ) : null}
+                  </HapticTouchable>
+                </Animated.View>
               );
             })}
           </ScrollView>
@@ -162,21 +185,6 @@ export default function StyleScreen() {
       </SafeAreaView>
     </View>
   );
-}
-
-// A derp's head, a hat on my derp, or a bow glyph.
-function PartIcon({ part, derp }: { part: Skin; derp: DerpId }) {
-  if (part.kind === 'bow') return <MaterialCommunityIcons name={part.item === 'shovel' ? 'shovel' : 'bow-arrow'} size={18} color="#FFFFFF" />;
-  return (
-    <View style={styles.thumb}>
-      {part.kind === 'derp' ? <DerpThumb derp={part.item as DerpId} size={22} /> : <DerpThumb derp={derp} hat={part.item as HatId} size={22} />}
-    </View>
-  );
-}
-
-function priceLabel(p: Skin) {
-  if (p.priceLamports > 0) return formatSol(p.priceLamports);
-  return p.priceSkr > 0 ? formatSkr(p.priceSkr) : 'SHOP';
 }
 
 // ---- 3D: three striped cards with a stickman standing in each -----------------------------
@@ -385,7 +393,7 @@ const styles = StyleSheet.create({
   cardButtons: { flexDirection: 'row', paddingHorizontal: 8 },
   col: { flex: 1, alignItems: 'center', gap: 4 },
   cardName: { fontFamily: FONT.bold, fontSize: 13, color: '#FFFFFF', ...shadow },
-  picker: { paddingTop: 6, paddingBottom: 4, gap: 6 },
+  picker: { paddingTop: 4, paddingBottom: 4, gap: 6 },
   strip: { gap: 8, paddingHorizontal: 14 },
   chip: {
     flexDirection: 'row',
@@ -396,13 +404,13 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 2,
   },
-  thumb: { width: 24, height: 24, borderRadius: 6, backgroundColor: '#E9E4D8', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   chipText: { fontFamily: FONT.semi, fontSize: 13, color: '#FFFFFF', maxWidth: 120 },
-  chipPrice: { fontFamily: FONT.semi, fontSize: 11, color: '#FFC23D' },
-  slots: { flexDirection: 'row', backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 10, padding: 3, marginRight: 4 },
-  slot: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 8, justifyContent: 'center' },
-  slotOn: { backgroundColor: '#FFFFFF' },
+  chipPrice: { fontFamily: FONT.bold, fontSize: 12, color: '#FFC23D' },
+  chipPriceSol: { color: '#D9C6FF' },
+  slots: { flexDirection: 'row', alignSelf: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 12, padding: 3 },
+  slot: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 9 },
+  slotOn: { backgroundColor: '#8E6CEF' },
   slotText: { fontFamily: FONT.bold, fontSize: 13, color: 'rgba(255,255,255,0.75)' },
-  slotTextOn: { color: '#0B0B0F' },
+  slotTextOn: { color: '#FFFFFF' },
 });
 
