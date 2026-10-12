@@ -25,7 +25,7 @@ sun = bpy.data.objects.new('sun', bpy.data.lights.new('sun', 'SUN')); sun.data.e
 w = bpy.data.worlds.new('w'); sc.world = w; w.use_nodes = True; w.node_tree.nodes['Background'].inputs[0].default_value = (0.6, 0.65, 0.7, 1)
 cam = bpy.data.objects.new('cam', bpy.data.cameras.new('cam')); sc.collection.objects.link(cam); sc.camera = cam; ga.bind_camera(cam); cam.data.lens = 32
 cam.location = (0, -9.5, 1.6); bpy.context.view_layer.update(); look_at(cam, (0, 0, 1.0))
-sc.frame_set(1)
+sc.frame_set(1); ga.bake_heads([1])
 os.makedirs(os.path.join(BUILD, 'test'), exist_ok=True)
 sc.render.filepath = os.path.join(BUILD, 'test', 'poses_%s.png' % hero)
 bpy.ops.render.render(write_still=True)

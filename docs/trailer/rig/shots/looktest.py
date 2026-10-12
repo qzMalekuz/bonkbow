@@ -23,5 +23,7 @@ def build(n):
     A.apply(h, A.P_idle(), 0)
     cam = Cam(lens=32, fstop=4.0)
     cam.at(0, (2.2, -7.5, 1.5), (0, 0, 1.25), focus=(0, 0, 1.4))
+    S.key = __import__("shotkit").key_light((0, 0, 1.4), energy=500 if arena in ("colosseum","moonlit_woods","rainy_town") else 0)
+    if arena in ("colosseum","moonlit_woods","rainy_town"): ga.head_glow(0.2)
     S.grade()
     return env, h, cam

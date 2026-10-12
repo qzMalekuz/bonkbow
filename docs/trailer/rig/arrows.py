@@ -25,7 +25,7 @@ def shoot(name, src, dst, t0, duration, arc=0.0, white=False, col=None, stick=Tr
     n = steps or max(2, int(round(duration * FPS)))
     a.rotation_mode = 'XYZ'
     if not visible_before:
-        key_scale(a, max(0, t0 - 1.0 / FPS), 0.0, interp='CONSTANT')
+        a.scale = (0, 0, 0); a.keyframe_insert('scale', frame=max(1, frame(t0) - 1))   # always the frame before
     key_scale(a, t0, 1.0, interp='CONSTANT')
     prev = None
     for i in range(n + 1):
@@ -121,5 +121,6 @@ def release_point(h):
     nk = h['nocked']
     mw = nk.matrix_world
     tip = mw.translation.copy()
-    d = (mw.to_3x3() @ Vector((1, 0, 0))).normalized()
+    # direction from the bow, not the arrow: the nocked arrow is scaled to zero once released
+    d = (h['bow'].matrix_world.to_3x3() @ Vector((1, 0, 0))).normalized()
     return tip, d

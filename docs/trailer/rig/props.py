@@ -152,9 +152,8 @@ def build_quiver(name, col, white=False):
         ar = build_arrow('%s_spare%d' % (name, i), col, white=white, length=0.5)
         ar.parent = root
         ar.location = (math.cos(a) * 0.035, math.sin(a) * 0.035, 0.52)
-        ar.rotation_euler = (0, math.radians(-90), 0)  # tip down into the quiver, fletching up
-        # we only need the fletched end visible: tip sits inside the quiver body
-        ar.location = (math.cos(a) * 0.035, math.sin(a) * 0.035, -0.2)
+        ar.rotation_euler = (0, math.radians(90), 0)   # tip down into the quiver, fletching up
+        ar.location = (math.cos(a) * 0.035, math.sin(a) * 0.035, -0.08)
     return root
 
 
