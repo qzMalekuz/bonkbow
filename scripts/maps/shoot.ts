@@ -18,7 +18,7 @@ if (!outDir || !shots.length) throw new Error('usage: bun scripts/maps/shoot.ts 
 const site = join(outDir, 'site');
 mkdirSync(site, { recursive: true });
 const built = await Bun.build({
-  entrypoints: [fileURLToPath(new URL('./preview.ts', import.meta.url))],
+  entrypoints: [fileURLToPath(new URL('./preview.ts', import.meta.url).href)],
   outdir: site,
   target: 'browser',
   naming: 'preview.js',
