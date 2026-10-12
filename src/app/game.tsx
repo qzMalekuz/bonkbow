@@ -21,9 +21,9 @@ import { submitScore } from '@/utils/scores';
 import { supabase } from '@/utils/supabase';
 import { useRoomChannel, type Role } from '@/multiplayer/useRoom';
 import { LoadingScreen, nextLoadingVariant } from '@/ui/LoadingScreen';
-import { BloodEdge, ChatPanel, FloatingNumber, Plate, SkullMarker, SpeechBubble, TurnBanner, type Bubble, type Floater } from '@/ui/hud';
+import { BloodEdge, ChatPanel, FloatingNumber, Plate, Scrawl, SkullMarker, SpeechBubble, TurnSign, type BarHit, type Bubble, type Floater } from '@/ui/hud';
 import { EMOTES, type EmoteId } from '@/ui/emotes';
-import { FONT, GameButton } from '@/ui/kit';
+import { FONT, GameButton, INK } from '@/ui/kit';
 
 type Turn = 'player' | 'enemy' | 'over';
 type Outcome = 'win' | 'lose' | 'left';
@@ -54,6 +54,19 @@ const TEXT_ACT: Record<string, [Gesture, Mood]> = {
 const EMOTE_COOLDOWN_MS = 2500;
 const LOADING_MIN_MS = 1500;
 
+// The turn sign reads "SUDDEN DEATH" while both archers are down to a third
+// of their health or less (one decent hit from the end). Presentation only:
+// no rule changes.
+const SUDDEN_DEATH_HP = Math.floor(HP.max / 3);
+
+// What an archer says while his arrow is still in the air.
+const EARLY_CHEERS = ['nailed it', 'called it', 'easy', 'got him'];
+
+// Route params and network payloads are untyped strings; sanitizeLoadout
+// keeps only ids it knows and maps a legacy `head` from older builds.
+type LooseLoadout = { derp?: string; hat?: string; bow?: string; head?: string };
+const loadoutFrom = (l: LooseLoadout | undefined) => sanitizeLoadout(l as Parameters<typeof sanitizeLoadout>[0]);
+
 // The duel screen: the 3D duel plus HUD, chat, AI reactions, and the side
 // effects that belong on JS (haptics, audio, persistence, analytics, the
 // multiplayer channel). /game?mode=ai&seed=… | ?mode=online&code=&role=&seed=
@@ -65,9 +78,9 @@ export default function GameScreen() {
     code?: string;
     role?: string;
     seed?: string;
-    rivalHead?: string;
+    rivalDerp?: string;
+    rivalHat?: string;
     rivalBow?: string;
-    rivalTrail?: string;
     rivalName?: string;
   }>();
   const mode: GameMode = params.mode === 'online' ? 'online' : 'ai';
@@ -87,7 +100,7 @@ export default function GameScreen() {
   const setBlocked = useGameStore((s) => s.setBlockOpponentMessages);
   const look = useMemo(() => lookFor(loadout), [loadout]);
   const [rivalLoadout, setRivalLoadout] = useState<Loadout>(() =>
-    sanitizeLoadout(online ? DEFAULT_LOADOUT : { head: params.rivalHead, bow: params.rivalBow, trail: params.rivalTrail }),
+    online ? DEFAULT_LOADOUT : loadoutFrom({ derp: params.rivalDerp, hat: params.rivalHat, bow: params.rivalBow }),
   );
   const rivalLook = useMemo(() => lookFor(rivalLoadout), [rivalLoadout]);
 
@@ -97,9 +110,11 @@ export default function GameScreen() {
   const [hp, setHp] = useState({ me: HP.max, meShield: HP.shield, them: HP.max, themShield: online ? HP.shield : 0 });
   const [turn, setTurn] = useState<Turn>('enemy');
   const [timer, setTimer] = useState<{ who: 'player' | 'enemy'; endsAt: number; seconds: number } | null>(null);
-  const [banner, setBanner] = useState<{ id: number; text: string; color: string } | null>(null);
+  const [sign, setSign] = useState<{ id: number; who: 'player' | 'enemy' } | null>(null);
+  const [signUp, setSignUp] = useState(false);
   const [bubbles, setBubbles] = useState<Bubble[]>([]);
   const [floaters, setFloaters] = useState<Floater[]>([]);
+  const [barHits, setBarHits] = useState<BarHit[]>([]);
   const [blood, setBlood] = useState<{ id: number; side: 'left' | 'right' } | null>(null);
   const [popup, setPopup] = useState<{ id: number; text: string; color: string } | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
@@ -117,6 +132,7 @@ export default function GameScreen() {
   const ended = useRef(false);
   const tickTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const endRef = useRef<(o: Outcome) => void>(() => {});
+  const suddenAnnounced = useRef(false);
 
   // Pre-match loading: progress creeps up, then completes when the 3D duel
   // has rendered its first frames (and at least a short beat has passed).
@@ -154,6 +170,16 @@ export default function GameScreen() {
   }, []);
   const addFloater = useCallback((f: Omit<Floater, 'id'>) => setFloaters((l) => [...l, { ...f, id: nextId.current++ }]), []);
   const dropFloater = useCallback((fid: number) => setFloaters((l) => l.filter((f) => f.id !== fid)), []);
+  const addBarHit = useCallback((h: Omit<BarHit, 'id'>) => setBarHits((l) => [...l, { ...h, id: nextId.current++ }]), []);
+  const dropBarHit = useCallback((hid: number) => setBarHits((l) => l.filter((h) => h.id !== hid)), []);
+  // Damage comes off the bar it hit: red off health, blue off the shield.
+  const barDamage = useCallback(
+    (who: 'player' | 'enemy', dmg: number, shieldDmg: number, head: boolean) => {
+      if (dmg > 0) addBarHit({ who, bar: 'hp', text: `-${dmg}`, color: '#E5383B', big: head });
+      if (shieldDmg > 0) addBarHit({ who, bar: 'shield', text: `-${shieldDmg}`, color: '#2F8CE0' });
+    },
+    [addBarHit],
+  );
   const showPopup = useCallback((text: string, color: string) => {
     const pid = nextId.current++;
     setPopup({ id: pid, text, color });
@@ -183,10 +209,12 @@ export default function GameScreen() {
   const room = useRoomChannel(code, online ? role : undefined, {
     onShot: (s) => {
       setTurn('enemy');
+      setSignUp(false);
       duel.current?.fireRemote(s);
     },
     onResult: (r) => duel.current?.applyRemoteResult(r),
-    onLook: (l) => setRivalLoadout(sanitizeLoadout(l)),
+    // The payload is whatever the other phone sent: a Loadout, or { head, bow, trail } from older builds.
+    onLook: (l) => setRivalLoadout(loadoutFrom(l as LooseLoadout)),
     onEmote: (e) => {
       if (!useGameStore.getState().blockOpponentMessages) showBubble('enemy', e.kind, e.value);
     },
@@ -207,6 +235,7 @@ export default function GameScreen() {
       ended.current = true;
       setTurn('over');
       setTimer(null);
+      setSignUp(false);
       clearTicks();
       duckMusic(true);
       const st = runStats.current;
@@ -237,9 +266,9 @@ export default function GameScreen() {
             coins: String(coins),
             prevXp: String(prevXp),
             rivalName,
-            rivalHead: rivalLoadout.head,
+            rivalDerp: rivalLoadout.derp,
+            rivalHat: rivalLoadout.hat,
             rivalBow: rivalLoadout.bow,
-            rivalTrail: rivalLoadout.trail,
           },
         });
       }, 2600);
@@ -258,13 +287,14 @@ export default function GameScreen() {
           haptic.aimStart();
           playSfx('draw_start');
           setChatOpen(false);
+          setSignUp(false);
           break;
         case 'drawTick':
           haptic.drawTick(e.power);
           playSfx('draw_tick', 0.6 + e.power * 0.6);
           break;
         case 'release':
-          setBanner(null);
+          setSignUp(false);
           haptic.release();
           playSfx('bow_release');
           playSfx('arrow_whoosh');
@@ -277,11 +307,13 @@ export default function GameScreen() {
           break;
         case 'enemyDraw':
           playSfx('draw_start', 0.6);
+          setSignUp(false);
           break;
         case 'enemyFired':
           playSfx('bow_release', 0.7);
           playSfx('arrow_whoosh', 0.7);
           setTimer(null);
+          setSignUp(false);
           break;
         case 'impact':
           playSfx(e.surface === 'ledge' ? 'hit_wood' : 'hit_ground');
@@ -290,10 +322,9 @@ export default function GameScreen() {
           clearTicks();
           setTurn(e.who === 'player' ? 'player' : 'enemy');
           setTimer({ who: e.who, endsAt: Date.now() + e.seconds * 1000, seconds: e.seconds });
+          setSign({ id: nextId.current++, who: e.who });
+          setSignUp(true);
           if (e.who === 'player') {
-            const bid = nextId.current++;
-            setBanner({ id: bid, text: 'YOUR TURN', color: '#FFD23F' });
-            setTimeout(() => setBanner((b) => (b?.id === bid ? null : b)), 1300);
             playSfx('whoosh_fast');
             // Clock ticks for the last five seconds.
             for (let i = 5; i >= 1; i--) {
@@ -307,7 +338,7 @@ export default function GameScreen() {
           }
           break;
         case 'turnTimeout':
-          showPopup("TIME'S UP", '#FF6B6B');
+          showPopup("TIME'S UP", '#E5383B');
           break;
         case 'shotFired':
           runStats.current.shots += 1;
@@ -330,21 +361,16 @@ export default function GameScreen() {
         case 'shieldBreak':
           playSfx('shield_break');
           haptic.shieldBreak();
-          if (e.who === 'enemy') showPopup('SHIELD BROKEN!', '#7FD8FF');
+          if (e.who === 'enemy') showPopup('NO MORE SHIELD', '#2F8CE0');
           break;
         case 'enemyHit': {
           setHp((h) => ({ ...h, them: e.hp, themShield: e.shield }));
           const shieldOnly = e.dmg === 0;
           playSfx(shieldOnly ? 'shield_hit' : e.zone === 'head' ? 'hit_head' : 'body_hit_flesh');
           if (!shieldOnly) playSfx('grunt', 0.8);
-          addFloater({
-            who: 'enemy',
-            text: `-${e.dmg + e.shieldDmg}`,
-            color: shieldOnly ? '#7FD8FF' : e.zone === 'head' ? '#FFD23F' : '#FF4D4D',
-            big: e.zone === 'head',
-          });
+          barDamage('enemy', e.dmg, e.shieldDmg, e.zone === 'head');
           if (!shieldOnly) setBlood({ id: nextId.current++, side: 'right' });
-          if (e.zone === 'head') showPopup('HEADSHOT!', '#FFD23F');
+          if (e.zone === 'head') showPopup('HEADSHOT', INK);
           if (e.hp <= 0) {
             haptic.kill();
             setTimeout(() => playSfx('body_drop'), 420);
@@ -375,7 +401,7 @@ export default function GameScreen() {
           const shieldOnly = e.dmg === 0;
           playSfx(shieldOnly ? 'shield_hit' : e.zone === 'head' ? 'hit_head' : 'body_hit_flesh');
           if (!shieldOnly) playSfx('grunt');
-          addFloater({ who: 'player', text: `-${e.dmg + e.shieldDmg}`, color: shieldOnly ? '#7FD8FF' : '#FF4D4D', big: e.zone === 'head' });
+          barDamage('player', e.dmg, e.shieldDmg, e.zone === 'head');
           if (!shieldOnly) {
             setBlood({ id: nextId.current++, side: 'left' });
             damage.set(withSequence(withTiming(0.6, { duration: 70 }), withTiming(0, { duration: 450 })));
@@ -392,10 +418,40 @@ export default function GameScreen() {
           }
           break;
         }
+        // Comedy beats: words over the archer's head, deadpan and short.
+        case 'selfBonk':
+          playSfx('hit_wood');
+          addFloater({ who: e.who, text: 'BONK', color: INK, big: true, word: true });
+          if (e.who === 'player') {
+            haptic.shieldHit();
+            rivalSays('emote', 'lol', 0.6, 900);
+          } else haptic.miss();
+          break;
+        case 'ow':
+          playSfx('emote_pop', 0.4);
+          if (e.who === 'player') haptic.emote();
+          addFloater({ who: e.who, text: '...ow.', color: INK, word: true });
+          break;
+        case 'earlyCheer':
+          addFloater({ who: e.who, text: EARLY_CHEERS[Math.floor(Math.random() * EARLY_CHEERS.length)], color: INK, word: true });
+          break;
       }
     },
-    [online, room, showPopup, addFloater, rivalSays, endMatch, damage, scorePop],
+    [online, room, showPopup, addFloater, barDamage, rivalSays, endMatch, damage, scorePop],
   );
+
+  // Sudden death: announced once with a slam when the sign first shows it.
+  const sudden = turn !== 'over' && hp.me > 0 && hp.them > 0 && hp.me <= SUDDEN_DEATH_HP && hp.them <= SUDDEN_DEATH_HP;
+  useEffect(() => {
+    if (!sudden) {
+      suddenAnnounced.current = false;
+      return;
+    }
+    if (!signUp || suddenAnnounced.current) return;
+    suddenAnnounced.current = true;
+    playSfx('vs_slam');
+    haptic.shieldBreak();
+  }, [sudden, signUp]);
 
   // ---- chat ----------------------------------------------------------------------------
   const send = (kind: 'emote' | 'text', value: string) => {
@@ -423,7 +479,8 @@ export default function GameScreen() {
     router.back();
   };
 
-  const turnLabel = turn === 'player' ? 'YOUR TURN' : turn === 'enemy' ? (online ? 'OPPONENT' : 'RIVAL') : '';
+  const signText = sudden ? 'SUDDEN DEATH' : sign?.who === 'player' ? 'YOUR TURN' : 'HIS TURN';
+  const signSub = sudden ? (sign?.who === 'player' ? '(your turn)' : '(his turn)') : undefined;
 
   return (
     <View style={styles.root}>
@@ -460,17 +517,24 @@ export default function GameScreen() {
 
       {popup && (
         <View pointerEvents="none" style={styles.popupWrap}>
-          <Animated.Text key={popup.id} entering={ZoomIn.duration(240)} exiting={FadeOut.duration(250)} style={[styles.popup, { color: popup.color }]}>
-            {popup.text}
-          </Animated.Text>
+          <Animated.View key={popup.id} entering={ZoomIn.duration(240)} exiting={FadeOut.duration(250)}>
+            <Scrawl text={popup.text} size={36} color={popup.color} seed={popup.id} />
+          </Animated.View>
         </View>
       )}
-      {banner && <TurnBanner key={banner.id} text={banner.text} color={banner.color} />}
+      {sign && turn !== 'over' && <TurnSign id={sign.id} text={signText} sub={signSub} up={signUp && !loading} />}
 
       {/* Top bar: my plate · pause + kills · rival plate */}
       <SafeAreaView style={styles.hud} edges={['top', 'left', 'right']} pointerEvents="box-none">
         <View style={styles.hudRow} pointerEvents="box-none">
-          <Plate name="You" hp={hp.me} shield={hp.meShield} timer={timer?.who === 'player' ? timer : null} />
+          <Plate
+            name="You"
+            hp={hp.me}
+            shield={hp.meShield}
+            timer={timer?.who === 'player' ? timer : null}
+            hits={barHits.filter((h) => h.who === 'player')}
+            onHitDone={dropBarHit}
+          />
           <View style={styles.center} pointerEvents="box-none">
             <HapticTouchable onPress={() => setPaused(true)} hitSlop={10} style={styles.pause} sound="ui_open">
               <Ionicons name="pause" size={18} color="#FFFFFF" />
@@ -483,9 +547,16 @@ export default function GameScreen() {
                 <Text style={styles.killsText}>{score}</Text>
               </Animated.View>
             )}
-            <Text style={styles.turnText}>{turnLabel}</Text>
           </View>
-          <Plate name={rivalName} hp={hp.them} shield={hp.themShield} right timer={timer?.who === 'enemy' ? timer : null} />
+          <Plate
+            name={rivalName}
+            hp={hp.them}
+            shield={hp.themShield}
+            right
+            timer={timer?.who === 'enemy' ? timer : null}
+            hits={barHits.filter((h) => h.who === 'enemy')}
+            onHitDone={dropBarHit}
+          />
         </View>
         {online && !room.opponentPresent && turn !== 'over' && <Text style={styles.waiting}>Waiting for opponent to connect…</Text>}
       </SafeAreaView>
@@ -559,7 +630,6 @@ const styles = StyleSheet.create({
   },
   killsText: { fontFamily: FONT.bold, fontSize: 16, color: '#FFFFFF' },
   roomCode: { fontFamily: FONT.bold, color: '#FFFFFF', fontSize: 16, letterSpacing: 4, ...textShadow },
-  turnText: { fontFamily: FONT.bold, color: 'rgba(255,255,255,0.9)', fontSize: 11, letterSpacing: 1.5, ...textShadow },
   waiting: { fontFamily: FONT.semi, color: 'rgba(255,255,255,0.8)', fontSize: 13, textAlign: 'center', marginTop: 8, ...textShadow },
   corner: { position: 'absolute', right: 0, bottom: 0 },
   cornerRow: { flexDirection: 'row', alignItems: 'center', gap: 12, margin: 14 },
@@ -576,8 +646,7 @@ const styles = StyleSheet.create({
   roundBtnOn: { backgroundColor: 'rgba(255,164,27,0.75)' },
   chatBtn: { width: 54, height: 46, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' },
   damage: { ...StyleSheet.absoluteFill, borderWidth: 26, borderColor: 'rgba(170,10,20,0.85)' },
-  popupWrap: { position: 'absolute', top: '22%', left: 0, right: 0, alignItems: 'center' },
-  popup: { fontFamily: FONT.bold, fontSize: 38, letterSpacing: 2, ...textShadow },
+  popupWrap: { position: 'absolute', top: '30%', left: 0, right: 0, alignItems: 'center' },
   overlay: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center' },
   sheet: {
     width: 300,

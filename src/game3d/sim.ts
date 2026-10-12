@@ -3,6 +3,15 @@
 // only through `GameEvent`s. Everything that affects the outcome runs on the
 // fixed physics step so both multiplayer phones agree; bullet time only
 // stretches how long those steps take on screen.
+//
+// Bonk Bow comedy lives here too, as presentation on top of the fair duel:
+// archers celebrate before the arrow lands, stare at the camera after a
+// miss, notice hits a beat late, eat spare arrows while they wait, idle
+// facing the wrong way, and a shot fired straight up comes back down on the
+// shooter as a harmless bonk. None of it changes a hit or a number (the AI's
+// own derpy shots are vs-AI only, where there is no other phone to agree with).
+import type { Habit } from '@/game/derps';
+import { mulberry32 } from '@/game/rng';
 import {
   AI,
   HP,
@@ -53,13 +62,37 @@ export type GameEvent =
   | { type: 'enemyDraw' }
   | { type: 'enemyFired' }
   | { type: 'footstep' }
-  | { type: 'impact'; surface: Surface };
+  | { type: 'impact'; surface: Surface }
+  // Comedy beats (presentation only; the outcome never depends on them).
+  // A shot that came straight back down on its own shooter: a harmless bonk.
+  | { type: 'selfBonk'; who: Who }
+  // The victim of a hit notices a moment late.
+  | { type: 'ow'; who: Who }
+  // Celebrating while the arrow is still in the air.
+  | { type: 'earlyCheer'; who: Who };
 
 export type GameMode = 'ai' | 'online';
 export type Phase = 'intro' | 'player' | 'flight' | 'enemyThink' | 'waitRemote' | 'over';
 
 // Face the rig shows; reactions set one for a moment, then it relaxes.
-export type Mood = 'neutral' | 'angry' | 'happy' | 'hurt' | 'laugh' | 'sad' | 'shock' | 'dead' | 'smug' | 'wink' | 'sleepy' | 'scared';
+// chew: eating an arrow; camera: deadpan stare down the lens after a miss;
+// dazed: seeing stars after a self-bonk.
+export type Mood =
+  | 'neutral'
+  | 'angry'
+  | 'happy'
+  | 'hurt'
+  | 'laugh'
+  | 'sad'
+  | 'shock'
+  | 'dead'
+  | 'smug'
+  | 'wink'
+  | 'sleepy'
+  | 'scared'
+  | 'chew'
+  | 'camera'
+  | 'dazed';
 // Whole-body animations layered over the idle pose.
 export type Gesture =
   | 'cheer'
@@ -76,7 +109,8 @@ export type Gesture =
   | 'think'
   | 'salute'
   | 'dance'
-  | 'yawn';
+  | 'yawn'
+  | 'eat'; // chews on an arrow
 
 // Ragdoll-lite death: the body is knocked back as one piece while the limbs
 // go limp (the renderer flails them from `t`).
@@ -103,6 +137,8 @@ export type Archer = {
   recoil: number; // 1 → 0 after a release: string vibration + arm kick
   aimTo: number;
   drawTo: number;
+  turn: 0 | 1; // 1 = idling (or drawing) the wrong way round
+  habit: Habit;
 };
 
 // Arrow left in the world. owner 0 = scenery (world coords); 1 = player body,
@@ -125,6 +161,18 @@ export type SimOptions = {
   myTurnFirst: boolean;
 };
 
+// How often each comedy beat happens; an archer's habit makes his one likely.
+const GAG = {
+  cheer: 0.4, // celebrate early (always on a shot that is going to miss... mostly)
+  cheerMiss: 0.7,
+  backwards: 0.12, // start a turn facing the wrong way
+  snack: 0.3, // eat an arrow while the other one aims
+  aiUp: 0.05, // AI fires straight up
+  aiBackwards: 0.15, // AI draws the wrong way first
+  habit: 0.75, // chance of the beat when it is his habit
+  owDelay: 0.6, // seconds before a hit archer reacts
+};
+
 export const GESTURE_SECONDS: Record<Gesture, number> = {
   cheer: 2.4,
   laugh: 2.2,
@@ -141,12 +189,17 @@ export const GESTURE_SECONDS: Record<Gesture, number> = {
   salute: 1.8,
   dance: 2.6,
   yawn: 2.4,
+  eat: 3.2,
 };
 
 export class DuelSim {
   readonly online: boolean;
   readonly seed: number;
   readonly role: 'host' | 'guest';
+  // The comedy rolls come off one seeded stream so both phones see the same
+  // cheer, snack and wrong-way draw. (Online, the host rolls for the gags
+  // that reach the other phone as events; local-only gags just stay local.)
+  private readonly rand: () => number;
   round = 0;
   layout: Layout;
   player: Archer;
@@ -167,6 +220,8 @@ export class DuelSim {
   aiming = false;
   aimAngle = 0.5;
   aimPower = 0;
+  // Straight up and a little past it: a shot can come back down on yourself.
+  static readonly MAX_AIM = 1.75;
   // Raw finger input; aimAngle/aimPower chase it every frame so the arm,
   // bow and trajectory move smoothly instead of jittering with the finger.
   private rawAngle = 0.5;
@@ -203,6 +258,7 @@ export class DuelSim {
     this.online = opts.mode === 'online';
     this.seed = opts.seed;
     this.role = opts.role;
+    this.rand = mulberry32(opts.seed ^ 0x5bd1e995);
     this.layout = layoutFor(opts.seed, 0);
     const mine = opts.role === 'host' ? this.layout.hostLedge : this.layout.guestLedge;
     const theirs = opts.role === 'host' ? this.layout.guestLedge : this.layout.hostLedge;
@@ -227,6 +283,7 @@ export class DuelSim {
     this.touch = { x, y };
     if (!this.canAim()) return;
     this.aiming = true;
+    this.player.turn = 0; // oh. that way.
     this.aimPower = 0;
     this.rawPower = 0;
     this.rawAngle = this.player.angle;
@@ -244,7 +301,7 @@ export class DuelSim {
     const dist = Math.hypot(dx, dy);
     this.rawPower = Math.min(1, dist / PHYS.maxDrawPx);
     // Clamp to the forward half.
-    if (dist > 6) this.rawAngle = clamp(Math.atan2(-dy, dx), -1.2, 1.45);
+    if (dist > 6) this.rawAngle = clamp(Math.atan2(-dy, dx), -1.2, DuelSim.MAX_AIM);
     const notch = Math.floor(this.rawPower * 8);
     if (notch !== this.lastNotch) {
       this.lastNotch = notch;
@@ -265,6 +322,7 @@ export class DuelSim {
   }
 
   private release(angle: number, power: number) {
+    this.player.turn = 0;
     this.player.aimTo = angle;
     this.player.drawTo = 0;
     this.player.recoil = 1; // string snaps; the rig plays the follow-through
@@ -284,6 +342,12 @@ export class DuelSim {
     a.gesture = g;
     a.gestureT = 0;
     this.setMood(a, mood, GESTURE_SECONDS[g]);
+  }
+
+  // Each archer's habit (from their look). Presentation only.
+  setHabits(player: Habit, enemy: Habit) {
+    this.player.habit = player;
+    this.enemy.habit = enemy;
   }
 
   // ---- online ----------------------------------------------------------------
@@ -335,6 +399,12 @@ export class DuelSim {
       const lethal = this.predicted.zone === 'head' || dmg.hp >= victim.hp;
       const dist = Math.hypot(this.predicted.x - this.arrow.x, this.predicted.y - this.arrow.y);
       if (lethal && dist < 5.5) target = 0.16;
+    }
+    // ...and so does an arrow coming straight back down on its own shooter.
+    if (this.arrow.active && this.arrow.vy < 0) {
+      const own = this.arrow.shooter === 'player' ? this.player : this.enemy;
+      const above = this.arrow.y - (own.top + HEAD_Y);
+      if (Math.abs(this.arrow.x - own.x) < 0.5 && above > 0 && above < 3.5) target = Math.min(target, 0.25);
     }
     if (this.real < this.slowUntil) target = Math.min(target, 0.3);
     this.timeScale += (target - this.timeScale) * Math.min(1, rdt * (target < this.timeScale ? 14 : 5));
@@ -392,6 +462,8 @@ export class DuelSim {
     const own = a.shooter === 'player' ? this.player : this.enemy;
     const zone = victim.death ? null : hitTest(victim.x, victim.top, a.x, a.y);
     if (zone) return this.resolve(zone, 'none');
+    // Straight up, straight down: on the way back it can land on the shooter.
+    if (a.vy < 0 && !own.death && hitTest(own.x, own.top, a.x, a.y)) return this.resolve('miss', 'none', true);
     const surf = surfaceHit(a.x, a.y, victim, own);
     if (surf) return this.resolve('miss', surf);
     if (Math.abs(a.x - own.x) > 90 || a.y < -5) return this.resolve('miss', 'none');
@@ -404,14 +476,34 @@ export class DuelSim {
       this.phase = 'player';
       this.turnEnds = this.time + TURN_SECONDS;
       this.emit({ type: 'turnStart', who: 'player', seconds: TURN_SECONDS });
+      // Sometimes he is facing the wrong way when his turn comes; touching
+      // the screen turns him round.
+      if (this.gag(this.player, 'backwards', GAG.backwards)) this.player.turn = 1;
+      this.snackLater(this.enemy, 'player');
       return;
     }
     this.phase = this.online ? 'waitRemote' : 'enemyThink';
     this.emit({ type: 'turnStart', who: 'enemy', seconds: this.online ? TURN_SECONDS : 2 });
-    if (!this.online) {
-      this.later(0.9, () => this.enemyAim());
-      this.later(0.9 + AI.thinkMs / 1000, () => this.enemyShoot());
-    }
+    this.snackLater(this.player, 'enemy');
+    if (!this.online) this.later(0.9, () => this.enemyAim());
+  }
+
+  // Did this archer's comedy beat come up? His habit makes it likely.
+  private gag(a: Archer, habit: Habit, chance: number) {
+    return this.rand() < (a.habit === habit ? Math.max(chance, GAG.habit) : chance);
+  }
+
+  // While the other one aims, the idle archer may get peckish (or bored).
+  private snackLater(a: Archer, whileTurn: Who) {
+    const yawn = a.habit === 'yawn';
+    if (!this.gag(a, yawn ? 'yawn' : 'eat', GAG.snack)) return;
+    this.later(1.6 + this.rand() * 3, () => {
+      const still = whileTurn === 'player' ? this.phase === 'player' : this.phase === 'enemyThink' || this.phase === 'waitRemote';
+      if (!still || a.death || a.gesture || a.walk > 0 || this.arrow.active) return;
+      a.gesture = yawn ? 'yawn' : 'eat';
+      a.gestureT = 0;
+      this.setMood(a, yawn ? 'sleepy' : 'chew', GESTURE_SECONDS[a.gesture]);
+    });
   }
 
   // ---- firing ----------------------------------------------------------------
@@ -437,10 +529,24 @@ export class DuelSim {
     me.draw = 0;
     me.drawTo = 0;
     me.recoil = 1;
+    me.turn = 0;
     if (shooter === 'enemy') this.emit({ type: 'enemyFired' });
+    // Celebrate before it lands. Confidence is highest when it is going to miss.
+    const missing = this.predicted.zone === 'miss';
+    if (this.gag(me, 'celebrate', missing ? GAG.cheerMiss : GAG.cheer)) {
+      this.later(0.35, () => {
+        if (!this.arrow.active || this.arrow.shooter !== shooter || me.death) return;
+        me.gesture = 'cheer';
+        me.gestureT = 0;
+        this.setMood(me, 'laugh', 3);
+        this.emit({ type: 'earlyCheer', who: shooter });
+      });
+    }
   }
 
-  private resolve(zone: Zone, surface: Surface) {
+  // `bonk`: the arrow came back down on the shooter. For the duel it's a
+  // miss like any other (no damage — just his pride and a dent).
+  private resolve(zone: Zone, surface: Surface, bonk = false) {
     const a = this.arrow;
     a.active = false;
     this.trail = [];
@@ -449,7 +555,19 @@ export class DuelSim {
     const shooter = shooterWho === 'player' ? this.player : this.enemy;
     const victim = shooterWho === 'player' ? this.enemy : this.player;
 
-    if (zone !== 'miss') {
+    if (bonk) {
+      // It stays where it landed. On him.
+      const tipX = a.x + Math.cos(a.angle) * 0.12;
+      const tipY = a.y + Math.sin(a.angle) * 0.12;
+      this.addStuck({ x: tipX - shooter.x, y: tipY - shooter.top, angle: a.angle, owner: shooterWho === 'player' ? 1 : 2, shooter: shooterWho });
+      this.burst(a.x, a.y, 12, P_SPARK, Math.PI / 2, 4, 3);
+      shooter.gesture = null;
+      shooter.flash = 0.5;
+      shooter.flinch = 1;
+      this.setMood(shooter, 'dazed', 2.8);
+      this.shake = Math.max(this.shake, 0.2);
+      this.emit({ type: 'selfBonk', who: shooterWho });
+    } else if (zone !== 'miss') {
       const owner = shooterWho === 'player' ? 2 : 1;
       // Bury the tip a little into the body.
       const tipX = a.x + Math.cos(a.angle) * 0.12;
@@ -463,16 +581,21 @@ export class DuelSim {
     }
     this.lastImpact = { x: a.x, y: a.y, at: this.real, kill: false, head: zone === 'head' };
 
-    // Misses: the shooter is annoyed, the target smug.
-    if (zone === 'miss') {
-      this.setMood(shooter, 'angry', 1.4);
-      if (!victim.death) this.setMood(victim, 'happy', 1.2);
+    // Misses: the celebration stops. He looks at the camera. The target is smug.
+    if (zone === 'miss' && !bonk) {
+      shooter.gesture = null;
+      this.setMood(shooter, 'camera', 1.6);
+      this.later(1.6, () => {
+        if (shooter.death || shooter.gesture || this.rand() < 0.5) return;
+        this.gesture(shooterWho, this.rand() < 0.5 ? 'shrug' : 'facepalm', 'sad');
+      });
+      if (!victim.death) this.setMood(victim, 'smug', 1.4);
     }
 
     if (shooterWho === 'player') {
       if (zone === 'miss') {
         this.emit({ type: 'shotResolved', zone, hp: this.enemy.hp, shield: this.enemy.shield });
-        this.emit({ type: 'playerMiss', long: a.x > this.enemy.x });
+        this.emit({ type: 'playerMiss', long: !bonk && a.x > this.enemy.x });
         this.startTurn('enemy');
         return;
       }
@@ -529,7 +652,7 @@ export class DuelSim {
       this.kill(victim, who === 'enemy' ? 1 : -1);
       this.setMood(shooter, 'laugh', 2.5);
     } else {
-      this.setMood(victim, 'hurt', 1.1);
+      // The victim's reaction comes a beat late (hitFx schedules it).
       this.setMood(shooter, 'happy', 1.3);
     }
   }
@@ -544,8 +667,16 @@ export class DuelSim {
       if (zone === 'head') this.burst(x, y, 10, P_SPARK, angle + Math.PI, 8, 2.6);
     }
     victim.flash = shieldOnly ? 0.4 : 1;
-    victim.flinch = 1;
     this.shake = Math.max(this.shake, zone === 'head' ? 0.24 : 0.16);
+    // He keeps grinning with an arrow in him for a moment, then notices.
+    const who: Who = victim === this.player ? 'player' : 'enemy';
+    if (victim.mood !== 'dead') this.setMood(victim, 'neutral', 0);
+    this.later(GAG.owDelay, () => {
+      if (victim.death || this.phase === 'over') return;
+      victim.flinch = 1;
+      this.setMood(victim, 'hurt', 1.2);
+      this.emit({ type: 'ow', who });
+    });
   }
 
   private endMatch(winner: Who) {
@@ -571,26 +702,47 @@ export class DuelSim {
   // ---- AI --------------------------------------------------------------------
   private plannedAngle = Math.PI - 0.5;
 
+  private plannedPower = AI.speedFraction;
+
   private enemyAim() {
     if (this.phase !== 'enemyThink' || this.enemy.death) return;
+    const e = this.enemy;
     const rest = Math.PI - 0.35;
-    const from = handPoint(this.enemy.x, this.enemy.top, rest);
+    const from = handPoint(e.x, e.top, rest);
     const target = { x: this.player.x, y: this.player.top + HEAD_Y };
     const v = PHYS.maxSpeed * AI.speedFraction;
     let a = solveLaunchAngle(target.x - from.x, target.y - from.y, v);
     // Out of range: max-distance 45° lob toward the player.
     if (a === null) a = Math.PI - Math.PI / 4;
-    a += (Math.random() * 2 - 1) * enemyNoise(this.score, this.skill);
+    a += (this.rand() * 2 - 1) * enemyNoise(this.score, this.skill);
+    this.plannedPower = AI.speedFraction;
+    // Now and then he aims straight up instead. It ends how you'd think.
+    if (this.gag(e, 'bonk', GAG.aiUp)) {
+      a = Math.PI / 2 + (this.rand() - 0.5) * 0.004;
+      this.plannedPower = 0.5;
+    }
     this.plannedAngle = a;
-    this.enemy.aimTo = a;
-    this.enemy.drawTo = AI.speedFraction;
+    e.aimTo = a;
+    e.drawTo = this.plannedPower;
     this.emit({ type: 'enemyDraw' });
+    // Or he draws facing the wrong way, notices, and turns round.
+    let think = AI.thinkMs / 1000;
+    if (this.gag(e, 'backwards', GAG.aiBackwards)) {
+      e.turn = 1;
+      this.later(think, () => {
+        if (this.phase !== 'enemyThink' || e.death) return;
+        e.turn = 0;
+        this.setMood(e, 'shock', 0.7);
+      });
+      think += 0.9;
+    }
+    this.later(think, () => this.enemyShoot());
   }
 
   private enemyShoot() {
     if (this.phase !== 'enemyThink' || this.enemy.death) return;
     this.enemy.angle = this.plannedAngle;
-    this.fire('enemy', this.plannedAngle, AI.speedFraction);
+    this.fire('enemy', this.plannedAngle, this.plannedPower);
   }
 
   private spawnEnemy() {
@@ -598,6 +750,7 @@ export class DuelSim {
     const l = layoutFor(this.seed, this.round);
     this.layout = { ...this.layout, gap: l.gap, guestLedge: l.guestLedge };
     const e = newArcher(l.gap, l.guestLedge, -1, Math.min(HP.shield, this.round * 20));
+    e.habit = this.enemy.habit;
     e.walk = 4;
     this.enemy = e;
     this.stuck = this.stuck.filter((s) => s.owner !== 2);
@@ -771,6 +924,8 @@ function newArcher(x: number, top: number, facing: 1 | -1, shield: number): Arch
     recoil: 0,
     aimTo: rest,
     drawTo: 0,
+    turn: 0,
+    habit: 'celebrate',
   };
 }
 

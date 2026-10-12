@@ -17,7 +17,7 @@ import Animated, {
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { Stage, type Actor } from '@/game3d/Stage';
-import { lookFor, sanitizeLoadout } from '@/game/cosmetics';
+import { lookFor, sanitizeLoadout, type Loadout } from '@/game/cosmetics';
 import { levelOf, useGameStore } from '@/game/store';
 import { haptic } from '@/game/haptics';
 import { duckMusic, playSfx } from '@/audio/sound';
@@ -40,9 +40,9 @@ export default function ResultScreen() {
     coins?: string;
     prevXp?: string;
     rivalName?: string;
-    rivalHead?: string;
+    rivalDerp?: string;
+    rivalHat?: string;
     rivalBow?: string;
-    rivalTrail?: string;
   }>();
   const online = p.mode === 'online';
   const won = p.outcome === 'win' || p.outcome === 'left';
@@ -57,7 +57,11 @@ export default function ResultScreen() {
   const coins = useGameStore((s) => s.coins);
   const loadout = useGameStore((s) => s.loadout);
   const me = useMemo(() => lookFor(loadout), [loadout]);
-  const rival = useMemo(() => lookFor(sanitizeLoadout({ head: p.rivalHead, bow: p.rivalBow, trail: p.rivalTrail })), [p.rivalHead, p.rivalBow, p.rivalTrail]);
+  // The rival's loadout rides in the params as plain strings.
+  const rival = useMemo(
+    () => lookFor(sanitizeLoadout({ derp: p.rivalDerp, hat: p.rivalHat, bow: p.rivalBow } as Partial<Loadout>)),
+    [p.rivalDerp, p.rivalHat, p.rivalBow],
+  );
 
   // vs AI the run always ends with me down, but kills make it a good run.
   const iWon = online ? won : false;
@@ -102,12 +106,12 @@ export default function ResultScreen() {
           <Text style={styles.name}>You</Text>
         </View>
         <Animated.View entering={ZoomIn.delay(500).duration(240)}>
-          <LaurelBadge label={iWon ? 'VICTORY!' : 'Defeat'} win={iWon} />
+          <LaurelBadge label={iWon ? 'WON. SOMEHOW.' : 'LOST'} win={iWon} />
         </Animated.View>
       </Animated.View>
       <Animated.View entering={FadeInDown.duration(400)} style={[styles.side, styles.right]}>
         <Animated.View entering={ZoomIn.delay(650).duration(240)}>
-          <LaurelBadge label={iWon ? 'Defeat' : 'VICTORY!'} win={!iWon} />
+          <LaurelBadge label={iWon ? 'LOST' : 'WON. SOMEHOW.'} win={!iWon} />
         </Animated.View>
         <View style={[styles.nameBox, { alignItems: 'flex-end' }]}>
           <Text style={styles.name} numberOfLines={1}>
@@ -122,8 +126,8 @@ export default function ResultScreen() {
       {!online && (
         <Animated.View entering={FadeIn.delay(700).duration(400)} style={styles.summary}>
           <Text style={styles.kills}>{score}</Text>
-          <Text style={styles.killsLabel}>{score === 1 ? 'RIVAL DOWN' : 'RIVALS DOWN'}</Text>
-          {score > 0 && score >= highScore && <Text style={styles.best}>NEW BEST!</Text>}
+          <Text style={styles.killsLabel}>{score === 1 ? 'GUY BONKED' : 'GUYS BONKED'}</Text>
+          {score > 0 && score >= highScore && <Text style={styles.best}>NEW BEST. NOBODY SAW.</Text>}
         </Animated.View>
       )}
 

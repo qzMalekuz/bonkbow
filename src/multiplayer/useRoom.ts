@@ -11,7 +11,8 @@ import { useGameStore } from '@/game/store';
 //   presence  → who's connected (both sides see "opponent joined/left")
 //   'shot'    → { angle, power }  the shooter's own aim, in ITS frame
 //   'result'  → { zone, hp, shield } authoritative outcome from the shooter's sim
-//   'look'    → { head, bow, trail } loadout so the opponent renders your style
+//   'look'    → { derp, hat, bow } loadout so the opponent renders your style
+//               (older builds send { head, bow, trail }; sanitizeLoadout copes)
 //   'emote'   → { kind, value }   chat emote or quick message
 //   'ready'   → {}                both ready → host fires first
 //
@@ -26,7 +27,8 @@ export type Room = { code: string; host_id: string; guest_id: string | null; see
 export type RemoteShot = { angle: number; power: number };
 export type RemoteResult = { zone: 'head' | 'body' | 'legs' | 'miss'; hp: number; shield: number };
 export type RemoteEmote = { kind: 'emote' | 'text'; value: string };
-export type RemoteLook = { head?: string; bow?: string; trail?: string };
+// Untrusted: always pass through sanitizeLoadout before use.
+export type RemoteLook = { derp?: string; hat?: string; bow?: string; head?: string; trail?: string };
 
 type Handlers = {
   onShot?: (s: RemoteShot) => void;

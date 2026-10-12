@@ -5,13 +5,14 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber/native';
 import { GestureDetector } from 'react-native-gesture-handler';
 import * as THREE from 'three';
 import { StickmanRig, type RigPose } from '@/game3d/Stickman3D';
-import { SIDE, reelPose } from '@/game3d/heroReel';
+import { reelPose } from '@/game3d/derpReel';
 import { Turntable, useSpinGesture } from '@/game3d/Turntable';
 import type { Look } from '@/game/cosmetics';
 
-// Shop preview of a hero on a lit plinth, playing the character-sheet reel
-// (heroReel.ts): the expressions, aiming, shooting, walk, run, crouch aim
-// and look back, turning to show each; drag sideways to spin the hero.
+// Shop preview of a derp on a lit plinth, playing the derp reel
+// (derpReel.ts): a snack, a rough aim, a bonk, a stare down the lens, an
+// early celebration, a yawn and a shrug. Drag sideways to spin him a full
+// 360° (the head is a paper cut-out that always faces the camera).
 // `onStep` hears each step's label.
 export function SkinStage({ look, style, onStep }: { look: Look; style?: ViewStyle; onStep?: (label: string) => void }) {
   const focused = useIsFocused();
@@ -46,10 +47,6 @@ class StageView {
   private ringMat = new THREE.MeshBasicMaterial();
   private rim = new THREE.DirectionalLight('#FFFFFF', 2.2);
   private t = 0;
-  private yaw = SIDE.front;
-  private yawVel = 0;
-  private snap = 0; // swipe offset, eased to whole quarter turns
-  private snapVel = 0;
   private label = '';
   private stepFn: ((label: string) => void) | undefined;
   private pose: RigPose = {
@@ -101,7 +98,7 @@ class StageView {
   setLook(look: Look) {
     this.rig.setLook(look);
     this.ringMat.color.set(look.banner);
-    // A hint of the hero's colour in the rim; mostly white so hair stays its own colour.
+    // A hint of the derp's colour in the rim; mostly white so the paper head stays white.
     this.rim.color.set('#FFFFFF').lerp(new THREE.Color(look.banner), 0.3);
   }
 
@@ -127,22 +124,9 @@ class StageView {
       this.label = step.label;
       this.stepFn?.(step.label);
     }
-    // The turn follows each step's angle on a critically damped spring.
-    const w = 5.5;
-    // Turn the short way round (left side and front are a quarter turn apart).
-    let target = step.yaw;
-    while (target - this.yaw > Math.PI) target -= Math.PI * 2;
-    while (target - this.yaw < -Math.PI) target += Math.PI * 2;
-    this.yawVel += (w * w * (target - this.yaw) - 2 * w * this.yawVel) * h;
-    this.yaw += this.yawVel * h;
-    // A swipe turns the hero, but only ever to one of the four sides the
-    // sheet drew: the stage springs to the quarter turn nearest the swipe.
+    // The rig stands in its own 3/4 view; a swipe spins the whole stage.
     this.spinner.frame(h);
-    const Q = Math.PI / 2;
-    const snap = Math.round(this.spinner.yaw / Q) * Q;
-    this.snapVel += (w * w * (snap - this.snap) - 2 * w * this.snapVel) * h;
-    this.snap += this.snapVel * h;
-    this.spin.rotation.y = this.yaw + this.snap;
+    this.spin.rotation.y = this.spinner.yaw;
     this.rig.update(this.pose, this.t, h);
   }
 }

@@ -20,7 +20,7 @@ export type StickmanData = {
   inverses: number[][];
   position: ArrayLike<number>;
   normal: ArrayLike<number>;
-  color?: ArrayLike<number>; // linear RGB per vertex (the heroes' suits)
+  color?: ArrayLike<number>; // linear RGB per vertex (optional)
   skinIndex: ArrayLike<number>;
   skinWeight: ArrayLike<number>;
   index: ArrayLike<number>;

@@ -89,9 +89,9 @@ export default function MatchScreen() {
       const q = new URLSearchParams({
         mode: online ? 'online' : 'ai',
         seed: String(match.seed),
-        rivalHead: match.rivalLoadout.head,
+        rivalDerp: match.rivalLoadout.derp,
+        rivalHat: match.rivalLoadout.hat,
         rivalBow: match.rivalLoadout.bow,
-        rivalTrail: match.rivalLoadout.trail,
         rivalName: match.rivalName,
         ...(online ? { code: params.code ?? '', role: params.role ?? 'host' } : {}),
       });

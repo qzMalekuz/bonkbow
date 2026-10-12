@@ -6,7 +6,7 @@ import Svg, { Circle, Path } from 'react-native-svg';
 import { Canvas, useFrame, useThree } from '@react-three/fiber/native';
 import * as THREE from 'three';
 import { Arena } from '@/game3d/Arena';
-import { StickmanRig, makeArrow, type RigPose } from '@/game3d/Stickman3D';
+import { SHOVEL_LEN, StickmanRig, makeProjectile, type RigPose } from '@/game3d/Stickman3D';
 import { arenaTheme, type Theme } from '@/game3d/themes';
 import { HEAD_Y, PHYS, handPoint } from '@/game3d/world';
 import {
@@ -207,7 +207,7 @@ const PERF_LOG = true;
 
 const SPAN = { min: -45, max: 120 };
 const TRAIL_N = 20;
-const DOTS = 10;
+const DOTS = 14;
 
 class DuelView {
   readonly theme: Theme;
@@ -224,6 +224,7 @@ class DuelView {
   private aimLine: THREE.Mesh;
   private aimMat: THREE.MeshBasicMaterial;
   private dots: THREE.InstancedMesh;
+  private rims: THREE.InstancedMesh;
   private ghost: THREE.InstancedMesh;
   private stuck = new Map<number, THREE.Group>();
   private alive = new Set<number>();
@@ -261,7 +262,7 @@ class DuelView {
     this.enemy = new StickmanRig(opponentLook);
     this.root.add(this.arena.group, this.player.root, this.enemy.root);
 
-    this.flying = makeArrow(look.trail);
+    this.flying = makeProjectile(look);
     this.flying.visible = false;
     this.root.add(this.flying);
 
@@ -289,31 +290,35 @@ class DuelView {
     this.trail.frustumCulled = false;
     this.root.add(this.trail);
 
-    // Particles: blood, sparks, dust, shield shards.
+    // Particles: paper bits (the sim calls them blood; nobody bleeds in Bonk
+    // Bow), sparks, dust, shield shards.
     this.parts = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ flatShading: true }), P_POOL);
     this.parts.frustumCulled = false;
     this.parts.setColorAt(0, new THREE.Color());
     this.root.add(this.parts);
     const dust = this.theme.id === 'frost' ? '#FFFFFF' : '#C9B79C';
-    this.partColors = [new THREE.Color('#A4101C'), new THREE.Color('#FFD166'), new THREE.Color(dust), new THREE.Color('#7FD8FF')];
+    this.partColors = [new THREE.Color('#F4F1E8'), new THREE.Color('#FFD166'), new THREE.Color(dust), new THREE.Color('#7FD8FF')];
 
     // Aim guide: a tension-coloured line out of the bow, the live trajectory
-    // (white) and my previous shot (green ghost) as dots.
+    // as a dotted ink arc (black dots on a white rim, like the videos, so it
+    // reads on any sky), and my previous shot (green ghost).
     this.aimMat = new THREE.MeshBasicMaterial({ color: '#FFD640', transparent: true, opacity: 0.95, fog: false });
     this.aimLine = new THREE.Mesh(new THREE.BoxGeometry(1, 0.04, 0.04).translate(0.5, 0, 0), this.aimMat);
     this.aimLine.visible = false;
     const dotGeo = new THREE.SphereGeometry(1, 8, 6);
-    this.dots = new THREE.InstancedMesh(dotGeo, new THREE.MeshBasicMaterial({ color: '#FFFFFF', fog: false }), DOTS);
+    this.dots = new THREE.InstancedMesh(dotGeo, new THREE.MeshBasicMaterial({ color: '#0C0C0C', fog: false }), DOTS);
+    this.rims = new THREE.InstancedMesh(dotGeo, new THREE.MeshBasicMaterial({ color: '#FFFFFF', fog: false }), DOTS);
     this.ghost = new THREE.InstancedMesh(
       new THREE.TorusGeometry(1, 0.28, 6, 12),
       new THREE.MeshBasicMaterial({ color: '#8BE04E', transparent: true, opacity: 0.85, fog: false }),
       DOTS,
     );
-    for (const d of [this.dots, this.ghost]) {
+    for (const d of [this.dots, this.rims, this.ghost]) {
       d.frustumCulled = false;
       d.visible = false;
     }
-    this.root.add(this.aimLine, this.dots, this.ghost);
+    this.rims.position.z = -0.05;
+    this.root.add(this.aimLine, this.rims, this.dots, this.ghost);
   }
 
   setProps(p: Props) {
@@ -324,6 +329,7 @@ class DuelView {
     const key = `${p.look.key}:${p.opponentLook.key}`;
     if (key !== this.lookKey) {
       this.lookKey = key;
+      this.sim.setHabits(p.look.habit, p.opponentLook.habit);
       this.player.setLook(p.look);
       this.enemy.setLook(p.opponentLook);
       this.arena.setArcher(0, { x: this.sim.player.x, top: this.sim.player.top, facing: 1, color: p.look.banner });
@@ -361,15 +367,16 @@ class DuelView {
     const theirTurn = sim.phase === 'enemyThink' || sim.phase === 'waitRemote';
     this.enemy.update(pose(sim.enemy, theirTurn, sim.enemy.draw > 0.02), t + 1.7, delta);
 
-    // Flying arrow + trail, fletched in the shooter's trail colour
+    // Flying arrow (or shovel) + trail, in the shooter's look
     const a = sim.arrow;
     this.flying.visible = a.active;
     if (a.active) {
-      const trail = a.shooter === 'player' ? p.look.trail : p.opponentLook.trail;
-      if (trail !== this.flyingKey) {
-        this.flyingKey = trail;
+      const shot = a.shooter === 'player' ? p.look : p.opponentLook;
+      const fk = `${shot.bow}|${shot.trail}`;
+      if (fk !== this.flyingKey) {
+        this.flyingKey = fk;
         this.root.remove(this.flying);
-        this.flying = makeArrow(trail);
+        this.flying = makeProjectile(shot);
         this.root.add(this.flying);
       }
       this.flying.position.set(a.x, a.y, 0);
@@ -438,9 +445,12 @@ class DuelView {
     for (const s of sim.stuck) {
       this.alive.add(s.id);
       if (this.stuck.has(s.id)) continue;
-      const mesh = makeArrow(s.shooter === 'player' ? p.look.trail : p.opponentLook.trail);
+      const shot = s.shooter === 'player' ? p.look : p.opponentLook;
+      const mesh = makeProjectile(shot);
       if (s.owner === 0) {
-        mesh.position.set(s.x + Math.cos(s.angle) * 0.2, s.y + Math.sin(s.angle) * 0.2, 0);
+        // A shovel digs in deeper than an arrow.
+        const dig = shot.bow === 'shovel' ? 0.05 - SHOVEL_LEN * 0.08 : 0.2;
+        mesh.position.set(s.x + Math.cos(s.angle) * dig, s.y + Math.sin(s.angle) * dig, 0);
         mesh.rotation.z = s.angle;
         this.root.add(mesh);
       } else {
@@ -494,6 +504,7 @@ class DuelView {
     const on = sim.aiming && sim.aimPower >= PHYS.minPower * 0.5;
     this.aimLine.visible = on;
     this.dots.visible = on;
+    this.rims.visible = on;
     this.ghost.visible = on && !!sim.prevShot;
     if (!on) return;
     const h = handPoint(sim.player.x, sim.player.top, sim.aimAngle);
@@ -501,7 +512,8 @@ class DuelView {
     this.aimLine.rotation.z = sim.aimAngle;
     this.aimLine.scale.set(0.6 + sim.aimPower * 2.4, 1 + sim.aimPower, 1 + sim.aimPower);
     setTension(this.aimMat.color, sim.aimPower);
-    this.placeDots(this.dots, h, sim.aimAngle, sim.aimPower, 0.07);
+    this.placeDots(this.dots, h, sim.aimAngle, sim.aimPower, 0.06);
+    this.placeDots(this.rims, h, sim.aimAngle, sim.aimPower, 0.085);
     if (sim.prevShot) this.placeDots(this.ghost, handPoint(sim.player.x, sim.player.top, sim.prevShot.angle), sim.prevShot.angle, sim.prevShot.power, 0.055);
   }
 
@@ -511,7 +523,7 @@ class DuelView {
     const vy = Math.sin(angle) * v;
     this.q.identity();
     for (let i = 0; i < DOTS; i++) {
-      const tt = 0.06 + i * 0.05;
+      const tt = 0.06 + i * 0.045;
       this.v.set(from.x + vx * tt, from.y + vy * tt - 0.5 * PHYS.gravity * tt * tt, 0);
       this.s.setScalar(size * (1 - i * 0.05));
       this.m.compose(this.v, this.q, this.s);
@@ -603,6 +615,7 @@ function pose(a: Archer, ready: boolean, nocked: boolean): RigPose {
     gestureT: a.gestureT,
     recoil: a.recoil,
     showNocked: nocked,
+    turn: a.turn,
   };
 }
 

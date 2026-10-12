@@ -167,16 +167,16 @@ function Laurel({ color, flip }: { color: string; flip?: boolean }) {
 }
 
 export const TIPS = [
-  'Headshots ignore the shield. Aim for the head!',
-  'Body hits drain the blue shield before health.',
-  'The harder you draw, the harder the arrow hits.',
-  'Green dots show where your last arrow flew.',
-  'Hold the magnifier to see the whole battlefield.',
-  'Tap the chat bubble to taunt with emotes.',
-  'Claim new gear with coins in Choose your style.',
-  'Win duels to earn XP and level up.',
-  'The rival AI adapts to your accuracy.',
-  'Run out of time and your arrow fumbles into the cliff.',
+  'Drag back to aim. Further back, harder shot. This is the whole skill.',
+  'Headshots go straight through the shield. The hat does not help.',
+  'Body hits chew through the blue shield first. Leg hits split it half and half.',
+  'The green dots are your last shot. Do something different.',
+  'Hold the magnifier to see the whole field, and how far away he is.',
+  'Run out of time and whatever you were doing gets fired. Or dropped.',
+  'Shoot straight up and it comes straight back down. On you.',
+  'The other guy gets better as you do. He will not say how.',
+  'Hats, heads and the shovel bow change nothing. Wear them anyway.',
+  'Tap the chat bubble to say something. He will not listen.',
 ];
 
 const styles = StyleSheet.create({

@@ -2,7 +2,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useMobileWallet } from '@wallet-ui/react-native-kit';
 import { usePostHog } from 'posthog-react-native';
 import { HapticTouchable } from '@/components/haptic-touchable';
@@ -10,12 +10,13 @@ import { useScreenMusic } from '@/audio/useScreenMusic';
 import { playSfx } from '@/audio/sound';
 import { COLORS } from '@/game/constants';
 import { haptic } from '@/game/haptics';
-import { SHOP_SKINS, SKINS, formatSol, isFreeSkin, type Currency, type Skin } from '@/game/skins';
-import { FaceThumb } from '@/ui/FaceThumb';
+import { SHOP_BOWS, SHOP_DERPS, SHOP_HATS, SKINS, formatSol, ownsProduct, type Currency, type Skin } from '@/game/skins';
+import type { DerpId, HatId } from '@/game/derps';
+import { DerpThumb } from '@/ui/DerpThumb';
 import { SkinStage } from '@/game3d/SkinStage';
 import { Stage } from '@/game3d/Stage';
-import { MAPS, type GameMap } from '@/game/maps';
-import { DEFAULT_LOADOUT, loadoutForSkin, lookFor } from '@/game/cosmetics';
+import { MAPS, isFreeMap, type GameMap } from '@/game/maps';
+import { lookFor, sanitizeLoadout } from '@/game/cosmetics';
 import { useGameStore } from '@/game/store';
 import { sessionWalletAddress, useWalletAuth } from '@/solana/auth';
 import { CLUSTER, SHOP_ENABLED, SKR_ENABLED } from '@/solana/config';
@@ -23,14 +24,29 @@ import { buySkin, restorePendingPurchase } from '@/solana/payments';
 import { formatSkr, useSkrBalance } from '@/solana/skr';
 import { isSupabaseConfigured } from '@/utils/supabase';
 
-// In-game shop, two tabs: the six hero characters from archer-boys.pdf, and
-// the maps (Classic is free; the three Unity environment maps are locked
-// until bought). Both are paid in SOL or SKR through the connected wallet
-// (MWA signs and sends a transfer to the treasury); ownership is granted
-// server-side after on-chain verification. Prices are placeholders —
-// skins.ts and maps.ts.
+// In-game shop, three tabs: the derps (who you play as; Gary is free), hats
+// (they do not help) with the shovel bow on top, and the maps (Classic is
+// free; the three Unity environment maps are locked until bought). All are
+// paid in SOL or SKR through the connected wallet (MWA signs and sends a
+// transfer to the treasury); ownership is granted server-side after
+// on-chain verification. Prices are placeholders — skins.ts and maps.ts.
 type Product = Skin | GameMap;
 const isMap = (p: Product): p is GameMap => 'theme' in p;
+
+type Tab = 'derps' | 'hats' | 'maps';
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'derps', label: 'Derps' },
+  { id: 'hats', label: 'Hats' },
+  { id: 'maps', label: 'Maps' },
+];
+const TAB_BLURB: Record<Tab, string | null> = {
+  derps: 'Same stick body. Same bow. Different idiot.',
+  hats: 'They do not help.',
+  maps: null,
+};
+const SHOVEL = SHOP_BOWS.find((b) => b.item === 'shovel');
+const tabOf = (p: Skin): Tab => (p.kind === 'derp' ? 'derps' : 'hats');
+const productById = (id: string | undefined) => [...SHOP_DERPS, ...SHOP_HATS, ...SHOP_BOWS].find((s) => s.id === id);
 
 // The map preview: my archer on a ledge, framed wide enough to see the set.
 const MAP_CAMERA = { x: 0.6, y: 2.1, z: 7, lookX: 1.4, lookY: 2.3, fov: 50, drift: 0.25 };
@@ -47,8 +63,7 @@ export default function ShopScreen() {
   const { session, signIn, signingIn, refreshOwnedSkins } = useWalletAuth();
   const posthog = usePostHog();
   const owned = useGameStore((s) => s.ownedSkins);
-  const equipped = useGameStore((s) => s.equippedSkin);
-  const equipSkin = useGameStore((s) => s.equipSkin);
+  const equip = useGameStore((s) => s.equip);
   const equippedMap = useGameStore((s) => s.equippedMap);
   const equipMap = useGameStore((s) => s.equipMap);
   const loadout = useGameStore((s) => s.loadout);
@@ -59,19 +74,30 @@ export default function ShopScreen() {
   const currency: Currency = SKR_ENABLED ? preferred : 'SOL';
   const skrBalance = useSkrBalance();
   const [buying, setBuying] = useState<string | null>(null);
-  // What the hero on the stage is doing (the character-sheet reel).
+  // What the derp on the stage is doing (the derp reel).
   const [step, setStep] = useState('');
-  // Hero shown on the 3D stage; starts on the one we were sent to (from
-  // "Choose your style"), else the equipped hero, else the first.
+  // Opens on the tab and item we were sent to (from "Choose your style"),
+  // else on the derps with the one I'm wearing.
   const params = useLocalSearchParams<{ skin?: string; tab?: string }>();
-  const [tab, setTab] = useState<'heroes' | 'maps'>(params.tab === 'maps' ? 'maps' : 'heroes');
+  const sentTo = productById(params.skin);
+  const [tab, setTabState] = useState<Tab>(() =>
+    params.tab === 'maps' || params.tab === 'hats' || params.tab === 'derps' ? params.tab : sentTo ? tabOf(sentTo) : 'derps',
+  );
   const [mapId, setMapId] = useState(equippedMap);
   const previewMap = MAPS.find((m) => m.id === mapId) ?? MAPS[0];
   const myLook = useMemo(() => lookFor(loadout), [loadout]);
   const mapActors = useMemo(() => [{ look: myLook, x: 0, facing: 1 as const, performance: 'idle' as const }], [myLook]);
-  const [previewId, setPreviewId] = useState(() => [params.skin, equipped].find((id) => SHOP_SKINS.some((s) => s.id === id)) ?? SHOP_SKINS[0].id);
-  const preview = SHOP_SKINS.find((s) => s.id === previewId) ?? SHOP_SKINS[0];
-  const previewLook = useMemo(() => lookFor(loadoutForSkin(preview.id) ?? DEFAULT_LOADOUT), [preview.id]);
+  // The product on the 3D stage: what I wear of that tab's kind by default.
+  const wornFor = (t: Tab) =>
+    t === 'derps' ? `derp_${loadout.derp}` : loadout.bow === 'shovel' ? 'bow_shovel' : loadout.hat !== 'none' ? `hat_${loadout.hat}` : SHOP_HATS[0].id;
+  const [previewId, setPreviewId] = useState(() => sentTo?.id ?? wornFor(tab));
+  const preview = productById(previewId) ?? (tab === 'hats' ? SHOP_HATS[0] : SHOP_DERPS[0]);
+  // A derp keeps my hat and bow; a hat or the shovel bow goes on my derp.
+  const previewLook = useMemo(() => lookFor(sanitizeLoadout({ ...loadout, [preview.kind]: preview.item })), [loadout, preview]);
+  const setTab = (t: Tab) => {
+    setTabState(t);
+    if (t !== 'maps') setPreviewId(wornFor(t));
+  };
   // A purchase requested before the wallet was connected: sign in first, then
   // run it on the next render, when `wallet` reflects the connected account.
   const queued = useRef<{ skin: Product; cur: Currency } | null>(null);
@@ -100,9 +126,15 @@ export default function ShopScreen() {
       equipMap(item.id);
       posthog.capture('map_equipped', { map: item.id });
     } else {
-      equipSkin(item.id);
+      equip(item.kind, item.item);
       posthog.capture('skin_equipped', { skin: item.id });
     }
+  };
+
+  // Hats and the shovel bow come off again; a derp is swapped, not removed.
+  const onTakeOff = (item: Skin) => {
+    haptic.release();
+    equip(item.kind, item.kind === 'bow' ? 'bow' : 'none');
   };
 
   const purchase = async (skin: Product, cur: Currency) => {
@@ -140,12 +172,12 @@ export default function ShopScreen() {
       if (result.ok) {
         addOwnedSkin(skin.id);
         if (isMap(skin)) equipMap(skin.id);
-        else equipSkin(skin.id);
+        else equip(skin.kind, skin.item);
         haptic.kill();
         playSfx('coins');
         posthog.capture('purchase_completed', { skin: skin.id, currency: cur, signature: result.signature });
         if (cur === 'SKR') skrBalance.refresh();
-        Alert.alert('Yours!', `${skin.name} unlocked and equipped.`);
+        Alert.alert('Yours.', `${skin.name} unlocked and equipped.${!isMap(skin) && skin.kind === 'hat' ? ' It does not help.' : ''}`);
       } else if (result.reason === 'cancelled') {
         haptic.tap();
       } else if (result.reason === 'verify-failed') {
@@ -202,6 +234,41 @@ export default function ShopScreen() {
     }
   };
 
+  const isOwned = (item: Product) => (isMap(item) ? isFreeMap(item) || owned.includes(item.id) : ownsProduct(item.id, owned));
+  const isWorn = (item: Product) => (isMap(item) ? equippedMap === item.id : loadout[item.kind] === item.item);
+
+  // Equip / take off / buy, for a card or the shovel-bow banner.
+  const action = (item: Product) => {
+    const map = isMap(item) ? item : null;
+    const worn = isWorn(item);
+    if (isOwned(item)) {
+      const removable = !map && worn && (item as Skin).kind !== 'derp';
+      return (
+        <HapticTouchable
+          style={[styles.cta, worn && styles.ctaGhost]}
+          onPress={() => (removable ? onTakeOff(item as Skin) : onEquip(item))}
+          disabled={worn && !removable}
+        >
+          <Text style={[styles.ctaText, worn && styles.ctaGhostText]}>
+            {removable ? 'Take off' : worn ? (map ? 'Playing here' : 'Equipped') : map ? 'Play here' : 'Equip'}
+          </Text>
+        </HapticTouchable>
+      );
+    }
+    // An item not sold in the selected currency falls back to the other.
+    const cur: Currency = currency === 'SKR' ? (item.priceSkr > 0 ? 'SKR' : 'SOL') : item.priceLamports > 0 ? 'SOL' : 'SKR';
+    const label = cur === 'SKR' ? formatSkr(item.priceSkr) : formatSol(item.priceLamports);
+    const sellable = cur === 'SOL' ? item.priceLamports > 0 : SKR_ENABLED && item.priceSkr > 0;
+    return (
+      <HapticTouchable style={[styles.cta, !sellable && styles.ctaDisabled]} onPress={() => onBuy(item, cur)} disabled={!!buying || !sellable}>
+        {buying === item.id ? <ActivityIndicator color="#0B0B0F" /> : <Text style={styles.ctaText}>{sellable ? label : 'Needs SKR'}</Text>}
+      </HapticTouchable>
+    );
+  };
+
+  const data: Product[] = tab === 'maps' ? MAPS : tab === 'derps' ? SHOP_DERPS : SHOP_HATS;
+  const blurb = TAB_BLURB[tab];
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom', 'left', 'right']}>
       <View style={styles.body}>
@@ -213,13 +280,13 @@ export default function ShopScreen() {
           ) : (
             <SkinStage look={previewLook} style={styles.stage} onStep={setStep} />
           )}
-          {tab === 'heroes' && !!step && (
+          {tab !== 'maps' && !!step && (
             <View style={styles.stepChip} pointerEvents="none">
               <Text style={styles.stepText}>{step}</Text>
             </View>
           )}
-          {tab === 'maps' && !owned.includes(previewMap.id) && previewMap.priceLamports > 0 && (
-            <View style={[styles.stepChip, styles.lockChip]} pointerEvents="none">
+          {(tab === 'maps' ? !isOwned(previewMap) : !isOwned(preview)) && (
+            <View style={[styles.stepChip, styles.lockChip, tab !== 'maps' && styles.lockChipRight]} pointerEvents="none">
               <Ionicons name="lock-closed" size={12} color="#FFFFFF" />
               <Text style={styles.stepText}>Locked</Text>
             </View>
@@ -238,9 +305,9 @@ export default function ShopScreen() {
             </HapticTouchable>
             <Text style={styles.title}>Shop</Text>
             <View style={styles.tabs}>
-              {(['heroes', 'maps'] as const).map((t) => (
-                <HapticTouchable key={t} style={[styles.tab, tab === t && styles.tabActive]} onPress={() => setTab(t)} sound="ui_click">
-                  <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>{t === 'heroes' ? 'Heroes' : 'Maps'}</Text>
+              {TABS.map((t) => (
+                <HapticTouchable key={t.id} style={[styles.tab, tab === t.id && styles.tabActive]} onPress={() => setTab(t.id)} sound="ui_click">
+                  <Text style={[styles.tabText, tab === t.id && styles.tabTextActive]}>{t.label}</Text>
                 </HapticTouchable>
               ))}
             </View>
@@ -249,7 +316,7 @@ export default function ShopScreen() {
 
           <FlatList<Product>
             key={tab}
-            data={tab === 'maps' ? MAPS : SHOP_SKINS}
+            data={data}
             keyExtractor={(s) => s.id}
             numColumns={tab === 'maps' ? 2 : 3}
             columnWrapperStyle={{ gap: 12 }}
@@ -288,64 +355,61 @@ export default function ShopScreen() {
                 {pending && session && (
                   <Text style={styles.hint}>A payment is waiting for confirmation. It retries each time you open the shop.</Text>
                 )}
+                {tab === 'hats' && SHOVEL && (
+                  // The promised community item: its own banner above the hats.
+                  <HapticTouchable
+                    style={[styles.shovel, isWorn(SHOVEL) && styles.cardEquipped, previewId === SHOVEL.id && styles.cardPreview]}
+                    onPress={() => setPreviewId(SHOVEL.id)}
+                    sound="ui_click"
+                  >
+                    <View style={styles.shovelIcon}>
+                      <MaterialCommunityIcons name="shovel" size={34} color="#0B0B0F" />
+                    </View>
+                    <View style={styles.shovelText}>
+                      <Text style={styles.shovelKicker}>BY REQUEST</Text>
+                      <Text style={styles.name}>{SHOVEL.name}</Text>
+                      <Text style={styles.desc}>{SHOVEL.description}</Text>
+                    </View>
+                    <View style={styles.shovelCta}>{action(SHOVEL)}</View>
+                  </HapticTouchable>
+                )}
+                {!!blurb && <Text style={styles.tabBlurb}>{blurb}</Text>}
               </View>
             }
             renderItem={({ item }) => {
               const map = isMap(item) ? item : null;
-              const isOwned = owned.includes(item.id) || (map ? map.priceLamports === 0 && map.priceSkr === 0 : isFreeSkin(item as Skin));
-              const isEquipped = map ? equippedMap === item.id : equipped === item.id;
+              const skin = map ? null : (item as Skin);
               const isPreview = map ? item.id === mapId : item.id === previewId;
-              // An item not sold in the selected currency falls back to the other.
-              const cur: Currency =
-                currency === 'SKR' ? (item.priceSkr > 0 ? 'SKR' : 'SOL') : item.priceLamports > 0 ? 'SOL' : 'SKR';
-              const label = cur === 'SKR' ? formatSkr(item.priceSkr) : formatSol(item.priceLamports);
-              const sellable = cur === 'SOL' ? item.priceLamports > 0 : SKR_ENABLED && item.priceSkr > 0;
               return (
                 <HapticTouchable
-                  style={[styles.card, isEquipped && styles.cardEquipped, isPreview && styles.cardPreview]}
+                  style={[styles.card, isWorn(item) && styles.cardEquipped, isPreview && styles.cardPreview]}
                   onPress={() => (map ? setMapId(item.id) : setPreviewId(item.id))}
                   sound="ui_click"
                 >
                   {map ? (
                     <View style={[styles.mapSwatch, { backgroundColor: map.color }]}>
                       <Ionicons name={MAP_ICONS[map.id] ?? 'map'} size={22} color="#0B0B0F" />
-                      {!isOwned && (
+                      {!isOwned(item) && (
                         <View style={styles.mapLock}>
                           <Ionicons name="lock-closed" size={12} color="#FFFFFF" />
                         </View>
                       )}
                     </View>
                   ) : (
-                    (item as Skin).face && (
-                      <View style={[styles.faceWrap, { borderColor: (item as Skin).color }]}>
-                        <FaceThumb face={(item as Skin).face!} size={44} />
+                    skin && (
+                      <View style={[styles.faceWrap, { borderColor: skin.color }]}>
+                        {skin.kind === 'derp' ? (
+                          <DerpThumb derp={skin.item as DerpId} size={44} />
+                        ) : (
+                          <DerpThumb derp={loadout.derp} hat={skin.item as HatId} size={44} />
+                        )}
                       </View>
                     )
                   )}
-                  <Text style={styles.name}>{item.name}</Text>
-                  {isOwned ? (
-                    <HapticTouchable
-                      style={[styles.cta, isEquipped && styles.ctaGhost]}
-                      onPress={() => onEquip(item)}
-                      disabled={isEquipped}
-                    >
-                      <Text style={[styles.ctaText, isEquipped && styles.ctaGhostText]}>
-                        {isEquipped ? (map ? 'Playing here' : 'Equipped') : map ? 'Play here' : 'Equip'}
-                      </Text>
-                    </HapticTouchable>
-                  ) : (
-                    <HapticTouchable
-                      style={[styles.cta, !sellable && styles.ctaDisabled]}
-                      onPress={() => onBuy(item, cur)}
-                      disabled={!!buying || !sellable}
-                    >
-                      {buying === item.id ? (
-                        <ActivityIndicator color="#0B0B0F" />
-                      ) : (
-                        <Text style={styles.ctaText}>{sellable ? label : 'Needs SKR'}</Text>
-                      )}
-                    </HapticTouchable>
-                  )}
+                  <Text style={styles.name} numberOfLines={1}>
+                    {item.name}
+                  </Text>
+                  {action(item)}
                 </HapticTouchable>
               );
             }}
@@ -363,6 +427,7 @@ const styles = StyleSheet.create({
   stage: { flex: 1, borderRadius: 20 },
   clip: { overflow: 'hidden' },
   lockChip: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  lockChipRight: { top: 52 }, // under the reel's step chip
   tabs: { flexDirection: 'row', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 10, padding: 3, marginRight: 8 },
   tab: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 8 },
   tabActive: { backgroundColor: '#FFFFFF' },
@@ -414,7 +479,32 @@ const styles = StyleSheet.create({
   },
   cardEquipped: { borderColor: COLORS.arrow },
   cardPreview: { backgroundColor: 'rgba(255,255,255,0.14)' },
-  faceWrap: { width: 48, height: 48, borderRadius: 14, borderWidth: 2, overflow: 'hidden', marginBottom: 2, backgroundColor: '#0E1118' },
+  shovel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 12,
+    borderRadius: 18,
+    backgroundColor: 'rgba(150,96,45,0.35)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,210,63,0.5)',
+  },
+  shovelIcon: { width: 56, height: 56, borderRadius: 16, backgroundColor: '#FFD23F', alignItems: 'center', justifyContent: 'center' },
+  shovelText: { flex: 1, gap: 2 },
+  shovelKicker: { color: '#FFD23F', fontSize: 11, fontWeight: '900', letterSpacing: 1.5 },
+  shovelCta: { width: 120 },
+  tabBlurb: { color: 'rgba(255,255,255,0.75)', fontSize: 14, fontStyle: 'italic' },
+  faceWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    borderWidth: 2,
+    overflow: 'hidden',
+    marginBottom: 2,
+    backgroundColor: '#E9E4D8', // paper, so the ink reads
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   name: { color: '#FFFFFF', fontSize: 16, fontWeight: '800' },
   desc: { color: 'rgba(255,255,255,0.55)', fontSize: 12, minHeight: 32 },
   cta: { backgroundColor: COLORS.arrow, borderRadius: 12, paddingVertical: 10, alignItems: 'center', marginTop: 4 },
