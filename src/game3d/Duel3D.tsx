@@ -5,6 +5,7 @@ import Animated, { useAnimatedProps, useAnimatedStyle, useSharedValue, type Shar
 import Svg, { Circle, Path } from 'react-native-svg';
 import { Canvas, useFrame, useThree } from '@react-three/fiber/native';
 import * as THREE from 'three';
+import { fitFov } from '@/game3d/fitFov';
 import { Arena } from '@/game3d/Arena';
 import { SHOVEL_LEN, StickmanRig, makeProjectile, type RigPose } from '@/game3d/Stickman3D';
 import { arenaTheme, type Theme } from '@/game3d/themes';
@@ -127,7 +128,7 @@ export const Duel3D = forwardRef<DuelHandle, Props>(function Duel3D(props, ref) 
       <Canvas
         gl={{ antialias: false }}
         style={styles.fill}
-        camera={{ fov: 34, near: 0.1, far: 900, position: [8, 4, 24] }}
+        camera={{ fov: DUEL_FOV, near: 0.1, far: 900, position: [8, 4, 24] }}
       >
         <DuelScene view={view} />
       </Canvas>
@@ -140,11 +141,14 @@ export const Duel3D = forwardRef<DuelHandle, Props>(function Duel3D(props, ref) 
   );
 });
 
+const DUEL_FOV = 34;
+
 function DuelScene({ view }: { view: DuelView }) {
   const { scene, camera, size } = useThree();
   useEffect(() => view.attach(scene), [view, scene]);
   // Priority 1: we render ourselves so the draw itself can be timed.
   useFrame((state, delta) => {
+    fitFov(camera, DUEL_FOV);
     view.frame(Math.min(delta, 1 / 20), camera, size.width, size.height);
     const t0 = PERF_LOG ? Date.now() : 0;
     state.gl.render(scene, camera);

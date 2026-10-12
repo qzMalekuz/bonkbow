@@ -1,6 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
 import Animated, {
   Easing,
   FadeIn,
@@ -23,11 +23,14 @@ import { haptic } from '@/game/haptics';
 import { duckMusic, playSfx } from '@/audio/sound';
 import { useScreenMusic } from '@/audio/useScreenMusic';
 import { FONT, GameButton, LaurelBadge } from '@/ui/kit';
+import { AnimatedText, Text, TIGHT_FONT_SCALE } from '@/ui/Text';
+import { makeStyles, useMetrics } from '@/ui/responsive';
 
 // Win / lose ceremony in the colosseum: the winner laughs and celebrates,
 // the loser sulks and stomps; coins count up and the XP bar fills (with a
 // level-up burst when it rolls over).
 export default function ResultScreen() {
+  const styles = useStyles();
   useScreenMusic('menu');
   const p = useLocalSearchParams<{
     mode?: string;
@@ -109,59 +112,68 @@ export default function ResultScreen() {
       <Stage theme="colosseum" camera={{ x: 0, y: 1.75, z: 4.6, lookX: 0, lookY: 1.25, fov: 40, drift: 0.12 }} actors={actors} />
       <LinearGradient colors={['rgba(0,0,0,0.25)', 'rgba(0,0,0,0)', 'rgba(0,0,0,0.75)']} style={StyleSheet.absoluteFill} pointerEvents="none" />
 
-      {/* Name plates with laurel badges */}
-      <Animated.View entering={FadeInDown.duration(400)} style={[styles.side, styles.left]}>
-        <View style={styles.nameBox}>
-          <Text style={styles.name} numberOfLines={1}>
-            {playerName || 'You'}
-          </Text>
-        </View>
-        <Animated.View entering={ZoomIn.delay(500).duration(240)}>
-          <LaurelBadge label={iWon ? 'WON. SOMEHOW.' : 'LOST'} win={iWon} />
+      {/* Name plates with laurel badges: one row, so on a narrow screen the
+          names shrink instead of the two sides running into each other. */}
+      <View style={styles.sides} pointerEvents="box-none">
+        <Animated.View entering={FadeInDown.duration(400)} style={styles.side}>
+          <View style={styles.nameBox}>
+            <Text style={styles.name} numberOfLines={1}>
+              {playerName || 'You'}
+            </Text>
+          </View>
+          <Animated.View entering={ZoomIn.delay(500).duration(240)}>
+            <LaurelBadge label={iWon ? 'WON. SOMEHOW.' : 'LOST'} win={iWon} />
+          </Animated.View>
         </Animated.View>
-      </Animated.View>
-      <Animated.View entering={FadeInDown.duration(400)} style={[styles.side, styles.right]}>
-        <Animated.View entering={ZoomIn.delay(650).duration(240)}>
-          <LaurelBadge label={iWon ? 'LOST' : 'WON. SOMEHOW.'} win={!iWon} />
+        <Animated.View entering={FadeInDown.duration(400)} style={[styles.side, styles.right]}>
+          <Animated.View entering={ZoomIn.delay(650).duration(240)}>
+            <LaurelBadge label={iWon ? 'LOST' : 'WON. SOMEHOW.'} win={!iWon} />
+          </Animated.View>
+          <View style={[styles.nameBox, { alignItems: 'flex-end' }]}>
+            <Text style={styles.name} numberOfLines={1}>
+              {p.rivalName ?? 'Rival'}
+            </Text>
+          </View>
         </Animated.View>
-        <View style={[styles.nameBox, { alignItems: 'flex-end' }]}>
-          <Text style={styles.name} numberOfLines={1}>
-            {p.rivalName ?? 'Rival'}
-          </Text>
-        </View>
-      </Animated.View>
+      </View>
 
       <CoinCounter from={coins - coinGain} to={coins} />
       {(dailyBonus > 0 || levelBonus > 0) && (
         <View style={styles.bonuses} pointerEvents="none">
           {dailyBonus > 0 && (
-            <Animated.Text entering={FadeInDown.delay(1300).duration(300)} style={styles.bonus}>
+            <AnimatedText entering={FadeInDown.delay(1300).duration(300)} style={styles.bonus}>
               +{dailyBonus} daily bonus
-            </Animated.Text>
+            </AnimatedText>
           )}
           {levelBonus > 0 && (
-            <Animated.Text entering={FadeInDown.delay(2000).duration(300)} style={styles.bonus}>
+            <AnimatedText entering={FadeInDown.delay(2000).duration(300)} style={styles.bonus}>
               +{levelBonus} level-up bonus
-            </Animated.Text>
+            </AnimatedText>
           )}
         </View>
       )}
 
-      {/* Centre: run summary */}
-      <Animated.View entering={FadeIn.delay(700).duration(400)} style={styles.summary}>
-        <Text style={styles.kills}>{score}</Text>
-        <Text style={styles.killsLabel}>{score === 1 ? 'GUY BONKED' : 'GUYS BONKED'}</Text>
-        {score > 0 && score >= highScore && <Text style={styles.best}>NEW BEST. NOBODY SAW.</Text>}
-      </Animated.View>
+      {/* Run summary up top and stats + XP at the bottom; on a short phone or
+          with a large font they scroll, the buttons always stay on screen. */}
+      <View style={styles.main} pointerEvents="box-none">
+        <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollInner} showsVerticalScrollIndicator={false} bounces={false}>
+          <Animated.View entering={FadeIn.delay(700).duration(400)} style={styles.summary}>
+            <Text style={styles.kills} numberOfLines={1}>
+              {score}
+            </Text>
+            <Text style={styles.killsLabel}>{score === 1 ? 'GUY BONKED' : 'GUYS BONKED'}</Text>
+            {score > 0 && score >= highScore && <Text style={styles.best}>NEW BEST. NOBODY SAW.</Text>}
+          </Animated.View>
 
-      {/* Bottom: stats, XP, buttons */}
-      <View style={styles.bottom}>
-        <Animated.View entering={FadeInUp.delay(500).duration(400)} style={styles.stats}>
-          <Stat label="Accuracy" value={shots ? `${Math.round((hits / shots) * 100)}%` : '–'} />
-          <Stat label="Headshots" value={String(headshots)} />
-          <Stat label="Coins" value={`+${coinGain}`} color="#FFC83D" />
-        </Animated.View>
-        <XpBar prevXp={prevXp} gain={xpGain} />
+          <View style={styles.breakdown}>
+            <Animated.View entering={FadeInUp.delay(500).duration(400)} style={styles.stats}>
+              <Stat label="Accuracy" value={shots ? `${Math.round((hits / shots) * 100)}%` : '–'} />
+              <Stat label="Headshots" value={String(headshots)} />
+              <Stat label="Coins" value={`+${coinGain}`} color="#FFC83D" />
+            </Animated.View>
+            <XpBar prevXp={prevXp} gain={xpGain} />
+          </View>
+        </ScrollView>
         <Animated.View entering={FadeInUp.delay(900).duration(400)} style={styles.buttons}>
           <GameButton label="Play again" color="green" onPress={playAgain} style={styles.btn} />
           <GameButton label="Style" color="purple" onPress={() => router.replace('/style')} style={styles.btn} />
@@ -173,16 +185,23 @@ export default function ResultScreen() {
 }
 
 function Stat({ label, value, color = '#FFFFFF' }: { label: string; value: string; color?: string }) {
+  const styles = useStyles();
   return (
     <View style={styles.stat}>
-      <Text style={[styles.statValue, { color }]}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
+      <Text style={[styles.statValue, { color }]} numberOfLines={1}>
+        {value}
+      </Text>
+      <Text style={styles.statLabel} numberOfLines={1}>
+        {label}
+      </Text>
     </View>
   );
 }
 
 // Coin purse that counts up from the old balance.
 function CoinCounter({ from, to }: { from: number; to: number }) {
+  const styles = useStyles();
+  const { s } = useMetrics();
   const [shown, setShown] = useState(from);
   useEffect(() => {
     if (to <= from) return;
@@ -205,8 +224,10 @@ function CoinCounter({ from, to }: { from: number; to: number }) {
   }, [from, to]);
   return (
     <Animated.View entering={FadeIn.delay(300)} style={styles.purse}>
-      <Text style={styles.purseText}>{shown}</Text>
-      <Svg width={26} height={26} viewBox="0 0 26 26">
+      <Text style={styles.purseText} maxFontSizeMultiplier={TIGHT_FONT_SCALE}>
+        {shown}
+      </Text>
+      <Svg width={s(26)} height={s(26)} viewBox="0 0 26 26">
         <Circle cx={13} cy={13} r={11} fill="#F7A21B" stroke="#B85C00" strokeWidth={2} />
         <Circle cx={13} cy={13} r={7} fill="#FFC83D" />
         <Path d="M10 9.5h6M13 9.5v7" stroke="#B85C00" strokeWidth={1.8} strokeLinecap="round" />
@@ -217,6 +238,7 @@ function CoinCounter({ from, to }: { from: number; to: number }) {
 
 // XP bar that fills from the old total to the new one, rolling over levels.
 function XpBar({ prevXp, gain }: { prevXp: number; gain: number }) {
+  const styles = useStyles();
   const before = levelOf(prevXp);
   const after = levelOf(prevXp + gain);
   const [level, setLevel] = useState(before.level);
@@ -258,17 +280,21 @@ function XpBar({ prevXp, gain }: { prevXp: number; gain: number }) {
   return (
     <Animated.View entering={FadeInUp.delay(700).duration(400)} style={styles.xpRow}>
       <Animated.View style={[styles.lvl, badgeStyle]}>
-        <Text style={styles.lvlText}>{level}</Text>
+        <Text style={styles.lvlText} maxFontSizeMultiplier={TIGHT_FONT_SCALE}>
+          {level}
+        </Text>
         <Animated.View style={[styles.lvlBurst, burstStyle]} />
       </Animated.View>
       <View style={styles.xpTrack}>
         <Animated.View style={[styles.xpFill, fillStyle]} />
       </View>
-      <Text style={styles.xpGain}>+{gain} XP</Text>
+      <Text style={styles.xpGain} numberOfLines={1}>
+        +{gain} XP
+      </Text>
       {after.level > before.level && (
-        <Animated.Text entering={ZoomIn.delay(1800).duration(240)} style={styles.levelUp}>
+        <AnimatedText entering={ZoomIn.delay(1800).duration(240)} style={styles.levelUp} numberOfLines={1}>
           LEVEL UP!
-        </Animated.Text>
+        </AnimatedText>
       )}
     </Animated.View>
   );
@@ -280,55 +306,77 @@ const shadow = {
   textShadowRadius: 3,
 };
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((m) => ({
   root: { flex: 1, backgroundColor: '#000000' },
-  side: { position: 'absolute', top: 14, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  left: { left: 16 },
-  right: { right: 16 },
-  nameBox: { backgroundColor: '#0B0B0F', borderRadius: 10, paddingHorizontal: 18, paddingVertical: 6, minWidth: 150 },
-  name: { fontFamily: FONT.bold, fontSize: 18, color: '#FFFFFF', maxWidth: 200 },
+  sides: {
+    position: 'absolute',
+    top: m.s(14),
+    left: m.s(16),
+    right: m.s(16),
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: m.s(12),
+  },
+  side: { flexShrink: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: m.s(10) },
+  right: { justifyContent: 'flex-end' },
+  // The plates only keep their minimum width where both sides fit with it.
+  nameBox: {
+    flexShrink: 1,
+    backgroundColor: '#0B0B0F',
+    borderRadius: m.s(10),
+    paddingHorizontal: m.s(18),
+    paddingVertical: m.s(6),
+    minWidth: m.vw >= 780 ? m.s(150) : 0,
+  },
+  name: { flexShrink: 1, fontFamily: FONT.bold, fontSize: m.s(18), color: '#FFFFFF', maxWidth: m.s(200) },
   purse: {
     position: 'absolute',
-    top: 62,
-    left: 16,
+    top: m.s(62),
+    left: m.s(16),
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: m.s(6),
     backgroundColor: '#0B0B0F',
-    borderRadius: 10,
-    paddingLeft: 40,
-    paddingRight: 8,
-    paddingVertical: 3,
+    borderRadius: m.s(10),
+    paddingLeft: m.s(40),
+    paddingRight: m.s(8),
+    paddingVertical: m.s(3),
   },
-  purseText: { fontFamily: FONT.bold, fontSize: 16, color: '#FFFFFF' },
-  bonuses: { position: 'absolute', top: 96, left: 16, gap: 2 },
-  bonus: { fontFamily: FONT.bold, fontSize: 13, color: '#FFC83D', ...shadow },
-  summary: { position: 'absolute', top: '24%', alignSelf: 'center', alignItems: 'center' },
-  kills: { fontFamily: FONT.bold, fontSize: 64, color: '#FFFFFF', ...shadow },
-  killsLabel: { fontFamily: FONT.bold, fontSize: 14, letterSpacing: 3, color: 'rgba(255,255,255,0.85)', ...shadow, marginTop: -8 },
-  best: { fontFamily: FONT.bold, fontSize: 18, color: '#FFD23F', ...shadow, marginTop: 4 },
-  bottom: { position: 'absolute', left: 0, right: 0, bottom: 12, alignItems: 'center', gap: 8 },
-  stats: { flexDirection: 'row', gap: 36 },
+  purseText: { fontFamily: FONT.bold, fontSize: m.s(16), color: '#FFFFFF' },
+  bonuses: { position: 'absolute', top: m.s(96), left: m.s(16), gap: m.s(2) },
+  bonus: { fontFamily: FONT.bold, fontSize: m.s(13), color: '#FFC83D', ...shadow },
+  // Below the name plates down to the bottom edge.
+  main: { position: 'absolute', top: m.s(64), left: 0, right: 0, bottom: m.s(12), alignItems: 'center', gap: m.s(8) },
+  scroll: { alignSelf: 'stretch', flexShrink: 1 },
+  scrollInner: { flexGrow: 1, alignItems: 'center', justifyContent: 'space-between', gap: m.s(8) },
+  // Same spot as before: 24% down the screen.
+  summary: { alignItems: 'center', marginTop: Math.max(0, m.height * 0.24 - m.s(64)) },
+  kills: { fontFamily: FONT.bold, fontSize: m.s(64), color: '#FFFFFF', ...shadow },
+  killsLabel: { fontFamily: FONT.bold, fontSize: m.s(14), letterSpacing: m.s(3), color: 'rgba(255,255,255,0.85)', ...shadow, marginTop: m.s(-8) },
+  best: { fontFamily: FONT.bold, fontSize: m.s(18), color: '#FFD23F', ...shadow, marginTop: m.s(4) },
+  breakdown: { alignSelf: 'stretch', alignItems: 'center', gap: m.s(8) },
+  stats: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', columnGap: m.s(36), rowGap: m.s(4), paddingHorizontal: m.s(16) },
   stat: { alignItems: 'center' },
-  statValue: { fontFamily: FONT.bold, fontSize: 20, ...shadow },
-  statLabel: { fontFamily: FONT.semi, fontSize: 11, letterSpacing: 1, color: 'rgba(255,255,255,0.75)', textTransform: 'uppercase' },
-  xpRow: { flexDirection: 'row', alignItems: 'center', gap: 10, width: '50%' },
+  statValue: { fontFamily: FONT.bold, fontSize: m.s(20), ...shadow },
+  statLabel: { fontFamily: FONT.semi, fontSize: m.s(11), letterSpacing: m.s(1), color: 'rgba(255,255,255,0.75)', textTransform: 'uppercase' },
+  xpRow: { flexDirection: 'row', alignItems: 'center', gap: m.s(10), width: '50%' },
   lvl: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: m.s(38),
+    height: m.s(38),
+    borderRadius: m.s(19),
     backgroundColor: '#7B5CE0',
     borderWidth: 3,
     borderColor: '#F7C948',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  lvlText: { fontFamily: FONT.bold, fontSize: 17, color: '#FFFFFF' },
-  lvlBurst: { position: 'absolute', width: 60, height: 60, borderRadius: 30, borderWidth: 4, borderColor: '#FFD23F' },
-  xpTrack: { flex: 1, height: 14, borderRadius: 7, backgroundColor: 'rgba(0,0,0,0.7)', borderWidth: 1.5, borderColor: '#000000', overflow: 'hidden' },
-  xpFill: { height: '100%', borderRadius: 6, backgroundColor: '#8E6CEF' },
-  xpGain: { fontFamily: FONT.bold, fontSize: 14, color: '#C9B6FF', ...shadow },
-  levelUp: { position: 'absolute', right: -110, fontFamily: FONT.bold, fontSize: 18, color: '#FFD23F', ...shadow },
-  buttons: { flexDirection: 'row', gap: 12 },
-  btn: { minWidth: 150 },
-});
+  lvlText: { fontFamily: FONT.bold, fontSize: m.s(17), color: '#FFFFFF' },
+  lvlBurst: { position: 'absolute', width: m.s(60), height: m.s(60), borderRadius: m.s(30), borderWidth: 4, borderColor: '#FFD23F' },
+  xpTrack: { flex: 1, height: m.s(14), borderRadius: m.s(7), backgroundColor: 'rgba(0,0,0,0.7)', borderWidth: 1.5, borderColor: '#000000', overflow: 'hidden' },
+  xpFill: { height: '100%', borderRadius: m.s(6), backgroundColor: '#8E6CEF' },
+  xpGain: { flexShrink: 0, fontFamily: FONT.bold, fontSize: m.s(14), color: '#C9B6FF', ...shadow },
+  levelUp: { position: 'absolute', right: m.s(-110), fontFamily: FONT.bold, fontSize: m.s(18), color: '#FFD23F', ...shadow },
+  buttons: { flexDirection: 'row', gap: m.s(12), maxWidth: '100%', paddingHorizontal: m.s(16) },
+  btn: { minWidth: m.s(150), flexShrink: 1 },
+}));

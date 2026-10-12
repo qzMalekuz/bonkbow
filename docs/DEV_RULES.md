@@ -111,6 +111,31 @@ here (in the right section) in the same change that applies it.
     colours on the open landscape). Check layouts offline first with
     `bun scripts/maps/shoot.ts <outDir> grove:aim valley:over snow:wide`
     (`kit:<pack>` lines up a pack's props), then on the phone.
+15. **Full-screen cameras call `fitFov` every frame** (`game3d/fitFov.ts`):
+    below a 2:1 aspect it widens the vertical FOV so the horizontal view
+    matches a 2:1 phone, so 16:9 phones, foldables and tablets never crop the
+    archers. Frame shots for a 2:1 screen.
+
+## Screens, sizes and fonts
+
+1. **Every screen fits every landscape window**: 320–430 dp phones, 16:9 to
+   21:9, foldables and 4:3 / 16:10 tablets, OS font 0.85×–2×. Styles go
+   through `makeStyles((m) => ...)` with sizes in design units via `m.s()`
+   (`ui/responsive.ts`; design = a 390 dp-tall phone); icon and SVG sizes use
+   `useMetrics().s`. Never `StyleSheet.create` with fixed sizes in UI code.
+2. **All text comes from `ui/Text.tsx`** (`Text`, `TextInput`, `AnimatedText`),
+   never from react-native: the OS font size applies up to 1.35×; numbers in
+   fixed badges or the HUD use `TIGHT_FONT_SCALE`. Single-line labels get
+   `numberOfLines={1}` plus `adjustsFontSizeToFit` where clipping would hide
+   meaning; containers holding text never have a fixed height.
+3. **Primary actions never scroll away**: content that can outgrow a short
+   screen scrolls, the Play / Pay / Buy / Back buttons stay outside it.
+   Grids take their column count from the width (`vw`), not a constant.
+4. **Check layout changes on the phone with display overrides**, then reset:
+   `adb shell wm density 480` (360 dp tall), `540` (320 dp),
+   `wm size 1080x1440` + `wm density 240` (4:3 tablet), `wm size 1080x1920`
+   (16:9), `wm size 1080x2520` (21:9), `settings put system font_scale 2.0`;
+   undo with `wm size reset`, `wm density reset`, `font_scale 1.0`.
 
 ## Game logic
 

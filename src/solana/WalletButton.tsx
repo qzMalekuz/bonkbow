@@ -1,13 +1,17 @@
-import { ActivityIndicator, Alert, StyleSheet, Text } from 'react-native';
+import { ActivityIndicator, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { HapticTouchable } from '@/components/haptic-touchable';
 import { shortAddress } from '@/solana/config';
 import { isUserRejection, useWalletAuth } from '@/solana/auth';
 import { haptic } from '@/game/haptics';
+import { Text } from '@/ui/Text';
+import { makeStyles, useMetrics } from '@/ui/responsive';
 
 // "Sign in with wallet": one MWA sheet connects the wallet (Phantom, Solflare,
 // Seed Vault). Tapping again when connected disconnects it.
 export function WalletButton() {
+  const styles = useStyles();
+  const { s } = useMetrics();
   const { address, signingIn, signIn, signOut } = useWalletAuth();
   const signedIn = !!address;
 
@@ -40,26 +44,26 @@ export function WalletButton() {
         <ActivityIndicator color="#FFFFFF" />
       ) : (
         <>
-          <Ionicons name={signedIn ? 'wallet' : 'wallet-outline'} size={18} color="#FFFFFF" />
-          <Text style={styles.label}>{signedIn && address ? shortAddress(address) : 'Sign in with wallet'}</Text>
+          <Ionicons name={signedIn ? 'wallet' : 'wallet-outline'} size={s(18)} color="#FFFFFF" />
+          <Text style={styles.label} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{signedIn && address ? shortAddress(address) : 'Sign in with wallet'}</Text>
         </>
       )}
     </HapticTouchable>
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((m) => ({
   button: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    gap: m.s(8),
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.35)',
-    borderRadius: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 18,
-    minHeight: 50,
+    borderRadius: m.s(14),
+    paddingVertical: m.s(14),
+    paddingHorizontal: m.s(18),
+    minHeight: m.s(50),
   },
-  label: { color: '#FFFFFF', fontSize: 16, fontWeight: '600', fontVariant: ['tabular-nums'] },
-});
+  label: { flexShrink: 1, color: '#FFFFFF', fontSize: m.s(16), fontWeight: '600', fontVariant: ['tabular-nums'] },
+}));

@@ -1,6 +1,6 @@
 import { router, useIsFocused } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, View } from 'react-native';
 import Animated, { FadeIn, FadeInRight, ZoomIn } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -20,6 +20,8 @@ import { useScreenMusic } from '@/audio/useScreenMusic';
 import { HapticTouchable } from '@/components/haptic-touchable';
 import { CoinIcon, CoinPill, FONT, GameButton } from '@/ui/kit';
 import { PartThumb, SECTIONS, priceOf } from '@/ui/PartThumb';
+import { makeStyles, useMetrics } from '@/ui/responsive';
+import { Text } from '@/ui/Text';
 
 // "Choose your style!": pick a character, clothes, a hat, a bow and arrows
 // among the ones you own. Three character cards — you as you are, you in the
@@ -34,6 +36,8 @@ const wearing = (l: Loadout, part: Skin): Loadout => sanitizeLoadout({ ...l, [pa
 
 export default function StyleScreen() {
   useScreenMusic('shop');
+  const styles = useStyles();
+  const { s } = useMetrics();
   const loadout = useGameStore((s) => s.loadout);
   const ownedSkins = useGameStore((s) => s.ownedSkins);
   const coinItems = useGameStore((s) => s.coinItems);
@@ -113,11 +117,13 @@ export default function StyleScreen() {
       <SafeAreaView style={StyleSheet.absoluteFill} edges={['top', 'bottom', 'left', 'right']} pointerEvents="box-none">
         <View style={styles.top} pointerEvents="box-none">
           <HapticTouchable onPress={() => router.back()} hitSlop={12} sound="ui_back" style={styles.back}>
-            <Ionicons name="chevron-back" size={24} color="#FFFFFF" />
+            <Ionicons name="chevron-back" size={s(24)} color="#FFFFFF" />
           </HapticTouchable>
           <Animated.View entering={ZoomIn.duration(240)} style={styles.titleWrap}>
             <LinearGradient colors={['#6FBF3A', '#7E57E6']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.titleBar}>
-              <Text style={styles.title}>Choose your style!</Text>
+              <Text style={styles.title} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+                Choose your style!
+              </Text>
             </LinearGradient>
           </Animated.View>
           <CoinPill coins={coins} />
@@ -131,15 +137,21 @@ export default function StyleScreen() {
         {/* Buttons under the three cards */}
         <View style={styles.cardButtons}>
           <View style={styles.col}>
-            <Text style={styles.cardName}>Current</Text>
+            <Text style={styles.cardName} numberOfLines={1}>
+              Current
+            </Text>
             <GameButton label="LEAVE" color="purple" small onPress={() => router.back()} sound="ui_back" />
           </View>
           <View style={styles.col}>
-            <Text style={styles.cardName}>{selPart.name}</Text>
+            <Text style={styles.cardName} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+              {selPart.name}
+            </Text>
             {action(selPart)}
           </View>
           <View style={styles.col}>
-            <Text style={styles.cardName}>{featured.name}</Text>
+            <Text style={styles.cardName} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+              {featured.name}
+            </Text>
             {action(featured)}
           </View>
         </View>
@@ -150,7 +162,9 @@ export default function StyleScreen() {
             {SECTIONS.map((s) => (
               <HapticTouchable key={s.kind} style={[styles.slot, slot === s.kind && styles.slotOn]} onPress={() => pickSlot(s.kind)}>
                 {s.icon}
-                <Text style={[styles.slotText, slot === s.kind && styles.slotTextOn]}>{s.label}</Text>
+                <Text style={[styles.slotText, slot === s.kind && styles.slotTextOn]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+                  {s.label}
+                </Text>
               </HapticTouchable>
             ))}
           </View>
@@ -169,11 +183,13 @@ export default function StyleScreen() {
                       {p.name}
                     </Text>
                     {worn(p) ? (
-                      <Ionicons name="checkmark-circle" size={14} color="#7CC23A" />
+                      <Ionicons name="checkmark-circle" size={s(14)} color="#7CC23A" />
                     ) : !own ? (
                       <>
-                        {isCoinSkin(p) ? <CoinIcon size={13} /> : <Ionicons name="lock-closed" size={12} color="rgba(255,255,255,0.7)" />}
-                        <Text style={[styles.chipPrice, !isCoinSkin(p) && styles.chipPriceSol]}>{priceOf(p, preferred).label}</Text>
+                        {isCoinSkin(p) ? <CoinIcon size={13} /> : <Ionicons name="lock-closed" size={s(12)} color="rgba(255,255,255,0.7)" />}
+                        <Text style={[styles.chipPrice, !isCoinSkin(p) && styles.chipPriceSol]} numberOfLines={1}>
+                          {priceOf(p, preferred).label}
+                        </Text>
                       </>
                     ) : null}
                   </HapticTouchable>
@@ -192,6 +208,7 @@ export default function StyleScreen() {
 // with itself, the featured one stares at you.
 type Card = { look: Look };
 const CARD_MOODS: Mood[] = ['neutral', 'happy', 'camera'];
+const CARD_SLOT = 2.65; // world width each card needs: its (pulsing) glow
 
 function WardrobeCanvas({ view, cards }: { view: WardrobeView; cards: Card[] }) {
   const focused = useIsFocused();
@@ -328,9 +345,12 @@ class WardrobeView implements Spinnable {
     this.t += dt;
     const t = this.t;
     // Lay the cards out at 1/6, 3/6, 5/6 of the screen width (the button
-    // columns below), whatever the phone's aspect ratio.
-    const dist = 7.4;
-    const visW = 2 * dist * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect;
+    // columns below), whatever the phone's aspect ratio. On a boxy 4:3 / 16:10
+    // screen a third is narrower than a card (glow 2.6): pull the camera back
+    // until they fit side by side again.
+    const halfFov = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+    const dist = 7.4 * Math.max(1, (3 * CARD_SLOT) / (2 * 7.4 * halfFov * camera.aspect));
+    const visW = 2 * dist * halfFov * camera.aspect;
     const cardY = 1.55;
     for (let i = 0; i < 3; i++) {
       const x = ((i * 2 + 1) / 6 - 0.5) * visW;
@@ -382,35 +402,36 @@ const shadow = {
   textShadowRadius: 3,
 };
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((m) => ({
   root: { flex: 1, backgroundColor: '#141428' },
   spinArea: { flex: 1 },
-  top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, paddingTop: 6 },
-  back: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' },
-  titleWrap: { transform: [{ rotate: '-1.5deg' }] },
-  titleBar: { paddingHorizontal: 28, paddingVertical: 4, borderRadius: 6, borderWidth: 3, borderColor: '#0B0B0F' },
-  title: { fontFamily: FONT.bold, fontSize: 24, color: '#FFFFFF', ...shadow },
-  cardButtons: { flexDirection: 'row', paddingHorizontal: 8 },
-  col: { flex: 1, alignItems: 'center', gap: 4 },
-  cardName: { fontFamily: FONT.bold, fontSize: 13, color: '#FFFFFF', ...shadow },
-  picker: { paddingTop: 4, paddingBottom: 4, gap: 6 },
-  strip: { gap: 8, paddingHorizontal: 14 },
+  top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: m.s(14), paddingTop: m.s(6) },
+  back: { width: m.s(38), height: m.s(38), borderRadius: m.s(19), alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' },
+  titleWrap: { flexShrink: 1, marginHorizontal: m.s(10), transform: [{ rotate: '-1.5deg' }] },
+  titleBar: { paddingHorizontal: m.s(28), paddingVertical: m.s(4), borderRadius: m.s(6), borderWidth: 3, borderColor: '#0B0B0F' },
+  title: { fontFamily: FONT.bold, fontSize: m.s(24), color: '#FFFFFF', ...shadow },
+  cardButtons: { flexDirection: 'row', paddingHorizontal: m.s(8) },
+  col: { flex: 1, alignItems: 'center', gap: m.s(4), paddingHorizontal: m.s(4) },
+  cardName: { fontFamily: FONT.bold, fontSize: m.s(13), color: '#FFFFFF', ...shadow },
+  picker: { paddingTop: m.s(4), paddingBottom: m.s(4), gap: m.s(6) },
+  strip: { gap: m.s(8), paddingHorizontal: m.s(14) },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 10,
+    gap: m.s(6),
+    paddingHorizontal: m.s(10),
+    paddingVertical: m.s(6),
+    borderRadius: m.s(10),
     borderWidth: 2,
   },
-  chipText: { fontFamily: FONT.semi, fontSize: 13, color: '#FFFFFF', maxWidth: 120 },
-  chipPrice: { fontFamily: FONT.bold, fontSize: 12, color: '#FFC23D' },
+  chipText: { fontFamily: FONT.semi, fontSize: m.s(13), color: '#FFFFFF', maxWidth: m.s(120) },
+  chipPrice: { fontFamily: FONT.bold, fontSize: m.s(12), color: '#FFC23D' },
   chipPriceSol: { color: '#D9C6FF' },
-  slots: { flexDirection: 'row', alignSelf: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 12, padding: 3 },
-  slot: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 9 },
+  // Shrinks (labels fit-to-size) rather than run off a narrow or notched screen.
+  slots: { flexDirection: 'row', alignSelf: 'center', marginHorizontal: m.s(14), gap: m.s(4), backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: m.s(12), padding: m.s(3) },
+  slot: { flexShrink: 1, flexDirection: 'row', alignItems: 'center', gap: m.s(5), paddingHorizontal: m.s(12), paddingVertical: m.s(5), borderRadius: m.s(9) },
   slotOn: { backgroundColor: '#8E6CEF' },
-  slotText: { fontFamily: FONT.bold, fontSize: 13, color: 'rgba(255,255,255,0.75)' },
+  slotText: { flexShrink: 1, fontFamily: FONT.bold, fontSize: m.s(13), color: 'rgba(255,255,255,0.75)' },
   slotTextOn: { color: '#FFFFFF' },
-});
+}));
 

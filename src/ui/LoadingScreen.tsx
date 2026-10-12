@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
   Easing,
   FadeIn,
@@ -15,6 +16,8 @@ import Svg, { Circle, Path } from 'react-native-svg';
 import { Stage, type Actor, type StageCamera } from '@/game3d/Stage';
 import { AI_LOOK, lookFor, randomLoadout, type Look } from '@/game/cosmetics';
 import { FONT, TIPS } from '@/ui/kit';
+import { Text, TIGHT_FONT_SCALE } from '@/ui/Text';
+import { makeStyles, useMetrics } from '@/ui/responsive';
 
 // Loading screens, shown at app start and before every duel. There are
 // several designs; a shuffle bag hands them out in random order without
@@ -74,6 +77,9 @@ type Props = {
 };
 
 export function LoadingScreen({ variant, progress, look, label }: Props) {
+  const styles = useStyles();
+  const { s } = useMetrics();
+  const insets = useSafeAreaInsets();
   const [tip] = useState(randomTip);
   const [rival] = useState(() => lookFor(randomLoadout()));
   const me = look ?? AI_LOOK;
@@ -87,9 +93,16 @@ export function LoadingScreen({ variant, progress, look, label }: Props) {
           pointerEvents="none"
         />
       )}
-      <View style={styles.footer} pointerEvents="none">
+      <View
+        style={[styles.footer, { bottom: insets.bottom + s(16), paddingLeft: insets.left, paddingRight: insets.right }]}
+        pointerEvents="none"
+      >
         {variant !== 'spinner' && <ProgressBar progress={progress} />}
-        {label ? <Text style={styles.label}>{label}</Text> : null}
+        {label ? (
+          <Text style={styles.label} numberOfLines={1}>
+            {label}
+          </Text>
+        ) : null}
         <Text style={styles.tip}>{tip}</Text>
       </View>
     </Animated.View>
@@ -210,6 +223,9 @@ function SceneArt({ variant, me, rival }: { variant: SceneVariant; me: Look; riv
 // Black screen with a spinning arrowhead inside a two-tone ring (page 8 of
 // the reference).
 function SpinnerArt() {
+  const styles = useStyles();
+  const { s } = useMetrics();
+  const lift = s(4);
   const spin = useSharedValue(0);
   const bob = useSharedValue(0);
   useEffect(() => {
@@ -217,17 +233,17 @@ function SpinnerArt() {
     bob.value = withRepeat(withSequence(withTiming(1, { duration: 700 }), withTiming(0, { duration: 700 })), -1);
   }, [spin, bob]);
   const ring = useAnimatedStyle(() => ({ transform: [{ rotate: `${spin.value * 360}deg` }] }));
-  const head = useAnimatedStyle(() => ({ transform: [{ translateY: -bob.value * 4 }, { rotate: `${-12 + bob.value * 6}deg` }] }));
+  const head = useAnimatedStyle(() => ({ transform: [{ translateY: -bob.value * lift }, { rotate: `${-12 + bob.value * 6}deg` }] }));
   return (
     <View style={styles.spinnerWrap}>
       <Animated.View style={[styles.ring, ring]}>
-        <Svg width={96} height={96} viewBox="0 0 96 96">
+        <Svg width={s(96)} height={s(96)} viewBox="0 0 96 96">
           <Circle cx={48} cy={48} r={40} stroke="rgba(255,255,255,0.35)" strokeWidth={6} fill="none" />
           <Path d="M48 8 A40 40 0 0 1 88 48" stroke="#FF9F1C" strokeWidth={6} strokeLinecap="round" fill="none" />
         </Svg>
       </Animated.View>
       <Animated.View style={[styles.arrowHead, head]}>
-        <Svg width={44} height={44} viewBox="0 0 44 44">
+        <Svg width={s(44)} height={s(44)} viewBox="0 0 44 44">
           <Path d="M6 30 L34 6 L30 34 L20 26 Z" fill="#F2F2F2" />
           <Path d="M6 30 L20 26 L30 34 Z" fill="#BDBDBD" />
           <Path d="M20 26 L34 6 L30 34 Z" fill="#DADADA" />
@@ -238,6 +254,7 @@ function SpinnerArt() {
 }
 
 function ProgressBar({ progress }: { progress: number }) {
+  const styles = useStyles();
   const w = useSharedValue(0);
   useEffect(() => {
     w.value = withTiming(Math.max(0, Math.min(1, progress)), { duration: 300 });
@@ -245,7 +262,9 @@ function ProgressBar({ progress }: { progress: number }) {
   const fill = useAnimatedStyle(() => ({ width: `${w.value * 100}%` }));
   return (
     <View style={styles.progressRow}>
-      <Text style={styles.pct}>{Math.round(progress * 100)}%</Text>
+      <Text style={styles.pct} maxFontSizeMultiplier={TIGHT_FONT_SCALE}>
+        {Math.round(progress * 100)}%
+      </Text>
       <View style={styles.track}>
         <Animated.View style={[styles.fill, fill]} />
       </View>
@@ -253,33 +272,34 @@ function ProgressBar({ progress }: { progress: number }) {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((m) => ({
   root: { backgroundColor: '#000000', zIndex: 50 },
   bottomShade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '45%' },
-  footer: { position: 'absolute', left: 0, right: 0, bottom: 16, alignItems: 'center', gap: 6 },
-  progressRow: { width: '38%', alignItems: 'center', gap: 4 },
+  footer: { position: 'absolute', left: 0, right: 0, alignItems: 'center', gap: m.s(6) },
+  progressRow: { width: '38%', maxWidth: m.s(380), alignItems: 'center', gap: m.s(4) },
   pct: {
     fontFamily: FONT.bold,
-    fontSize: 15,
+    fontSize: m.s(15),
     color: '#FFFFFF',
     textShadowColor: 'rgba(0,0,0,0.7)',
-    textShadowOffset: { width: 0, height: 1 },
+    textShadowOffset: { width: 0, height: m.s(1) },
     textShadowRadius: 3,
   },
-  track: { alignSelf: 'stretch', height: 10, borderRadius: 5, backgroundColor: 'rgba(0,0,0,0.7)', overflow: 'hidden' },
-  fill: { height: '100%', borderRadius: 5, backgroundColor: '#FFFFFF' },
-  label: { fontFamily: FONT.semi, fontSize: 13, color: 'rgba(255,255,255,0.8)' },
+  track: { alignSelf: 'stretch', height: m.s(10), borderRadius: m.s(5), backgroundColor: 'rgba(0,0,0,0.7)', overflow: 'hidden' },
+  fill: { height: '100%', borderRadius: m.s(5), backgroundColor: '#FFFFFF' },
+  label: { fontFamily: FONT.semi, fontSize: m.s(13), color: 'rgba(255,255,255,0.8)' },
   tip: {
     fontFamily: FONT.semi,
-    fontSize: 15,
+    fontSize: m.s(15),
     color: '#FFFFFF',
     textAlign: 'center',
-    paddingHorizontal: 40,
+    paddingHorizontal: m.s(40),
+    maxWidth: m.s(720),
     textShadowColor: 'rgba(0,0,0,0.8)',
-    textShadowOffset: { width: 0, height: 1 },
+    textShadowOffset: { width: 0, height: m.s(1) },
     textShadowRadius: 3,
   },
   spinnerWrap: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
   ring: { position: 'absolute' },
   arrowHead: { position: 'absolute' },
-});
+}));
