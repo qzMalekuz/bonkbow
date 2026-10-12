@@ -132,20 +132,22 @@ Technical rules:
 ## Implications for Bonk Bow
 
 The entry: **Bonk Bow, stickman archery played by idiots** ("They have bows. That's about it."). A
-fair turn-based archery duel (physics, hit zones, adaptive AI, online rooms) performed by derpy stickmen
-who eat the arrows, bonk themselves and celebrate early. Deadpan, dumb, never mean, and never about real
+fair turn-based archery duel vs an adaptive AI (physics, hit zones, a small SOL entry fee per duel)
+performed by derpy stickmen who eat the arrows, bonk themselves and celebrate early. Deadpan, dumb, never mean, and never about real
 people: the earlier "six heroes" version (likenesses of judges) is gone.
 
-- Deadline is **Oct 8, 11:59pm PT** (Oct 9 06:59 UTC). Plan to finalize on Align a few hours earlier.
+- Deadline was extended to **Oct 12 2026** (originally Oct 8, 11:59pm PT / Oct 9 06:59 UTC). Plan to
+  finalize on Align a few hours earlier.
 - Must ship: APK, public/accessible GitHub repo with a real commit history, ~3 min on-device demo video
   with captions, pitch deck.
 - Judges read a **transcript**, not the picture: the comedy has to survive as narration. Say what the
   archer does ("he has shot straight up; it is coming back down on him") rather than relying on visuals.
 - **SKR integration**: the shop prices every derp, hat, the Shovel Bow and every map in SKR, shows the
-  live balance and verifies transfers on-chain. Pitch it for the $10k bonus and the 20-weight criterion.
+  live balance and reads every transfer back from the chain before unlocking. Pitch it for the $10k
+  bonus and the 20-weight criterion.
 - **AI**: the adaptive opponent (aim tightens with your lifetime hit rate) is the honest AI story. Don't
   claim more.
-- **Stickiness**: short duels, daily streak, rooms, leaderboard, new derps and hats as drops, and
+- **Stickiness**: short duels, daily streak, local best runs, new derps and hats as drops, and
   community requests that make it into the game (the Shovel Bow).
 - Confirm no VC/angel funding, and be ready for Sumsub KYC and a dApp Store listing within 30 days of
   Nov 10.
