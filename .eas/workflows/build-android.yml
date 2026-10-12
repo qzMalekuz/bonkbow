@@ -1,12 +1,13 @@
 name: Build Android APK (dApp Store)
 
-# Builds a release APK with the dapp-store profile on every push to main.
-# Runs on EAS infra — no external secrets needed. The Solana dApp Store takes
-# a plain APK (not an AAB); publish it with `npx dapp-store` (see README).
-# Destination: .eas/workflows/build-android.yml
-on:
-  push:
-    branches: [main]
+# Builds a release APK with the dapp-store profile. Run it from this machine:
+#   bunx eas-cli workflow:run build-android.yml
+# No push trigger on purpose: a build started by a GitHub push checks out the
+# repo, which has no assets/licensed/ (gitignored Unity models), and ships the
+# paid maps bare and the stickman as a capsule. workflow:run uploads the local
+# project through .easignore, which keeps assets/licensed/.
+# The Solana dApp Store takes a plain APK (not an AAB); publish it with
+# `npx dapp-store` (see README).
 
 jobs:
   build:
