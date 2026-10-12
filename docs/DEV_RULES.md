@@ -1,4 +1,4 @@
-# Stickchers dev rules
+# Bonk Bow dev rules
 
 Project-specific rules learned while building this game. Every agent and
 contributor working in this repo follows them. When a new rule comes up, add it
@@ -11,7 +11,7 @@ here (in the right section) in the same change that applies it.
    - Start Metro: `./node_modules/.bin/expo start --dev-client --port 8081 --clear`
      (call the local binary; `npx expo …` gets rewritten by a shell hook here).
    - Phone over USB: `adb reverse tcp:8081 tcp:8081`, then open
-     `exp+stickchers://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081`.
+     `exp+bonkbow://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081`.
    - Metro started from an agent session stops after ~2 h; restart it when it does.
 2. **Rebuild natively only when native code changes**: adding/removing a
    library with native code, `app.json` / config-plugin edits (orientation,
@@ -63,26 +63,26 @@ here (in the right section) in the same change that applies it.
    (fps, sim ms, render ms, draw calls, slow frames). Target 60 fps with
    0–2 slow frames per 3 s on the Pixel 6a. Turn `PERF_LOG` off for shipping.
 
-9. **Hero heads are the sheet's own drawings, shown from four sides.**
-   Heroes are seen only from the front, right, back and left (stages and
-   showcase turn between those; a swipe snaps to the nearest quarter turn).
-   `scripts/heroes/build.sh [id]` cuts each side, plus the front once per
-   sheet expression, out of `archer-boys.pdf` into one registered atlas
-   (`assets/heroes/<id>_heads.png` + `.json`); `HeroHead.ts` puts it on a
-   camera-facing card, crossfades expressions and flips the card for a side
-   change (never crossfade two outlines: that ghosts). Page calibration is in
-   `HEROES` in `scripts/heroes/sheets.py`. Don't reintroduce 3D head
-   reconstruction from the sheets: its in-between angles always smear.
+9. **Derp heads are ink drawings, not models.** `src/game/derps.ts` holds
+   every head outline, face and hat as renderer-free drawing instructions
+   (`derpDrawing()`, head units, y up, origin at the neck); `game3d/ink.ts`
+   turns them into one wobbly, unlit, vertex-coloured mesh (one draw, buffers
+   allocated once, redrawn ~12×/s so the line boils like the videos) and
+   `DerpHead.ts` stands it on the neck as a card that faces the camera,
+   mirrors to the way the archer faces and sits 0.3 m toward the camera so
+   arms never cover the face. `ui/DerpThumb.tsx` draws the same instructions
+   in SVG. New faces, hats or head shapes go in derps.ts only, and get checked
+   in both. Never use the slur the owner uses for the style anywhere: say
+   derpy, goofy or idiots.
 
-10. **Bodies are skinned meshes posed by the rig.** Plain archers wear the
-    Unity Stick Man asset; heroes wear their baked chibi suit. Both go
-    through `StickmanBody.ts`, which bends the skeleton to the rig's joints
+10. **Bodies are skinned meshes posed by the rig.** Every archer wears the
+    Unity Stick Man asset, through `StickmanBody.ts`, which bends the skeleton to the rig's joints
     each frame (two-bone IK at the mesh's bone lengths). Change poses in
     `Stickman3D.ts`, never in an export; regenerate the Unity export only
     with `scripts/unity/export-stickman.cs` (steps in docs/ASSETS.md). Keep
     the capsule fallback working: the public repo has no licensed files.
-    Hero proportions are visual only: the sim's hitboxes (world.ts) are the
-    same for every archer.
+    Head size, neck length, hats and the shovel bow are visual only: the
+    sim's hitboxes (world.ts) are the same for every archer.
 11. **Character motion has no jumps.** Rig blends are critically damped
     springs (`Blend` in Stickman3D.ts), never exponential easing; an emote's
     clock keeps running while it eases out and a new or restarted emote
@@ -91,8 +91,8 @@ here (in the right section) in the same change that applies it.
     are `RigPose` layers with their own `Blend`. New poses must keep hands
     out of the head and torso — check them from front, side, back and 45° in
     the showcase, at every transition (the `reel` action plays them all).
-12. **Merge multi-part props into one draw.** The bow and the quiver (with
-    its arrows) are one vertex-coloured mesh each, cached per look.
+12. **Merge multi-part props into one draw.** The bow, an arrow and the
+    shovel are one vertex-coloured mesh each, cached per look.
 13. **Menu characters spin by touch** through `Turntable.ts`: the yaw is added
     to `rig.root.rotation.y` after `rig.update` (the skin sync is root-relative,
     so this is safe). The gesture view goes above the GL canvas and under the
@@ -121,7 +121,12 @@ here (in the right section) in the same change that applies it.
    (`zone`, `hp`, `shield`) is authoritative.
 3. Input feel: smooth the aim toward the finger every frame, fire the raw value;
    animations ease (exponential, frame-rate independent) rather than snap.
-4. The map rides in the match seed's low two bits (`seedWithMap`,
+4. Comedy beats (early cheers, the stare at the camera, the late "ow",
+   eating arrows, the wrong-way turn, the self-bonk) live in `sim.ts` as
+   presentation: they may use `Math.random()` and differ between phones,
+   but never change a hit, damage or turn. A self-bonk resolves as a miss.
+   The AI's own derpy shots (straight up, wrong-way draw) are vs-AI only.
+5. The map rides in the match seed's low two bits (`seedWithMap`,
    `mapOfSeed` in `src/game/maps.ts`): create every match/room seed with
    `randomSeed(equippedMap)`, never `Math.random()` directly, and only
    append to `MAPS` (its index is what the seed carries).
@@ -132,26 +137,24 @@ here (in the right section) in the same change that applies it.
    `assets/audio/CREDITS.md` (or docs/ASSETS.md). Unity Asset Store packages
    need the user's own download; unpack with `scripts/extract-unitypackage.sh`
    into the gitignored `assets/licensed/`.
-2. Launch trailer lives in `docs/trailer/` and is rendered in code from
-   `archer-boys.pdf` plus our own audio: no video generators, no scraped footage
-   or music. Rebuild with `docs/trailer/tools/build.sh`; edit shots in
-   `tools/shots.py`. `build/` and `out/` are gitignored.
-3. `archer-boys.pdf` pages are the heroes, in order: 1 Akshay, 2 Beeman,
-   3 Chase, 4 M-it, 5 Mert, 6 Tolly (`FACES[id].page` in `src/game/faces.ts`).
-   Hero ids are the names (`akshay` … `tolly`; skins `hero_<id>`). The
-   trailer's own crops (`docs/trailer/refs`) still use the old nicknames:
-   mobile = page 4, fade = page 6.
+2. Videos live in `docs/trailer/` and are drawn in code (Pillow, the
+   `tools/derpy*.py` scripts) plus our own audio: no video generators, no
+   scraped footage or music. `build/` and `out/` are gitignored.
+3. The six heroes (likenesses of real people) were retired on 2026-10-07 for
+   the Bonk Bow derps (docs/PIVOT.md) and their ids, assets and price-table
+   rows were removed on 2026-10-12. Don't bring back real-person likenesses.
 
 ## Shop
 
-1. The shop sells the six heroes (`SHOP_SKINS`), one paid skin each, and
-   the three environment maps (`SHOP_MAPS`, Maps tab; Classic is free), in
-   SOL or SKR. Maps were added at the user's request on 2026-10-05. There
-   are no other cosmetics: no hats, bows, trails or coin unlocks. "Choose your style" only switches between the classic
-   archer and the heroes you own; a locked hero links to the shop. Keep `supabase/functions/verify-purchase` PRICES
-   equal to the hero skins in `skins.ts` and the maps in `maps.ts` (map
-   purchases use the map id, e.g. `map_snow`, in the same purchases table); old `bro_*` purchase ids map to
-   the heroes through `canonicalSkinId`.
+1. The shop sells derps (Gary is free), hats ("they do not help"), the
+   Shovel Bow and the three environment maps (Classic is free), in SOL or
+   SKR. Product ids are `derp_<id>`, `hat_<id>`, `bow_<id>` and the map ids;
+   all are listed in `skins.ts` / `maps.ts`. Nothing sold changes a shot.
+   "Choose your style" picks the derp, hat and bow among owned items; a
+   locked one links to the shop. Keep `supabase/functions/verify-purchase`
+   PRICES equal to `skins.ts` and `maps.ts` (plus the retired `hero_*`
+   entries, which old app builds still sell), and deploy the function
+   together with the app update.
 
 ## Working with other agents and git
 

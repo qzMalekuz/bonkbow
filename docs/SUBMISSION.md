@@ -1,15 +1,35 @@
-# CLOCK IN submission checklist — Stickchers
+# CLOCK IN submission checklist — Bonk Bow
 
-Deadline: **Oct 8 2026, 11:59 pm PT** (Oct 9 06:59 UTC). Finalize on Align a few
+Deadline: **Oct 12 2026** (extended from Oct 8, 11:59 pm PT). Finalize on Align a few
 hours early; the lead's final submission locks the team and the entry. Facts
 behind every item: [HACKATHON.md](./HACKATHON.md).
+
+## The pitch
+
+**Bonk Bow: stickman archery played by idiots. They have bows. That's about it.**
+
+Two scrawled stickmen on facing cliffs take turns shooting each other. The
+duel underneath is a real one: drag back like a slingshot, read the dotted
+arc, release; fixed-step physics, hit zones, shields, an AI that adapts to
+how well you shoot, and online rooms where both phones run the same
+simulation. The archers on top of it are useless: they eat the arrows, fire
+straight up and bonk themselves, face the wrong way, celebrate before
+anything lands, and notice they have been hit a moment late. Deadpan, dumb,
+never mean. Winning feels like an accident you get to take credit for.
+
+The wallet is the account (Mobile Wallet Adapter + Sign in with Solana), and
+the shop sells derps, hats ("they do not help") and a Shovel Bow that
+someone in the comments asked for, in SOL or SKR, verified on-chain.
+
+Judges read the repo and a **transcript** of the demo video: every joke has to
+work as a sentence, so the narration describes what the archer is doing.
 
 ## Blockers found in the 2026-10-05 audit
 
 The wallet code is wired correctly (see below), but nothing it talks to is set
 up yet. Until these are done a build signs in to nothing and sells nothing.
 
-- [ ] **Supabase project.** None exists for Stickchers, and creating one was
+- [ ] **Supabase project.** None exists for Bonk Bow, and creating one was
       refused on 2026-10-05: the account is at Supabase's limit of two active
       free projects. Free a slot or use a paid org, then create it, apply
       `supabase/schema.sql`, enable Auth → Web3 Wallet and anonymous sign-in,
@@ -22,10 +42,10 @@ up yet. Until these are done a build signs in to nothing and sells nothing.
       `EXPO_PUBLIC_SOLANA_CLUSTER` + `EXPO_PUBLIC_SOLANA_RPC_URL` (unset means
       devnet; `EXPO_PUBLIC_SKR_MINT` is needed for SKR on devnet). Without
       Supabase, sign-in is a bare wallet connect.
-- [x] **EAS project.** `@qzmalekuz/stickchers`, linked in `app.json`.
+- [x] **EAS project.** `@qzmalekuz/bonkbow`, linked in `app.json`.
 - [ ] **App site.** The wallet-sheet identity, the SIWS domain
       (`src/solana/config.ts`) and the privacy/terms links
-      (`src/utils/legal.ts`) point at `https://qzmalekuz.github.io/stickchers/`,
+      (`src/utils/legal.ts`) point at `https://qzmalekuz.github.io/bonkbow/`,
       which does not exist yet. Publish GitHub Pages for the repo with
       `favicon.ico`, `/privacy` and `/terms` (or change both files to another
       site we control), and add the URL to Supabase's allowed URLs.
@@ -61,11 +81,11 @@ VC/angel funding. Keep secrets out of the submission text; Align rejects them.
       Sign in with Solana, `signMessages` fallback and `sendTransactions`. The
       provider wraps the whole app (`src/app/_layout.tsx`); on Seeker the wallet
       is Seed Vault, so keys never touch the app.
-- [x] **Meaningful on-chain interaction** (code): hero and map purchases are SOL
-      or SKR transfers signed in the wallet and verified server-side before
+- [x] **Meaningful on-chain interaction** (code): derp, hat, Shovel Bow and map
+      purchases are SOL or SKR transfers signed in the wallet and verified server-side before
       unlocking. Not yet exercised end to end: see blockers.
-- [x] **SKR integration** (code; bonus prize): every hero and map has an SKR
-      price (≈20% under SOL), live SKR balance from the wallet's token account,
+- [x] **SKR integration** (code; bonus prize): every derp, hat, bow and map has
+      an SKR price (≈20% under SOL), live SKR balance from the wallet's token account,
       `TransferChecked` pinned to the SKR mint, server checks the transfer lands
       in a treasury-owned SKR account. A payment integration, not staking.
 - [x] **AI**: adaptive AI opponent whose aim tightens with your lifetime hit
@@ -84,17 +104,16 @@ VC/angel funding. Keep secrets out of the submission text; Align rejects them.
 - [ ] `EXPO_PUBLIC_SKR_MINT` empty on mainnet (defaults to the real mint) — or
       set to your devnet test mint for a devnet demo build.
 - [ ] Real prices in `src/game/skins.ts`, `src/game/maps.ts` **and**
-      `verify-purchase/index.ts` (they match today: 0.1 SOL / 2000 SKR per
-      hero, 0.05 SOL / 1000 SKR per map, all placeholders).
-- [ ] The heroes are likenesses of real people (several are judges): get each
-      person's OK, or be ready to swap them.
+      `verify-purchase/index.ts` (they match today, all placeholders:
+      0.05 SOL / 1000 SKR per derp, 0.02 SOL / 400 SKR per hat,
+      0.08 SOL / 1600 SKR for the Shovel Bow, 0.05 SOL / 1000 SKR per map).
 - [ ] `npm run typecheck && npm run lint && npm run doctor` clean.
 
 ## Align form answers (draft)
 
 **Does your application have an SKR integration? If so, how?**
-Yes. SKR is the shop's native currency: every hero and map can be bought in SKR
-at ~20% under its SOL price, and the shop shows the player's live SKR balance
+Yes. SKR is the shop's native currency: every archer, hat, bow and map can be
+bought in SKR at ~20% under its SOL price, and the shop shows the player's live SKR balance
 read from their token account. Payments are
 `TransferChecked` instructions pinned to the SKR mint, signed in the wallet via
 Mobile Wallet Adapter, and verified on-chain by a Supabase edge function before
@@ -104,30 +123,45 @@ the item unlocks — the client never grants itself anything.
 
 ## Demo video script (≈3 min, narrate everything)
 
-1. **0:00–0:20 Hook.** Seeker in hand. "Stickchers is stickman archery for the
-   Solana dApp Store. Your wallet is your account." Show the home screen.
-2. **0:20–1:00 Core loop.** Play vs AI: draw, dotted arc, release, headshot,
-   haptics callout. Say: "the AI aims as well as I do — it reads my lifetime
-   hit rate."
-3. **1:00–1:25 Heroes and maps.** Style screen: spin a hero by touch. Streak stat.
-4. **1:25–2:10 Wallet + SKR.** Tap Sign in with wallet → Seed Vault sheet →
-   Sign in with Solana. Open Shop: SKR balance, "Pay in SKR" toggle, buy a
-   hero, approve in wallet, hero equips. Say: "the server verified that
-   transfer on-chain before unlocking it."
-5. **2:10–2:45 Multiplayer.** Create room, share code, second phone joins,
-   two shots exchanged, "opponent left" forfeit.
-6. **2:45–3:00 Close.** Leaderboard by wallet. "Expo, three.js, MWA, Supabase.
-   Shipping to the dApp Store."
+Deadpan delivery: say what happens, never explain the joke.
+
+1. **0:00–0:20 Hook.** Seeker in hand, home screen. "This is Bonk Bow. It's
+   stickman archery, played by idiots. They have bows. That's about it. Your
+   wallet is your account."
+2. **0:20–1:05 Core loop.** Play vs AI. "Drag back to aim, the dots show the
+   arc, let go to fire." Land a hit: "That minus thirty-four came off his
+   health bar. He'll notice in a second." (the "...ow." pops late). Let the
+   rival shoot straight up: "He has shot straight up. It is coming back down.
+   On him." (BONK). Mention the haptics. "The AI aims about as well as I do:
+   it reads my lifetime hit rate."
+3. **1:05–1:30 The archers.** Style screen, spin a derp by touch. "Gary.
+   Accuracy no, confidence yes. Doug eats the arrows. Tall Steve has too much
+   neck. Hats do not help. Nothing here changes a shot; the duel stays fair."
+4. **1:30–2:10 Wallet + SKR.** Tap Sign in with wallet → Seed Vault sheet →
+   Sign in with Solana. Open Shop: SKR balance, "Pay in SKR" toggle, buy the
+   Shovel Bow, approve in wallet, it equips. "Someone in the comments asked
+   for a shovel bow, so we added it. The server verified that SKR transfer
+   on-chain before unlocking it."
+5. **2:10–2:45 Multiplayer.** Create room, share code, second phone joins, two
+   shots exchanged, both low: "Sudden death. Both phones run the same
+   simulation, so they agree on every bonk." "Opponent left" forfeit.
+6. **2:45–3:00 Close.** Leaderboard by wallet. "Bonk Bow. Expo, three.js,
+   Mobile Wallet Adapter, Supabase. Shipping to the dApp Store."
 
 ## Pitch deck outline
 
-1. Title + one-liner + team.
-2. Why mobile archery on Seeker: 60-second sessions, one-thumb play, crypto
-   natives already hold SKR.
-3. Product demo stills: play, shop, multiplayer.
-4. Wallet = account (MWA + Sign in with Solana + Seed Vault).
-5. SKR integration: SKR pricing on every item, live balance, verified transfers.
-6. Adaptive AI (stickiness loop: streak, leaderboard, rematches).
-7. Architecture diagram: RN/three.js → MWA → Solana; Supabase auth/realtime/edge.
-8. Traction plan: dApp Store listing, SKR seasons, tournaments with SKR pots.
-9. Roadmap + ask.
+1. Title: **Bonk Bow**, "They have bows. That's about it.", team.
+2. The idea: a real archery duel performed by archers who are bad at it.
+   Stills from the launch videos.
+3. Why mobile and Seeker: 60-second turns, one thumb, clips people share,
+   crypto natives already hold SKR.
+4. Product: play, comedy beats (bonk, "...ow.", early cheer), shop, rooms.
+5. Wallet = account (MWA + Sign in with Solana + Seed Vault).
+6. SKR integration: SKR price on every item, live balance, verified transfers.
+7. Adaptive AI + stickiness loop: streak, leaderboard, rematches, new derps and
+   hats as drops.
+8. Architecture: RN/three.js fixed-step sim → MWA → Solana; Supabase
+   auth/realtime/edge.
+9. Community: the Shovel Bow came from a comment on the launch video; more
+   derps and hats the same way. dApp Store listing, SKR seasons.
+10. Roadmap + ask.
